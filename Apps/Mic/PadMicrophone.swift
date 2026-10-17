@@ -29,6 +29,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var isListening = false
     // 聞き取りの間に iPad から届いた音のバイト数。届いていないのか Typeless が読めていないのかを見分けるために記録に出す
     private var receivedBytes = 0
+    // 経路の点検のときだけ鳴らす、聞こえない高さの小さな音の位相。点検していないときは nil
+    private var checkPhase: Double?
     // 聞き取りの間に鳴らした音と、デバイスの入力 (Typeless が読むもの) の最大の振れ幅。どこで音が消えたかを記録に出して見分ける
     private var playedPeak: Float = 0
     private let inputPeak = PeakMeter()
@@ -47,7 +49,14 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             let output = UnsafeMutableBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(frameCount))
             if let self {
                 renderLock.withLock {
-                    if isListening {
+                    if var phase = checkPhase {
+                        // 経路の点検の音。タップがミュートするので鳴らないが、万一のときもほとんどの人に聞こえない高さと大きさにする
+                        for index in output.indices {
+                            output[index] = Float(sin(phase)) * 0.01
+                            phase += 2 * Double.pi * 20_000 / Double(PadAudio.sampleRate)
+                        }
+                        checkPhase = phase.truncatingRemainder(dividingBy: 2 * .pi)
+                    } else if isListening {
                         buffer.read(into: output)
                         playedPeak = output.reduce(playedPeak) { max($0, abs($1)) }
                     } else {
@@ -165,6 +174,59 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     }
 
     // MARK: - デバイス
+
+    /// 自分の出力をタップが本当に運んでいるかを、点検専用の非公開の集約デバイスで確かめて記録に出す。
+    /// 「PadBridge iPad マイク」を自分で読むにはマイクの許可も要るが、非公開の集約デバイスならシステムオーディオの録音の許可だけで読める。
+    /// 出力デバイスを含める形と、「PadBridge iPad マイク」と同じタップだけの形の両方で測り、違いがあるかを見る。
+    private func checkTapCarriesSound() {
+        for includesOutput in [true, false] {
+            let peak = measureTap(includingOutputDevice: includesOutput)
+            Self.logger.notice("タップの点検 (出力デバイスを\(includesOutput ? "含む" : "含まない", privacy: .public)): 最大 \(peak.map { String(format: "%.4f", $0) } ?? "測れない", privacy: .public) (鳴らした音は 0.0100)")
+        }
+    }
+
+    private func measureTap(includingOutputDevice: Bool) -> Float? {
+        let process = Self.ownProcessObject()
+        guard process != kAudioObjectUnknown, let output = Self.defaultOutputDevice(), let outputUID = Self.uid(of: output) else { return nil }
+        let description = CATapDescription(stereoMixdownOfProcesses: [process])
+        description.uuid = UUID()
+        description.name = "\(Self.deviceName) の点検"
+        description.muteBehavior = .muted
+        description.isPrivate = true
+        var tap = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateProcessTap(description, &tap) == noErr else { return nil }
+        defer { AudioHardwareDestroyProcessTap(tap) }
+        var aggregate: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "\(Self.deviceName) の点検",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: description.uuid.uuidString, kAudioSubTapDriftCompensationKey: true]],
+        ]
+        if includingOutputDevice {
+            aggregate[kAudioAggregateDeviceMainSubDeviceKey] = outputUID
+            aggregate[kAudioAggregateDeviceSubDeviceListKey] = [[kAudioSubDeviceUIDKey: outputUID]]
+        }
+        var device = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &device) == noErr else { return nil }
+        defer { AudioHardwareDestroyAggregateDevice(device) }
+        let peak = PeakMeter()
+        var procID: AudioDeviceIOProcID?
+        AudioDeviceCreateIOProcIDWithBlock(&procID, device, nil) { _, inputData, _, _, _ in
+            for buffer in UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)) {
+                guard let data = buffer.mData else { continue }
+                peak.add(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size))
+            }
+        }
+        guard let procID else { return nil }
+        renderLock.withLock { checkPhase = 0 }
+        AudioDeviceStart(device, procID)
+        Thread.sleep(forTimeInterval: 0.5)
+        AudioDeviceStop(device, procID)
+        AudioDeviceDestroyIOProcID(device, procID)
+        renderLock.withLock { checkPhase = nil }
+        return peak.value
+    }
 
     private func createDevice() {
         guard deviceID == kAudioObjectUnknown else { return }
@@ -293,7 +355,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     }
 
     private func setAuthorized(_ authorized: Bool) {
+        let becameAuthorized = authorized && !isAuthorized
         isAuthorized = authorized
+        if becameAuthorized {
+            checkTapCarriesSound()
+        }
         let changed = authorizationLock.withLock {
             defer { reportedAuthorization = authorized }
             return reportedAuthorization != authorized
@@ -410,6 +476,14 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid) == noErr else { return nil }
         return uid?.takeRetainedValue() as String?
+    }
+
+    private static func defaultOutputDevice() -> AudioObjectID? {
+        var address = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &device) == noErr, device != kAudioObjectUnknown else { return nil }
+        return device
     }
 
     private static func defaultInputDevice() -> AudioObjectID? {
