@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import CoreMedia
 import Network
 import VideoToolbox
@@ -8,6 +9,7 @@ import VideoToolbox
 @MainActor
 final class Harness {
     private let code: PairingCode
+    private let serviceName: String
     private let loopbackPort: NWEndpoint.Port
     private var failures: [String] = []
     private let window: NSWindow
@@ -16,8 +18,9 @@ final class Harness {
     private let fallbackTextView = AXRefusingTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
     private var animationTimer: Timer?
 
-    init(code: PairingCode, loopbackPort: NWEndpoint.Port) {
+    init(code: PairingCode, serviceName: String, loopbackPort: NWEndpoint.Port) {
         self.code = code
+        self.serviceName = serviceName
         self.loopbackPort = loopbackPort
         window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 260, height: 380), styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "PadBridge E2E"
@@ -45,9 +48,9 @@ final class Harness {
             window.close()
         }
 
-        // ローカルネットワークの許可が下りていない間も残りを確かめられるよう、見つからなければループバックで続ける
-        let discovered = await step("Bonjour で Host を見つける") { try await Self.discoverHost() }
-        let endpoint = discovered ?? .hostPort(host: "127.0.0.1", port: loopbackPort)
+        await step("Bonjour で Host を見つける") { try await Self.discoverHost(named: self.serviceName) }
+        // このクライアントはターミナルの権限で動き、LAN 宛ての送信はターミナルのローカルネットワーク許可に縛られるため、接続はループバックで行う
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: loopbackPort)
         await step("違うコードは TLS で拒否される") { try await Self.expectRejected(endpoint: endpoint) }
         guard let session = await step("正しいコードで接続して welcome を受け取る", { try await ClientSession.connect(endpoint: endpoint, code: self.code) }) else { return 1 }
         defer { session.close() }
@@ -64,6 +67,11 @@ final class Harness {
         await step("AX 経由で文字が入る") { try await self.checkInsert(session: session, into: self.axTextView, text: "AX経由の挿入テスト") }
         await step("AX が効かない欄にはキー入力で文字が入る") {
             try await self.checkInsert(session: session, into: self.fallbackTextView, text: "フォールバック入力テスト😀")
+        }
+        await step("日本語入力モードでも、AX が効かない欄に文字が入る") {
+            try await Self.withJapaneseInputSource {
+                try await self.checkInsert(session: session, into: self.fallbackTextView, text: "日本語入力モードでの送信テスト")
+            }
         }
         await step("Return キーが届く") { try await self.checkReturnKey(session: session) }
         await step("Command+A が届く") { try await self.checkShortcut(session: session) }
@@ -203,14 +211,26 @@ final class Harness {
         }
     }
 
+    /// 入力ソースはシステム全体の状態なので、切り替えた場合は検証後に必ず元へ戻す。
+    private static func withJapaneseInputSource(_ body: () async throws -> Void) async throws {
+        let original = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        let filter = [kTISPropertyInputSourceID as String: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"] as CFDictionary
+        guard let japanese = (TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource])?.first else {
+            throw HarnessError("日本語入力 (ことえり) が有効になっていない")
+        }
+        TISSelectInputSource(japanese)
+        defer { TISSelectInputSource(original) }
+        try await Task.sleep(for: .milliseconds(300))
+        try await body()
+    }
+
     private static var mainHeight: CGFloat {
         NSScreen.screens.first?.frame.height ?? 0
     }
 
     // MARK: - 接続
 
-    private static func discoverHost() async throws -> NWEndpoint {
-        let hostName = Host.current().localizedName ?? ""
+    private static func discoverHost(named hostName: String) async throws -> NWEndpoint {
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: PadBridgeService.type, domain: nil), using: parameters)
@@ -471,13 +491,13 @@ final class AXRefusingTextView: NSTextView {
 }
 
 let arguments = CommandLine.arguments
-guard arguments.count == 3, let code = PairingCode(arguments[1]), let port = NWEndpoint.Port(arguments[2]) else {
-    print("使い方: e2e <ペアリングコード> <Host の待ち受けポート>")
+guard arguments.count == 4, let code = PairingCode(arguments[1]), let port = NWEndpoint.Port(arguments[3]) else {
+    print("使い方: e2e <ペアリングコード> <Host の Bonjour 名> <Host の待ち受けポート>")
     exit(2)
 }
 let app = NSApplication.shared
 Task { @MainActor in
-    let status = await Harness(code: code, loopbackPort: port).run()
+    let status = await Harness(code: code, serviceName: arguments[2], loopbackPort: port).run()
     exit(status)
 }
 app.run()
