@@ -17,8 +17,9 @@ enum PadMicrophoneDevice {
 
 nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "microphone")
-    // 補助アプリが応えないときに、Typeless の起動を待たせ続けない
+    // 補助アプリが応えないときに、Typeless の起動や完了を待たせ続けない
     private static let readyTimeout: TimeInterval = 1.5
+    private static let finishTimeout: TimeInterval = 4
 
     private let queue: DispatchQueue
     private let onAuthorizationChange: @Sendable () -> Void
@@ -31,6 +32,8 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     // 起動してから接続してくるまでの間に、もう 1 つ起動しないようにする
     private var launchedAt: TimeInterval?
     private var pendingReady: (@Sendable (Bool) -> Void)?
+    private var pendingFinish: (id: Int, done: @Sendable () -> Void)?
+    private var finishCount = 0
     private(set) var isKnownUnauthorized = false
 
     init(queue: DispatchQueue, onAuthorizationChange: @escaping @Sendable () -> Void) {
@@ -54,6 +57,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     func stop() {
         isRunning = false
         finishPendingReady()
+        completeFinish()
         channel?.cancel()
         channel = nil
     }
@@ -74,6 +78,29 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
 
     func endListening() {
         channel?.send(.control(.microphoneRelay(isListening: false)))
+    }
+
+    /// iPad で止めたとき、止めたところまでの声を補助アプリが流し終えたら `done` を呼ぶ。補助アプリがなければすぐに呼ぶ。
+    func finishListening(done: @escaping @Sendable () -> Void) {
+        guard let channel else {
+            done()
+            return
+        }
+        completeFinish()
+        finishCount += 1
+        let id = finishCount
+        pendingFinish = (id, done)
+        channel.send(.control(.microphoneRelayFinish))
+        queue.asyncAfter(deadline: .now() + Self.finishTimeout) { [weak self] in
+            guard let self, pendingFinish?.id == id else { return }
+            completeFinish()
+        }
+    }
+
+    private func completeFinish() {
+        let done = pendingFinish?.done
+        pendingFinish = nil
+        done?()
     }
 
     func feed(_ samples: Data) {
@@ -140,6 +167,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     guard channel === self.channel else { return }
                     self.channel = nil
                     finishPendingReady()
+                    completeFinish()
                     // 補助アプリが落ちたら、iPad がつながっている間は起動し直す
                     if isRunning {
                         start()
@@ -164,6 +192,8 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                 // 合言葉を確かめた接続からのものだけを受ける
                 case let .microphoneRelayReady(isUsingPadMicrophone) where channel === self.channel:
                     finishPendingReady(isUsingPadMicrophone: isUsingPadMicrophone)
+                case .microphoneRelayFinished where channel === self.channel:
+                    completeFinish()
                 case let .microphoneRelayStatus(isAuthorized) where channel === self.channel:
                     isKnownUnauthorized = !isAuthorized
                     onAuthorizationChange()

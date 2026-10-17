@@ -31,6 +31,12 @@ public struct PCMJitterBuffer: Sendable {
     private var storage: [Int16]
     private var readIndex = 0
     public private(set) var count = 0
+    /// これまでに書き込んだ音の数。どこまで鳴らし終えたかを `consumed` と比べて見る。
+    public private(set) var written = 0
+    /// これまでに鳴らした音と、あふれて捨てた音の数。
+    public private(set) var consumed = 0
+    /// 鳴らしている途中で音が足りなくなり、途切れた回数。
+    public private(set) var underruns = 0
     private var isPlaying = false
 
     public init(capacity: Int, startThreshold: Int) {
@@ -44,9 +50,11 @@ public struct PCMJitterBuffer: Sendable {
                 if count == storage.count {
                     readIndex = (readIndex + 1) % storage.count
                     count -= 1
+                    consumed += 1
                 }
                 storage[(readIndex + count) % storage.count] = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: Int16.self))
                 count += 1
+                written += 1
             }
         }
     }
@@ -56,14 +64,20 @@ public struct PCMJitterBuffer: Sendable {
         if !isPlaying, count >= startThreshold {
             isPlaying = true
         }
+        var ranOut = false
         for index in output.indices {
             guard isPlaying, count > 0 else {
+                ranOut = ranOut || isPlaying
                 output[index] = 0
                 continue
             }
             output[index] = Float(storage[readIndex]) / Float(Int16.max)
             readIndex = (readIndex + 1) % storage.count
             count -= 1
+            consumed += 1
+        }
+        if ranOut {
+            underruns += 1
         }
         // 途切れたら、またたまるまで待つ
         if count == 0 {
@@ -71,9 +85,13 @@ public struct PCMJitterBuffer: Sendable {
         }
     }
 
+    /// ためている音を捨て、数え直す。
     public mutating func removeAll() {
         readIndex = 0
         count = 0
+        written = 0
+        consumed = 0
+        underruns = 0
         isPlaying = false
     }
 }

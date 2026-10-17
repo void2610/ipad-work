@@ -248,21 +248,23 @@ nonisolated final class HostServer: @unchecked Sendable {
             inputQueue.async { TextInserter.insert(text) }
         case let .voiceInput(isActive):
             Self.logger.notice("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
-            reportVoiceInputAfterSettling(isActive: isActive)
+            voiceInputRequestCount += 1
+            let requestCount = voiceInputRequestCount
             if isActive {
-                // Typeless が録音を始める前に、既定の入力を iPad のマイクにしておく
+                reportVoiceInputAfterSettling(isActive: true, requestCount: requestCount)
+                // Typeless が録音を始める前に、iPad の声を流す準備をしておく
                 microphone?.beginListening { [weak self, inputQueue, injector] isUsingPadMicrophone in
                     self?.isUsingPadMicrophone = isUsingPadMicrophone
                     inputQueue.async { injector.handle(message) }
                 }
-            } else {
-                // 送られてきた音を鳴らしきってから止めるよう、ためている分 (80ms) より少し長く待つ
-                inputQueue.asyncAfter(deadline: .now() + 0.25) { [injector] in injector.handle(message) }
-                let requestCount = voiceInputRequestCount
-                queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime + 0.5) { [weak self] in
-                    guard let self, requestCount == voiceInputRequestCount else { return }
-                    microphone?.endListening()
+            } else if isUsingPadMicrophone, let microphone {
+                // 止めたところまでの声を Typeless に聞かせ終えてから止め、話し終わりを切らない
+                microphone.finishListening { [weak self] in
+                    guard let self else { return }
+                    queue.async { self.stopTypeless(message, requestCount: requestCount) }
                 }
+            } else {
+                stopTypeless(message, requestCount: requestCount)
             }
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
@@ -270,15 +272,24 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
 
+    /// 完了のショートカットを押す。その間に iPad でまた始めていたら、Typeless は聞き取りを続けるので押さない。
+    private func stopTypeless(_ message: ControlMessage, requestCount: Int) {
+        guard requestCount == voiceInputRequestCount else { return }
+        inputQueue.async { [injector] in injector.handle(message) }
+        reportVoiceInputAfterSettling(isActive: false, requestCount: requestCount)
+        queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime + 0.5) { [weak self] in
+            guard let self, requestCount == voiceInputRequestCount else { return }
+            microphone?.endListening()
+        }
+    }
+
     /// Typeless がショートカットに反応しなかったときは状態の変化が来ないので、待ってから実際の状態を知らせて iPad の表示を戻す。
-    private func reportVoiceInputAfterSettling(isActive: Bool) {
-        voiceInputRequestCount += 1
-        let requestCount = voiceInputRequestCount
+    private func reportVoiceInputAfterSettling(isActive: Bool, requestCount: Int) {
         queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime) { [weak self] in
             guard let self, requestCount == voiceInputRequestCount else { return }
             let isRecording = TypelessMonitor.isRecording()

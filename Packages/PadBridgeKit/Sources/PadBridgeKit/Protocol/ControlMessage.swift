@@ -90,4 +90,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case microphoneRelayReady(isUsingPadMicrophone: Bool)
     /// 補助アプリから Host へ。システムオーディオの録音の許可があるか。
     case microphoneRelayStatus(isAuthorized: Bool)
+    /// Host から補助アプリへ。iPad で聞き取りを止めた。止めたところまでの声を流し終えたら知らせる。
+    case microphoneRelayFinish
+    /// 補助アプリから Host へ。止めたところまでの声を流し終えたので、Typeless を止めてよい。
+    case microphoneRelayFinished
 }

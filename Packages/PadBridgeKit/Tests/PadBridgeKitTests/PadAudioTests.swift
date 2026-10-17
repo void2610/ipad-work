@@ -51,6 +51,33 @@ struct PadAudioTests {
         #expect(read(&buffer, count: 1) == [0])
     }
 
+    /// 書き込んだ数と、鳴らしたか捨てた数を数え、どこまで鳴らし終えたかを見分けられる。
+    @Test func countsWrittenAndConsumedSamples() {
+        var buffer = PCMJitterBuffer(capacity: 3, startThreshold: 1)
+        buffer.write(encode([0.1, 0.2, 0.3, 0.4]))
+        #expect(buffer.written == 4)
+        #expect(buffer.consumed == 1)
+        _ = read(&buffer, count: 2)
+        #expect(buffer.consumed == 3)
+        _ = read(&buffer, count: 1)
+        #expect(buffer.consumed == buffer.written)
+        buffer.removeAll()
+        #expect(buffer.written == 0 && buffer.consumed == 0)
+    }
+
+    /// 鳴らしている途中で足りなくなったときだけ、途切れたと数える。たまるのを待っている間は数えない。
+    @Test func countsUnderrunsOnlyWhilePlaying() {
+        var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 2)
+        buffer.write(encode([0.5]))
+        _ = read(&buffer, count: 4)
+        #expect(buffer.underruns == 0)
+        buffer.write(encode([0.5, 0.5]))
+        _ = read(&buffer, count: 4)
+        #expect(buffer.underruns == 1)
+        _ = read(&buffer, count: 4)
+        #expect(buffer.underruns == 1)
+    }
+
     /// あふれたら古い音から捨て、遅れがたまらないようにする。
     @Test func overflowDropsOldestSamples() {
         var buffer = PCMJitterBuffer(capacity: 3, startThreshold: 1)

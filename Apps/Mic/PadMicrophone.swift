@@ -18,22 +18,30 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private let onAuthorizationChange: @Sendable (Bool) -> Void
     private let engine = AVAudioEngine()
     private let renderLock = NSLock()
-    // 80ms たまってから鳴らし始め、0.5 秒より遅れたら古い音を捨てる
-    private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 8 / 100)
+    // iPad の音は 100ms ごとの塊で届く (AVAudioNode のタップは 100〜400ms ごとに渡す) ので、塊の揺れを吸収できるよう 150ms たまってから鳴らす。
+    // Typeless が読み始めるまでは鳴らさずにためておき、話し始めを落とさない。3 秒より遅れたら古い音を捨てる
+    private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate * 3, startThreshold: PadAudio.sampleRate * 15 / 100)
+    // 止める直前の声は、iPad のタップの塊に入って止めた知らせより最大 100ms ほど遅れて届くので、その分を待つ
+    private static let inFlightDelay: TimeInterval = 0.2
+    // 鳴らした音が、タップと集約デバイスを通って Typeless に届くまでの分
+    private static let deliveryDelay: TimeInterval = 0.05
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は、Mac のマイクの音を流していなければ無音を流し続ける。
     // 止めるとタップだけの集約デバイスは入力を持たなくなり、Typeless (Chromium) がマイクとして数えない。
     // 許可がないとタップのミュートが効かないが、そのときは無音しか流さないので何も聞こえない
     private var isListening = false
+    // ほかのアプリ (Typeless) がこのデバイスを読んでいるか。読まれていない間に鳴らした音は誰にも届かない
+    private var isRead = false
+    private var listeningBeganAt: TimeInterval = 0
+    // iPad から聞き取りを始めてから Typeless が読み始めるまでの秒数。話し始めをためておく長さの目安として記録に出す
+    private var readDelay: TimeInterval?
     // 聞き取りの間に iPad から届いた音のバイト数。届いていないのか Typeless が読めていないのかを見分けるために記録に出す
     private var receivedBytes = 0
     // 経路の点検のときだけ鳴らす、聞こえない高さの小さな音の位相。点検していないときは nil
     private var checkPhase: Double?
-    // 聞き取りの間に鳴らした音と、デバイスの入力 (Typeless が読むもの) の最大の振れ幅。どこで音が消えたかを記録に出して見分ける
+    // 聞き取りの間に鳴らした音の最大の振れ幅。どこで音が消えたかを記録に出して見分ける
     private var playedPeak: Float = 0
-    private let inputPeak = PeakMeter()
-    private var inputMonitor: AudioDeviceIOProcID?
     // 許可がないとタップのミュートが効かず、iPad の声が Mac のスピーカーから流れてしまう。確かめるまでは鳴らさない
     private var isAuthorized = false
     private let authorizationLock = NSLock()
@@ -60,7 +68,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                             phase += 2 * Double.pi * 20_000 / Double(PadAudio.sampleRate)
                         }
                         checkPhase = phase.truncatingRemainder(dividingBy: 2 * .pi)
-                    } else if isListening || isPassingThrough {
+                    } else if isRead, isListening || isPassingThrough {
                         buffer.read(into: output)
                         playedPeak = output.reduce(playedPeak) { max($0, abs($1)) }
                     } else {
@@ -118,33 +126,58 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             guard isUsingPadMicrophone else { return }
             stopPassThrough()
             passThroughGate.padListeningBegan()
-            renderLock.withLock {
-                buffer.removeAll()
+            let isAlreadyRead = renderLock.withLock {
+                // 止めた直後にまた始めたときは、Typeless が聞き取りを続けているので、まだ鳴らしていない声を捨てない
+                if !isListening {
+                    buffer.removeAll()
+                    receivedBytes = 0
+                    playedPeak = 0
+                }
                 isListening = true
-                receivedBytes = 0
-                playedPeak = 0
+                return isRead
             }
-            startInputMonitor()
+            listeningBeganAt = ProcessInfo.processInfo.systemUptime
+            readDelay = isAlreadyRead ? 0 : nil
+        }
+    }
+
+    /// iPad で止めたときに呼ぶ。止めたところまでの声を流し終えたら `done` を呼ぶ。そのあとで Typeless を止めれば、話し終わりが切れない。
+    func finishListening(done: @escaping @Sendable () -> Void) {
+        queue.asyncAfter(deadline: .now() + Self.inFlightDelay) { [self] in
+            let target = renderLock.withLock { buffer.written }
+            waitUntilPlayed(target, deadline: .now() + 3, done: done)
+        }
+    }
+
+    private func waitUntilPlayed(_ target: Int, deadline: DispatchTime, done: @escaping @Sendable () -> Void) {
+        let (remaining, isPlaying) = renderLock.withLock { (target - buffer.consumed, isListening && isRead) }
+        // 読まれていなければ、待っても流れない (Typeless が自分で止めたときなど)
+        guard remaining > 0, isPlaying, DispatchTime.now() < deadline else {
+            queue.asyncAfter(deadline: .now() + Self.deliveryDelay) { done() }
+            return
+        }
+        let seconds = Double(remaining) / Double(PadAudio.sampleRate)
+        queue.asyncAfter(deadline: .now() + max(seconds, 0.01)) { [self] in
+            waitUntilPlayed(target, deadline: deadline, done: done)
         }
     }
 
     /// 聞き取りが終わったら、届いた音を鳴らすのをやめる。
     func endListening() {
         queue.async { [self] in
-            let (wasListening, received, played) = renderLock.withLock {
+            let (wasListening, received, played, underruns) = renderLock.withLock {
                 defer {
                     isListening = false
                     buffer.removeAll()
                 }
-                return (isListening, receivedBytes, playedPeak)
+                return (isListening, receivedBytes, playedPeak, buffer.underruns)
             }
-            let monitored = stopInputMonitor()
             if wasListening {
                 let seconds = Double(received) / 2 / Double(PadAudio.sampleRate)
-                let input = monitored.map { String(format: "%.4f", $0) } ?? "測れない (PadBridge Host にマイクの許可がない)"
-                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、デバイスの入力の最大 \(input, privacy: .public)")
+                let wait = readDelay.map { String(format: "%.2f 秒", $0) } ?? "読まれなかった"
+                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、Typeless が読み始めるまで \(wait, privacy: .public)、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、途切れた回数 \(underruns)")
             }
-            updatePassThrough()
+            deviceReadingChanged()
         }
     }
 
@@ -290,7 +323,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         deviceID = device
         Self.logger.notice("\(Self.deviceName, privacy: .public) を作った")
         var address = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.updatePassThrough() }
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.deviceReadingChanged() }
         if AudioObjectAddPropertyListenerBlock(device, &address, queue, listener) == noErr {
             readingListener = listener
         }
@@ -315,11 +348,18 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     // MARK: - Mac のマイクの音を流す
 
-    /// iPad から話していない間にほかのアプリがこのデバイスを読んでいれば、Mac の既定の入力の音を流す。読まれ始めた通知はすぐ届く。
-    /// 自分で読むのは点検 (キューを占めたまま終える) と iPad からの聞き取りの間だけなので、それ以外で読まれていればほかのアプリが読んでいる。
-    private func updatePassThrough() {
+    /// このデバイスが読まれ始めたか、読まれなくなった。読まれ始めた通知はすぐ届く。
+    /// 自分で読むのは点検 (キューを占めたまま終える) のときだけなので、それ以外で読まれていればほかのアプリ (Typeless) が読んでいる。
+    /// iPad から話していない間に読まれていれば、Mac の既定の入力の音を流す。
+    private func deviceReadingChanged() {
         let isRead = deviceID != kAudioObjectUnknown && Self.isRunningSomewhere(deviceID)
-        let isListening = renderLock.withLock { self.isListening }
+        let isListening = renderLock.withLock {
+            self.isRead = isRead
+            return self.isListening
+        }
+        if isRead, isListening, readDelay == nil {
+            readDelay = ProcessInfo.processInfo.systemUptime - listeningBeganAt
+        }
         if passThroughGate.shouldPassThrough(isRead: isRead, isPadListening: isListening) {
             startPassThrough()
         } else {
@@ -376,44 +416,6 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             buffer.removeAll()
         }
         Self.logger.notice("Mac のマイクの音を流すのをやめた")
-    }
-
-    /// 聞き取りの間、このデバイスの入力 (Typeless が読むもの) を自分でも読み、音が届いているかを測る。
-    /// 入力を読むにはマイクの許可も要るので、ないときは尋ねる (PadBridge Host の名前で一度だけ)。
-    private func startInputMonitor() {
-        guard deviceID != kAudioObjectUnknown, inputMonitor == nil else { return }
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            break
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Self.logger.notice("PadBridge Host のマイクの許可: \(granted ? "あり" : "なし", privacy: .public)")
-            }
-            return
-        default:
-            return
-        }
-        inputPeak.reset()
-        let peak = inputPeak
-        var procID: AudioDeviceIOProcID?
-        AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, nil) { _, inputData, _, _, _ in
-            for buffer in UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)) {
-                guard let data = buffer.mData else { continue }
-                peak.add(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size))
-            }
-        }
-        guard let procID else { return }
-        AudioDeviceStart(deviceID, procID)
-        inputMonitor = procID
-    }
-
-    /// 測るのをやめ、測れていれば入力の最大の振れ幅を返す。
-    private func stopInputMonitor() -> Float? {
-        guard let procID = inputMonitor else { return nil }
-        inputMonitor = nil
-        AudioDeviceStop(deviceID, procID)
-        AudioDeviceDestroyIOProcID(deviceID, procID)
-        return inputPeak.value
     }
 
     /// システムオーディオの録音の許可を確かめ、まだ尋ねていなければ尋ねる。

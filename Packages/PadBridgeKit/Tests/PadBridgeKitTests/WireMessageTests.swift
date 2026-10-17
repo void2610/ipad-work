@@ -20,6 +20,8 @@ struct WireMessageTests {
         .microphoneRelay(isListening: true),
         .microphoneRelayReady(isUsingPadMicrophone: true),
         .microphoneRelayStatus(isAuthorized: false),
+        .microphoneRelayFinish,
+        .microphoneRelayFinished,
     ])
     func controlMessageRoundTrips(message: ControlMessage) throws {
         let encoded = try WireMessage.control(message).encoded()

@@ -73,6 +73,10 @@ nonisolated final class RelayClient: @unchecked Sendable {
             } else {
                 microphone?.endListening()
             }
+        case .control(.microphoneRelayFinish):
+            microphone?.finishListening { [weak channel] in
+                channel?.send(.control(.microphoneRelayFinished))
+            }
         default:
             break
         }
