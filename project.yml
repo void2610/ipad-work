@@ -44,6 +44,7 @@ targets:
       - path: Apps/Host
         excludes:
           - Info.plist
+          - Host.entitlements
     dependencies:
       - package: PadBridgeKit
       # 補助アプリは Host のバンドルの中に入れ、Mac に別のものをインストールしない
@@ -57,6 +58,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.void2610.padbridge.host
         PRODUCT_NAME: PadBridge Host
         INFOPLIST_FILE: Apps/Host/Info.plist
+        # 補助アプリのマイクの許可は Host の名前で求められ、そのとき Host にもこの権利が要る (hardened runtime)
+        CODE_SIGN_ENTITLEMENTS: Apps/Host/Host.entitlements
         # CGEvent で他アプリへ入力を送るには App Sandbox の外で動かす必要がある
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES

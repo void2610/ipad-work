@@ -29,6 +29,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var isListening = false
     // 聞き取りの間に iPad から届いた音のバイト数。届いていないのか Typeless が読めていないのかを見分けるために記録に出す
     private var receivedBytes = 0
+    // 聞き取りの間に鳴らした音と、デバイスの入力 (Typeless が読むもの) の最大の振れ幅。どこで音が消えたかを記録に出して見分ける
+    private var playedPeak: Float = 0
+    private let inputPeak = PeakMeter()
+    private var inputMonitor: AudioDeviceIOProcID?
     // 許可がないとタップのミュートが効かず、iPad の声が Mac のスピーカーから流れてしまう。確かめるまでは鳴らさない
     private var isAuthorized = false
     private let authorizationLock = NSLock()
@@ -45,6 +49,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 renderLock.withLock {
                     if isListening {
                         buffer.read(into: output)
+                        playedPeak = output.reduce(playedPeak) { max($0, abs($1)) }
                     } else {
                         output.update(repeating: 0)
                     }
@@ -69,6 +74,12 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             Self.removeLeftovers()
             createDevice()
             checkAuthorization()
+            // 話している最中にダイアログが出ないよう、つながったときに尋ねておく
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    Self.logger.notice("PadBridge Host のマイクの許可: \(granted ? "あり" : "なし", privacy: .public)")
+                }
+            }
         }
     }
 
@@ -101,7 +112,9 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 buffer.removeAll()
                 isListening = true
                 receivedBytes = 0
+                playedPeak = 0
             }
+            startInputMonitor()
             guard previousDefaultInputUID == nil, let current = Self.defaultInputDevice(), current != deviceID else { return }
             previousDefaultInputUID = Self.uid(of: current)
             Self.setDefaultInput(deviceID)
@@ -112,16 +125,18 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     /// 聞き取りが終わったら、届いた音を鳴らすのをやめ、既定の入力を元に戻す。
     func endListening() {
         queue.async { [self] in
-            let (wasListening, received) = renderLock.withLock {
+            let (wasListening, received, played) = renderLock.withLock {
                 defer {
                     isListening = false
                     buffer.removeAll()
                 }
-                return (isListening, receivedBytes)
+                return (isListening, receivedBytes, playedPeak)
             }
+            let monitored = stopInputMonitor()
             if wasListening {
                 let seconds = Double(received) / 2 / Double(PadAudio.sampleRate)
-                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分")
+                let input = monitored.map { String(format: "%.4f", $0) } ?? "測れない (PadBridge Host にマイクの許可がない)"
+                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、デバイスの入力の最大 \(input, privacy: .public)")
             }
             restoreDefaultInput()
         }
@@ -210,6 +225,44 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = kAudioObjectUnknown
         }
+    }
+
+    /// 聞き取りの間、このデバイスの入力 (Typeless が読むもの) を自分でも読み、音が届いているかを測る。
+    /// 入力を読むにはマイクの許可も要るので、ないときは尋ねる (PadBridge Host の名前で一度だけ)。
+    private func startInputMonitor() {
+        guard deviceID != kAudioObjectUnknown, inputMonitor == nil else { return }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Self.logger.notice("PadBridge Host のマイクの許可: \(granted ? "あり" : "なし", privacy: .public)")
+            }
+            return
+        default:
+            return
+        }
+        inputPeak.reset()
+        let peak = inputPeak
+        var procID: AudioDeviceIOProcID?
+        AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, nil) { _, inputData, _, _, _ in
+            for buffer in UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)) {
+                guard let data = buffer.mData else { continue }
+                peak.add(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size))
+            }
+        }
+        guard let procID else { return }
+        AudioDeviceStart(deviceID, procID)
+        inputMonitor = procID
+    }
+
+    /// 測るのをやめ、測れていれば入力の最大の振れ幅を返す。
+    private func stopInputMonitor() -> Float? {
+        guard let procID = inputMonitor else { return nil }
+        inputMonitor = nil
+        AudioDeviceStop(deviceID, procID)
+        AudioDeviceDestroyIOProcID(deviceID, procID)
+        return inputPeak.value
     }
 
     /// システムオーディオの録音の許可を確かめ、まだ尋ねていなければ尋ねる。
@@ -406,5 +459,24 @@ private nonisolated enum AudioCapturePermission {
             return
         }
         unsafeBitCast(symbol, to: Request.self)(serviceName as CFString, nil) { granted in completion(granted) }
+    }
+}
+
+/// 入力の最大の振れ幅を、オーディオのスレッドから受け取って記録する。
+private nonisolated final class PeakMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var peak: Float = 0
+
+    var value: Float {
+        lock.withLock { peak }
+    }
+
+    func add(_ samples: UnsafeBufferPointer<Float>) {
+        let local = samples.reduce(Float(0)) { max($0, abs($1)) }
+        lock.withLock { peak = max(peak, local) }
+    }
+
+    func reset() {
+        lock.withLock { peak = 0 }
     }
 }

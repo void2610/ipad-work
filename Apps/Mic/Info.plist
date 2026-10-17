@@ -24,6 +24,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>iPad のマイクの音が、Mac の Typeless に渡す一時的なマイク「PadBridge iPad マイク」に届いているかを確かめるために使います。</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>iPad のマイクの音を、Mac の Typeless が使える一時的なマイク「PadBridge iPad マイク」として渡すために使います。</string>
 </dict>
