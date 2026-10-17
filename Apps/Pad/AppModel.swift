@@ -58,17 +58,6 @@ final class AppModel {
     }
 
     private func preferredHost() -> DiscoveredHost? {
-        #if DEBUG
-            // 実機・シミュレータでの確認用に、起動引数で接続先を決め打ちできるようにしている
-            let defaults = UserDefaults.standard
-            if let port = defaults.string(forKey: "PadBridgeTestPort").flatMap(NWEndpoint.Port.init(_:)) {
-                // シミュレータは Mac とネットワークを共有しているので、Mac のループバックへ直接つなげる
-                return DiscoveredHost(name: "テスト用 Host", endpoint: .hostPort(host: "127.0.0.1", port: port))
-            }
-            if let name = defaults.string(forKey: "PadBridgeTestHostName") {
-                return hosts.first { $0.name == name }
-            }
-        #endif
         let lastName = UserDefaults.standard.string(forKey: Self.lastHostKey)
         return hosts.first { $0.name == lastName } ?? (hosts.count == 1 ? hosts.first : nil)
     }

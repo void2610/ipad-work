@@ -16,11 +16,6 @@ build-host: generate
 run-host: build-host
     open "{{derived_data}}/Build/Products/Debug/PadBridge Host.app"
 
-# 実際の Host を相手に、iPad 役のクライアントで通しの動作を確かめる (数秒間、カーソルと前面の窓を使う)
-e2e: build-host
-    swiftc -swift-version 5 -O -o build/e2e Packages/PadBridgeKit/Sources/PadBridgeKit/*/*.swift Tools/E2E/main.swift
-    ./Tools/E2E/run.sh
-
 # iPad アプリを実機向けにビルドする
 build-pad: generate
     xcodebuild -project PadBridge.xcodeproj -scheme PadBridge -configuration Debug -destination generic/platform=iOS -derivedDataPath {{derived_data}} -allowProvisioningUpdates build

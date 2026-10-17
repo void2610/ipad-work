@@ -45,7 +45,6 @@ final class RemoteScreenUIView: UIView {
         layer.addSublayer(displayLayer)
         isAccessibilityElement = true
         accessibilityLabel = "Mac の画面"
-        accessibilityIdentifier = "remoteScreen"
         // VoiceOver 中も、指の操作をそのまま Mac に届ける
         accessibilityTraits = .allowsDirectInteraction
         installGestureRecognizers()

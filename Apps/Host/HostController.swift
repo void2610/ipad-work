@@ -52,21 +52,12 @@ final class HostController {
 
     /// 画面収録の許可は、プロセスを起動し直すまで反映されないことがあるため用意する。
     func relaunch() {
-        // 新旧が同時に動くと Bonjour 名が「(2)」付きに変わり、iPad が名前で引くペアリングコードが外れるため、終了してから起動し直す
+        // 新旧が同時に動くと Bonjour 名が「(2)」付きに変わり、iPad が名前で覚えている接続先から外れるため、終了してから起動し直す
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
         try? process.run()
         NSApp.terminate(nil)
-    }
-
-    /// E2E テストの Host を、普段使いの Host と同時に動かしても Bonjour 名がぶつからないようにする指定口。
-    private static var testServiceName: String? {
-        #if DEBUG
-            UserDefaults.standard.string(forKey: "PadBridgeTestServiceName")
-        #else
-            nil
-        #endif
     }
 
     private func openPrivacySettings(_ anchor: String) {
@@ -79,7 +70,7 @@ final class HostController {
         server?.stop()
         connectedDeviceName = nil
         let server = HostServer(
-            hostName: Self.testServiceName ?? Host.current().localizedName ?? "Mac",
+            hostName: Host.current().localizedName ?? "Mac",
             doubleClickInterval: NSEvent.doubleClickInterval,
             onClientChange: { [weak self] name in
                 Task { @MainActor in self?.connectedDeviceName = name }
