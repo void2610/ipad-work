@@ -3,7 +3,7 @@ import PadBridgeKit
 import UIKit
 
 /// キーボードを出している間だけ、そのすぐ上に出る特殊キーの列。ソフトウェアキーボードにない esc・修飾キー・矢印・英数/かな・長音を置く。
-final class KeyAccessoryBar: UIInputView {
+final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     private enum Key {
         case tap(String, usage: Int, repeats: Bool)
         case modifier(String, KeyModifiers)
@@ -51,6 +51,11 @@ final class KeyAccessoryBar: UIInputView {
         CGSize(width: UIView.noIntrinsicMetric, height: 52)
     }
 
+    // キーを押したときに、iPad のキーボードと同じクリック音を鳴らせるようにする (設定の「キーボードのクリック」に従う)
+    var enableInputClicksWhenVisible: Bool {
+        true
+    }
+
     private func buildKeys() {
         let stack = UIStackView()
         stack.axis = .horizontal
@@ -76,8 +81,10 @@ final class KeyAccessoryBar: UIInputView {
         }
 
         // 縦向きなどで幅が足りなくても、全部のキーに横へずらして届くようにする
-        let scroll = UIScrollView()
+        let scroll = KeyScrollView()
         scroll.showsHorizontalScrollIndicator = false
+        // 既定ではスクロールかどうかを見極める間キーの押下が遅れ、短く押すと押した表示がほとんど出ない
+        scroll.delaysContentTouches = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
@@ -114,8 +121,17 @@ final class KeyAccessoryBar: UIInputView {
     }
 }
 
+/// キーの上から触れ始めても横へずらせるようにする。
+private final class KeyScrollView: UIScrollView {
+    override func touchesShouldCancel(in _: UIView) -> Bool {
+        true
+    }
+}
+
 /// キーボードのキーに似せたボタン。
 fileprivate class KeyCapButton: UIButton {
+    private var latchState = ModifierLatch.State.off
+
     init(title: String) {
         super.init(frame: .zero)
         var configuration = UIButton.Configuration.gray()
@@ -130,6 +146,7 @@ fileprivate class KeyCapButton: UIButton {
         self.configuration = configuration
         widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         accessibilityLabel = title
+        addAction(UIAction { _ in UIDevice.current.playInputClick() }, for: .touchDown)
     }
 
     @available(*, unavailable)
@@ -138,20 +155,33 @@ fileprivate class KeyCapButton: UIButton {
     }
 
     func showLatchState(_ state: ModifierLatch.State) {
-        var configuration = self.configuration
-        switch state {
-        case .off:
-            configuration?.baseBackgroundColor = nil
-            configuration?.baseForegroundColor = nil
-        case .once:
-            configuration?.baseBackgroundColor = .tintColor.withAlphaComponent(0.35)
-            configuration?.baseForegroundColor = .label
-        case .locked:
-            configuration?.baseBackgroundColor = .tintColor
-            configuration?.baseForegroundColor = .white
+        latchState = state
+        setNeedsUpdateConfiguration()
+        accessibilityValue = state == .off ? "オフ" : state == .once ? "次の 1 回" : "固定"
+    }
+
+    override func updateConfiguration() {
+        guard var configuration else { return }
+        // 押している間は色と大きさをはっきり変え、指で隠れていても押したことが分かるようにする
+        switch (isHighlighted, latchState) {
+        case (true, _):
+            configuration.baseBackgroundColor = .tintColor
+            configuration.baseForegroundColor = .white
+        case (false, .off):
+            configuration.baseBackgroundColor = nil
+            configuration.baseForegroundColor = nil
+        case (false, .once):
+            configuration.baseBackgroundColor = .tintColor.withAlphaComponent(0.35)
+            configuration.baseForegroundColor = .label
+        case (false, .locked):
+            configuration.baseBackgroundColor = .tintColor
+            configuration.baseForegroundColor = .white
         }
         self.configuration = configuration
-        accessibilityValue = state == .off ? "オフ" : state == .once ? "次の 1 回" : "固定"
+        let transform = isHighlighted ? CGAffineTransform(scaleX: 0.9, y: 0.9) : .identity
+        UIView.animate(withDuration: 0.08, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.transform = transform
+        }
     }
 }
 
