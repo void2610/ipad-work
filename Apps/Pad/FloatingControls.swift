@@ -52,12 +52,16 @@ struct FloatingControls: View {
 
     private var panel: some View {
         HStack(spacing: 4) {
+            // Typeless で話したあとにそのまま送れるよう、キーボードを出さなくても押せる場所に置く
+            PanelButton(title: "Enter", systemImage: "return", isActive: false) {
+                session.tapKey(usage: HIDUsage.returnKey)
+            }
             TypelessButton(session: session)
                 .frame(width: 44, height: 44)
             PanelButton(title: isTyping ? "キーボードを閉じる" : "キーボード", systemImage: isTyping ? "keyboard.chevron.compact.down" : "keyboard", isActive: isTyping) {
                 isTyping.toggle()
             }
-            PanelButton(title: "アプリ切替", systemImage: "square.on.square", isActive: false, action: session.switchApp)
+            PanelButton(title: "アプリ切替", systemImage: "rectangle.2.swap", isActive: false, action: session.switchApp)
             Menu {
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {
