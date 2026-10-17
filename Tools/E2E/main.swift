@@ -42,6 +42,7 @@ final class Harness {
         NSApp.activate()
         let originalCursor = NSEvent.mouseLocation
         defer {
+            Self.closeMissionControlIfShowing()
             CGWarpMouseCursorPosition(CGPoint(x: originalCursor.x, y: Self.mainHeight - originalCursor.y))
             window.close()
         }
@@ -73,6 +74,10 @@ final class Harness {
         await step("Typeless が聞き取りを始め、完了する") { try await self.checkTypeless(session: session) }
         await step("Return キーが届く") { try await self.checkReturnKey(session: session) }
         await step("Command+A が届く") { try await self.checkShortcut(session: session) }
+        await step("矢印キーが Fn とテンキーのビット付きで届く") { try await self.checkArrowKey(session: session) }
+        await step("Control+↑ (3 本指で上へ払う) で Mission Control が開く") { try await self.checkMissionControl(session: session) }
+        // 自分の窓から別のアプリへ移るので、最後に行う
+        await step("Command+Tab (アプリ切替ボタン) で別のアプリに切り替わる") { try await self.checkAppSwitch(session: session) }
 
         if failures.isEmpty {
             print("\n全項目成功")
@@ -252,6 +257,79 @@ final class Harness {
         try await waitUntil { !self.probe.keys.isEmpty }
         let key = probe.keys[0]
         guard key.keyCode == 0x00, key.modifiers == .command else { throw HarnessError("届いたキー: \(probe.keys)") }
+    }
+
+    private func checkArrowKey(session: ClientSession) async throws {
+        click(probe, session: session)
+        try await waitUntil { self.window.firstResponder === self.probe }
+        probe.reset()
+        tapKey(usage: 0x50, modifiers: [], session: session)
+        try await waitUntil { !self.probe.keys.isEmpty }
+        let key = probe.keys[0]
+        guard key.keyCode == 0x7B, key.modifiers.contains([.numericPad, .function]) else { throw HarnessError("届いたキー: \(probe.keys)") }
+    }
+
+    private func checkMissionControl(session: ClientSession) async throws {
+        session.send(.key(usage: 0xE0, isDown: true, modifiers: [.control]))
+        tapKey(usage: 0x52, modifiers: [.control], session: session)
+        session.send(.key(usage: 0xE0, isDown: false, modifiers: []))
+        do {
+            try await waitUntil(timeout: 5) { Self.isMissionControlShowing() }
+        } catch {
+            throw HarnessError("Mission Control が開かない")
+        }
+        // 開くアニメーションの途中に押した esc は無視されるので、開ききってから押し、閉じなければ押し直す
+        try await Task.sleep(for: .seconds(1.5))
+        for _ in 0 ..< 3 {
+            tapKey(usage: 0x29, modifiers: [], session: session)
+            if await Self.holds(for: 1.5, within: 4, { !Self.isMissionControlShowing() }) { return }
+        }
+        throw HarnessError("esc を押しても Mission Control が閉じない")
+    }
+
+    /// 閉じる途中は Dock の窓が一瞬消えて見えるので、条件が続けて満たされたときだけ成立とみなす。
+    private static func holds(for duration: Double, within timeout: Double, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date.now.addingTimeInterval(timeout)
+        var since: Date?
+        while Date.now < deadline {
+            if condition() {
+                since = since ?? .now
+                if let since, Date.now.timeIntervalSince(since) >= duration { return true }
+            } else {
+                since = nil
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+
+    /// 途中で失敗しても、利用者の画面に Mission Control を開いたまま残さない。
+    private static func closeMissionControlIfShowing() {
+        guard isMissionControlShowing() else { return }
+        let source = CGEventSource(stateID: .hidSystemState)
+        for isDown in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: 0x35, keyDown: isDown)
+            event?.flags = CGEventFlags(rawValue: 0x100)
+            event?.post(tap: .cghidEventTap)
+        }
+    }
+
+    private func checkAppSwitch(session: ClientSession) async throws {
+        click(probe, session: session)
+        try await waitUntil { NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier }
+        session.send(.key(usage: 0xE3, isDown: true, modifiers: [.command]))
+        tapKey(usage: 0x2B, modifiers: [.command], session: session)
+        try await Task.sleep(for: .milliseconds(400))
+        session.send(.key(usage: 0xE3, isDown: false, modifiers: []))
+        try await waitUntil(timeout: 5) { NSWorkspace.shared.frontmostApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    }
+
+    /// Mission Control の間だけ、Dock が画面全体を覆う窓を前面のレイヤに出す。
+    private static func isMissionControlShowing() -> Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.contains { window in
+            (window[kCGWindowOwnerName as String] as? String) == "Dock" && (window[kCGWindowLayer as String] as? Int ?? 0) >= 18
+        }
     }
 
     private func tapKey(usage: Int, modifiers: KeyModifiers, session: ClientSession) {
