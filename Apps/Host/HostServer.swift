@@ -136,6 +136,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
         if !isRecording {
             microphone?.endListening()
+            // 別のマイクで聞き取った知らせは、その聞き取りの間だけ出す。Typeless で選ばれたマイクを変えないときに、画面に出続けないように
+            if typelessUsesOtherMicrophone {
+                typelessUsesOtherMicrophone = false
+                publishStatus()
+            }
         }
     }
 
