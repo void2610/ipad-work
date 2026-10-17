@@ -167,7 +167,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// Typeless が聞き取っていない間に、Typeless のマイクを「PadBridge iPad マイク」にする (一度だけ。Typeless を起動し直す)。
+    /// Typeless が聞き取っていない間に、Typeless のマイクを「PadBridge iPad マイク」にする (自動検出のときだけ。Typeless を起動し直す)。
     private func setUpTypelessMicrophone(after delay: TimeInterval) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
             // 聞き取りの途中で Typeless を終了させない
