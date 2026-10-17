@@ -270,3 +270,96 @@ struct ScrollMomentumTests {
         #expect(momentum.step(interval: 1.0 / 60) == .zero)
     }
 }
+
+struct PinchTests {
+    /// 2 本指を広げると拡大になり、スクロールは送らないこと。
+    @Test func spreadingTwoFingersZooms() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 400, y: 300), time: 0)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 500, y: 300), time: 0.01)
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 380, y: 300), time: 0.05)
+        let actions = interpreter.moved(touch: 2, to: CGPoint(x: 520, y: 300), time: 0.05)
+        guard case let .zoom(scale, center, _) = actions.first else {
+            Issue.record("拡大にならない: \(actions)")
+            return
+        }
+        #expect(abs(scale - 1.4) < 0.001)
+        #expect(center == CGPoint(x: 450, y: 300))
+        let next = interpreter.moved(touch: 2, to: CGPoint(x: 590, y: 300), time: 0.1)
+        guard case let .zoom(nextScale, _, translation) = next.first else {
+            Issue.record("続けて広げても拡大にならない: \(next)")
+            return
+        }
+        #expect(abs(nextScale - 1.5) < 0.001)
+        #expect(translation.dx == 35)
+    }
+
+    /// 間隔を保ったまま 2 本指で払うと、これまでどおりスクロールになること。
+    @Test func movingTwoFingersTogetherScrolls() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 400, y: 300), time: 0)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 500, y: 300), time: 0.01)
+        let actions = interpreter.moved(touch: 1, to: CGPoint(x: 400, y: 340), time: 0.05)
+            + interpreter.moved(touch: 2, to: CGPoint(x: 500, y: 340), time: 0.05)
+        let scrolled = actions.reduce(CGFloat(0)) { total, action in
+            if case let .scroll(_, dy) = action { total + dy } else { total }
+        }
+        #expect(scrolled == 40)
+        #expect(!actions.contains { if case .zoom = $0 { true } else { false } })
+    }
+
+    /// 2 本指で軽く触れて離すだけなら、これまでどおり 2 本の指の中ほどで右クリックになること。
+    @Test func twoFingerTapStillRightClicks() {
+        var interpreter = TouchInterpreter()
+        let middle = CGPoint(x: 450, y: 300)
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 400, y: 300), time: 0)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 500, y: 300), time: 0.01)
+        let actions = interpreter.ended(touch: 1, at: CGPoint(x: 400, y: 300), time: 0.1)
+        #expect(actions == [.move(middle), .press(.right, isDown: true, at: middle), .press(.right, isDown: false, at: middle)])
+    }
+}
+
+struct ScreenZoomTests {
+    private let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    private let fitted = CGRect(x: 0, y: 75, width: 1000, height: 650)
+
+    @Test func unzoomedIsFitted() {
+        #expect(ScreenZoom().rect(fitted: fitted, in: area) == fitted)
+    }
+
+    /// 指の中心の下にある映像の位置が、拡大しても動かないこと。
+    @Test func zoomKeepsPointUnderFingers() {
+        var zoom = ScreenZoom()
+        let center = CGPoint(x: 300, y: 400)
+        let before = fitted
+        let normalizedX = (center.x - before.minX) / before.width
+        zoom.apply(scale: 2, center: center, translation: .zero, fitted: fitted, area: area)
+        let after = zoom.rect(fitted: fitted, in: area)
+        #expect(after.width == 2000)
+        #expect(abs(after.minX + normalizedX * after.width - center.x) < 0.001)
+    }
+
+    /// 端に余白が出るほど外へ寄せても、画面の端で止まること。
+    @Test func zoomedRectStaysOverArea() {
+        var zoom = ScreenZoom()
+        zoom.apply(scale: 2, center: CGPoint(x: 500, y: 400), translation: CGVector(dx: 5000, dy: 5000), fitted: fitted, area: area)
+        let rect = zoom.rect(fitted: fitted, in: area)
+        #expect(rect.minX == 0)
+        #expect(rect.minY == 0)
+        #expect(rect.maxX >= area.maxX)
+    }
+
+    /// 縮めてほぼ等倍に戻したら、ぴったり元に戻ること。
+    @Test func pinchingBackResets() {
+        var zoom = ScreenZoom()
+        zoom.apply(scale: 2, center: CGPoint(x: 200, y: 200), translation: .zero, fitted: fitted, area: area)
+        zoom.apply(scale: 0.51, center: CGPoint(x: 200, y: 200), translation: .zero, fitted: fitted, area: area)
+        #expect(zoom == ScreenZoom())
+    }
+
+    @Test func scaleIsLimited() {
+        var zoom = ScreenZoom()
+        zoom.apply(scale: 50, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
+        #expect(zoom.scale == ScreenZoom.maximumScale)
+    }
+}

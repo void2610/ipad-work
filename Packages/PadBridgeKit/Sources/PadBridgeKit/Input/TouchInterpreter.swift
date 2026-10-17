@@ -17,6 +17,8 @@ public struct TouchInterpreter {
         case threeFingerSwipe(SwipeDirection)
         /// 画面の下端から上へ払った。iPad で Dock を出すのと同じ操作で、Mac の Dock を出す。
         case bottomEdgeSwipe
+        /// 2 本指で広げたり縮めたりした。`center` を中心に前回から `scale` 倍し、指の中心が動いた分 `translation` だけ動かす。
+        case zoom(scale: CGFloat, center: CGPoint, translation: CGVector)
     }
 
     public enum SwipeDirection: String, Codable, Equatable, Sendable {
@@ -31,7 +33,8 @@ public struct TouchInterpreter {
         case pending(touch: Int, start: CGPoint, startTime: TimeInterval, fromBottomEdge: Bool)
         case longPressed(touch: Int, start: CGPoint)
         case dragging(touch: Int)
-        case twoFingerPending(start: CGPoint, startTime: TimeInterval)
+        case twoFingerPending(start: CGPoint, startTime: TimeInterval, startSpan: CGFloat)
+        case pinching(lastCenter: CGPoint, lastSpan: CGFloat)
         case scrolling(last: CGPoint, lastTime: TimeInterval)
         case threeFinger(start: CGPoint, hasSwiped: Bool)
         /// 判定を終えた指が残っている間は何もしない。全部離れたら idle に戻る。
@@ -48,6 +51,8 @@ public struct TouchInterpreter {
     public var bottomEdge: CGFloat = .infinity
     public var bottomEdgeZone: CGFloat = 24
     public var bottomEdgeSwipeDistance: CGFloat = 30
+    /// 2 本指の間隔がこれだけ変わったら、スクロールではなく拡大・縮小とみなす。
+    public var pinchThreshold: CGFloat = 24
     // 複数の指は同時には着地しないので、1 本目が動いてもしばらくは 1 本指のスクロールと決めずに他の指を待つ
     public var multiFingerGrace: TimeInterval = 0.08
 
@@ -73,11 +78,11 @@ public struct TouchInterpreter {
             state = .pending(touch: id, start: point, startTime: time, fromBottomEdge: point.y >= bottomEdge - bottomEdgeZone)
         case .pending, .longPressed:
             guard touches.count == 2 else { return [] }
-            state = .twoFingerPending(start: centroid, startTime: time)
+            state = .twoFingerPending(start: centroid, startTime: time, startSpan: span)
         case let .scrolling(_, lastTime):
             // 指が増えると重心が飛ぶので、そこを新しい基準にする。慣性の判定に使う最後に動いた時刻は保つ
             state = .scrolling(last: centroid, lastTime: lastTime)
-        case .dragging, .twoFingerPending, .threeFinger, .ignoring:
+        case .dragging, .twoFingerPending, .pinching, .threeFinger, .ignoring:
             break
         }
         return []
@@ -106,12 +111,23 @@ public struct TouchInterpreter {
             return [.move(start), .press(.left, isDown: true, at: start), .move(point)]
         case let .dragging(touch):
             return touch == id ? [.move(point)] : []
-        case let .twoFingerPending(start, _):
+        case let .twoFingerPending(start, _, startSpan):
             let center = centroid
+            // 間隔の変化が中心の移動より大きければ、払ったのではなく広げたり縮めたりしている
+            if touches.count == 2, abs(span - startSpan) > pinchThreshold, abs(span - startSpan) > distance(start, center) {
+                state = .pinching(lastCenter: center, lastSpan: span)
+                return [.zoom(scale: span / max(startSpan, 1), center: center, translation: CGVector(dx: center.x - start.x, dy: center.y - start.y))]
+            }
             guard distance(start, center) > slop else { return [] }
             velocity = .zero
             state = .scrolling(last: center, lastTime: time)
             return [.move(start), .scroll(dx: center.x - start.x, dy: center.y - start.y)]
+        case let .pinching(lastCenter, lastSpan):
+            guard touches.count == 2 else { return [] }
+            let center = centroid
+            let span = span
+            state = .pinching(lastCenter: center, lastSpan: span)
+            return [.zoom(scale: span / max(lastSpan, 1), center: center, translation: CGVector(dx: center.x - lastCenter.x, dy: center.y - lastCenter.y))]
         case let .threeFinger(start, hasSwiped):
             let center = centroid
             let dx = center.x - start.x
@@ -153,7 +169,7 @@ public struct TouchInterpreter {
         case let .dragging(touch) where touch == id:
             state = .ignoring
             return [.press(.left, isDown: false, at: point)] + finishIfAllLifted()
-        case let .twoFingerPending(start, startTime):
+        case let .twoFingerPending(start, startTime, _):
             state = .ignoring
             let actions = time - startTime <= twoFingerTapMaxDuration ? click(.right, at: start) : []
             return actions + finishIfAllLifted()
@@ -195,7 +211,7 @@ public struct TouchInterpreter {
     private mutating func beginThreeFinger() -> [Action] {
         var actions: [Action] = []
         switch state {
-        case .pending, .longPressed, .twoFingerPending:
+        case .pending, .longPressed, .twoFingerPending, .pinching:
             break
         case .scrolling:
             actions = [.scrollEnded(velocityX: 0, velocityY: 0)]
@@ -211,6 +227,13 @@ public struct TouchInterpreter {
             state = .idle
         }
         return []
+    }
+
+    /// 2 本の指の間隔。2 本でなければ 0。
+    private var span: CGFloat {
+        let points = Array(touches.values)
+        guard points.count == 2 else { return 0 }
+        return distance(points[0], points[1])
     }
 
     private var centroid: CGPoint {

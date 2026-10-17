@@ -32,6 +32,7 @@ final class RemoteScreenUIView: UIView {
     // ビューの座標での、画面の下端に付いたキーボードの上端。キーボードがなければ無限大
     private var keyboardTop = CGFloat.infinity
     private var interpreter = TouchInterpreter()
+    private var zoom = ScreenZoom()
     private var longPressTimer: DispatchWorkItem?
     // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
     private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
@@ -43,6 +44,8 @@ final class RemoteScreenUIView: UIView {
         self.displayLayer = displayLayer
         super.init(frame: .zero)
         backgroundColor = .black
+        // 拡大した映像がビューの外にはみ出して、操作パネルの下などに描かれないようにする
+        clipsToBounds = true
         // 既定の false のままだと 2 本目の指が届かず、2 本指のスクロールが成立しない
         isMultipleTouchEnabled = true
         displayLayer.videoGravity = .resizeAspect
@@ -76,7 +79,7 @@ final class RemoteScreenUIView: UIView {
         super.layoutSubviews()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        displayLayer.frame = screenArea
+        displayLayer.frame = videoRect
         CATransaction.commit()
         // キーボードが出ている間は、その上端は画面の下端ではないので、下端からの払いを受けない
         interpreter.bottomEdge = isKeyboardShown ? .infinity : bounds.maxY
@@ -110,9 +113,15 @@ final class RemoteScreenUIView: UIView {
 
     // MARK: - 座標
 
-    private var videoRect: CGRect {
+    /// 等倍のときに映像を置く位置。
+    private var fittedRect: CGRect {
         guard videoSize.width > 0, videoSize.height > 0 else { return screenArea }
         return AVMakeRect(aspectRatio: videoSize, insideRect: screenArea)
+    }
+
+    /// 拡大を反映した、映像を置く位置。タッチの位置もここを基準に Mac の座標へ直す。
+    private var videoRect: CGRect {
+        zoom.rect(fitted: fittedRect, in: screenArea)
     }
 
     private func normalized(_ location: CGPoint) -> NormalizedPoint {
@@ -219,6 +228,9 @@ final class RemoteScreenUIView: UIView {
                 onThreeFingerSwipe?(direction)
             case .bottomEdgeSwipe:
                 onBottomEdgeSwipe?()
+            case let .zoom(scale, center, translation):
+                zoom.apply(scale: scale, center: center, translation: translation, fitted: fittedRect, area: screenArea)
+                setNeedsLayout()
             }
         }
     }
