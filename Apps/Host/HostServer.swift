@@ -389,11 +389,23 @@ nonisolated final class HostServer: @unchecked Sendable {
         typeless?.stop()
         microphone?.endListening()
         // つなぎ直すたびに補助アプリを起動し直すと、デバイスを作り直して点検し終えるまで iPad のマイクを使えない。しばらく残しておく
-        let stopMicrophone = DispatchWorkItem { [weak self] in self?.microphone?.stop() }
-        microphoneStop = stopMicrophone
-        queue.asyncAfter(deadline: .now() + 60, execute: stopMicrophone)
+        scheduleMicrophoneStop(after: 60)
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
+    }
+
+    /// 補助アプリを止める。Mac で直接 Typeless を使っている最中は、デバイスが消えて録音が途切れないよう、終わるまで待つ。
+    private func scheduleMicrophoneStop(after delay: TimeInterval) {
+        let stopMicrophone = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if TypelessMonitor.isRecording() {
+                scheduleMicrophoneStop(after: 5)
+            } else {
+                microphone?.stop()
+            }
+        }
+        microphoneStop = stopMicrophone
+        queue.asyncAfter(deadline: .now() + delay, execute: stopMicrophone)
     }
 
     /// 状態を iPad と Mac のメニューの両方に知らせる。
