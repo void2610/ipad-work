@@ -8,15 +8,20 @@ nonisolated final class VideoRenderer: @unchecked Sendable {
     /// 映像を始める前に設定しておく。
     var onNeedsKeyFrame: (@Sendable () -> Void)?
     var onVideoSizeChange: (@Sendable (CGSize) -> Void)?
+    /// 届いたフレームに写っている Mac の画面の範囲が変わったときに呼ぶ。
+    var onRegionChange: (@Sendable (VideoRegion) -> Void)?
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyFrame = true
+    private var region = VideoRegion.full
 
     /// 映像の接続を張り直すとき、前の接続の残りを捨ててキーフレームから描き直す。
     func reset() {
         displayLayer.sampleBufferRenderer.flush()
         formatDescription = nil
         waitingForKeyFrame = true
+        region = .full
+        onRegionChange?(.full)
     }
 
     func handle(_ message: WireMessage) {
@@ -44,6 +49,10 @@ nonisolated final class VideoRenderer: @unchecked Sendable {
             return
         }
         waitingForKeyFrame = false
+        if frame.region != region {
+            region = frame.region
+            onRegionChange?(frame.region)
+        }
         renderer.enqueue(sampleBuffer)
     }
 

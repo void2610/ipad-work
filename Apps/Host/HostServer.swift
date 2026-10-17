@@ -22,6 +22,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var control: MessageChannel?
     private var video: MessageChannel?
     private var streamer: ScreenStreamer?
+    // iPad が見ている範囲。映像の接続を張り直しても引き継ぐ
+    private var videoRegion = VideoRegion.full
     private var typeless: TypelessMonitor?
     private var microphone: MicrophoneRelay?
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
@@ -165,6 +167,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         switch message {
         case .requestKeyFrame:
             streamer?.requestKeyFrame()
+        case let .videoRegion(region):
+            videoRegion = region
+            streamer?.setRegion(region)
         case let .insertText(text):
             // 入力内容そのものはログに残さない
             Self.logger.info("文字入力を受信: \(text.count) 文字")
@@ -220,6 +225,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         control = channel
         Self.logger.notice("接続: \(deviceName, privacy: .public)")
         didOpenAudioCaptureSettings = false
+        // 前の iPad が拡大していた範囲を引き継がない。拡大していれば iPad が頼み直す
+        videoRegion = .full
         typeless?.start()
         microphone?.start()
         channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
@@ -238,7 +245,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
-        let streamer = ScreenStreamer(channel: channel, maxWidth: maxWidth, maxHeight: maxHeight)
+        let streamer = ScreenStreamer(channel: channel, maxWidth: maxWidth, maxHeight: maxHeight, region: videoRegion)
         self.streamer = streamer
         Task {
             do {

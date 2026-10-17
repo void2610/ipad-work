@@ -69,6 +69,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     /// 3 本指で払った向き。Mac はトラックパッドの 3 本指スワイプと同じ操作をする。
     case desktopSwipe(TouchInterpreter.SwipeDirection)
     case requestKeyFrame
+    /// iPad から Mac へ。映像として送ってほしい画面の範囲。拡大している間は見えている範囲だけを高い解像度で送ってもらう。
+    case videoRegion(VideoRegion)
     // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする
     /// 補助アプリが Host につないだら最初に送る。Host が起動時に渡した合言葉で、他のプロセスからの接続と見分ける。
     case microphoneRelayHello(token: String)

@@ -18,11 +18,14 @@ public struct VideoFormat: Sendable, Equatable {
 public struct VideoFrame: Sendable, Equatable {
     public var isKeyFrame: Bool
     public var presentationTimeMicros: Int64
+    /// このフレームに写っている、Mac の画面の範囲。
+    public var region: VideoRegion
     public var data: Data
 
-    public init(isKeyFrame: Bool, presentationTimeMicros: Int64, data: Data) {
+    public init(isKeyFrame: Bool, presentationTimeMicros: Int64, region: VideoRegion = .full, data: Data) {
         self.isKeyFrame = isKeyFrame
         self.presentationTimeMicros = presentationTimeMicros
+        self.region = region
         self.data = data
     }
 }
@@ -56,6 +59,9 @@ public enum WireMessage: Sendable, Equatable {
             var writer = ByteWriter()
             writer.write(UInt8(frame.isKeyFrame ? 1 : 0))
             writer.write(frame.presentationTimeMicros)
+            for value in [frame.region.x, frame.region.y, frame.region.width, frame.region.height] {
+                writer.write(value.bitPattern)
+            }
             writer.write(frame.data)
             return (Kind.videoFrame.rawValue, writer.data)
         case let .audio(samples):
@@ -78,7 +84,9 @@ public enum WireMessage: Sendable, Equatable {
             var reader = ByteReader(payload)
             let isKeyFrame = try reader.read(UInt8.self) != 0
             let presentationTime = try reader.read(Int64.self)
-            self = .videoFrame(VideoFrame(isKeyFrame: isKeyFrame, presentationTimeMicros: presentationTime, data: reader.readRemaining()))
+            let values = try (0 ..< 4).map { _ in try Double(bitPattern: reader.read(UInt64.self)) }
+            let region = VideoRegion(x: values[0], y: values[1], width: values[2], height: values[3])
+            self = .videoFrame(VideoFrame(isKeyFrame: isKeyFrame, presentationTimeMicros: presentationTime, region: region, data: reader.readRemaining()))
         case .audio:
             self = .audio(payload)
         case nil:

@@ -12,11 +12,13 @@ struct RemoteScreenView: UIViewRepresentable {
         view.sendPointer = { [weak session] messages in session?.sendPointer(messages) }
         view.onThreeFingerSwipe = { [weak session] direction in session?.swipeDesktop(direction) }
         view.onBottomEdgeSwipe = { [weak session] in session?.showDock() }
+        view.onRegionRequest = { [weak session] region in session?.requestVideoRegion(region) }
         return view
     }
 
     func updateUIView(_ view: RemoteScreenUIView, context _: Context) {
         view.videoSize = session.videoSize
+        view.shownRegion = session.videoRegion
     }
 }
 
@@ -26,6 +28,14 @@ final class RemoteScreenUIView: UIView {
     var sendPointer: (([ControlMessage]) -> Void)?
     var onThreeFingerSwipe: ((TouchInterpreter.SwipeDirection) -> Void)?
     var onBottomEdgeSwipe: (() -> Void)?
+    var onRegionRequest: ((VideoRegion) -> Void)?
+    /// 届いている映像に写っている Mac の画面の範囲。拡大中は見えている範囲だけが高い解像度で届く。
+    var shownRegion = VideoRegion.full {
+        didSet {
+            if shownRegion != oldValue { setNeedsLayout() }
+        }
+    }
+    private var regionRequestTimer: Timer?
     var videoSize = CGSize.zero
 
     private let displayLayer: AVSampleBufferDisplayLayer
@@ -79,7 +89,8 @@ final class RemoteScreenUIView: UIView {
         super.layoutSubviews()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        displayLayer.frame = videoRect
+        // 届いている映像は shownRegion の範囲だけなので、画面全体の中でその範囲が占める位置に置く
+        displayLayer.frame = shownRegion.rect(in: videoRect)
         CATransaction.commit()
         // キーボードが出ている間は、その上端は画面の下端ではないので、下端からの払いを受けない
         interpreter.bottomEdge = isKeyboardShown ? .infinity : bounds.maxY
@@ -231,6 +242,19 @@ final class RemoteScreenUIView: UIView {
             case let .zoom(scale, center, translation):
                 zoom.apply(scale: scale, center: center, translation: translation, fitted: fittedRect, area: screenArea)
                 setNeedsLayout()
+                scheduleRegionRequest()
+            }
+        }
+    }
+
+    /// 拡大が落ち着いたら、見えている範囲を Mac に頼む。動かしている間に何度も頼まないよう、少し待つ。
+    private func scheduleRegionRequest() {
+        regionRequestTimer?.invalidate()
+        regionRequestTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let region = self.zoom.isZoomed ? VideoRegion.visible(zoomed: self.videoRect, area: self.screenArea) : .full
+                self.onRegionRequest?(region)
             }
         }
     }

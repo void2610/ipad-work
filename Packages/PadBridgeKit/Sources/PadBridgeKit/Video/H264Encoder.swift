@@ -41,13 +41,15 @@ public final class H264Encoder: @unchecked Sendable {
         VTCompressionSessionInvalidate(session)
     }
 
-    public func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, forceKeyFrame: Bool) {
+    /// `region` は、このフレームに写っている Mac の画面の範囲。受け取った側はそれに合わせて置く。
+    public func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, forceKeyFrame: Bool, region: VideoRegion = .full) {
         let frameProperties = forceKeyFrame ? [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary : nil
         VTCompressionSessionEncodeFrame(
             session, imageBuffer: pixelBuffer, presentationTimeStamp: presentationTime, duration: .invalid,
             frameProperties: frameProperties, infoFlagsOut: nil
         ) { [output] status, _, sampleBuffer in
-            guard status == noErr, let sampleBuffer, let frame = try? VideoFrame(sampleBuffer: sampleBuffer) else { return }
+            guard status == noErr, let sampleBuffer, var frame = try? VideoFrame(sampleBuffer: sampleBuffer) else { return }
+            frame.region = region
             var format: VideoFormat?
             if frame.isKeyFrame, let description = sampleBuffer.formatDescription {
                 format = try? VideoFormat(formatDescription: description)

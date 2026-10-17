@@ -19,6 +19,10 @@ final class HostSession {
     private(set) var phase = Phase.connecting
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
+    /// 今表示している映像に写っている、Mac の画面の範囲。
+    private(set) var videoRegion = VideoRegion.full
+    // 送ってほしいと頼んだ範囲。つなぎ直したときに頼み直す
+    private var requestedRegion = VideoRegion.full
     /// Mac の Typeless が聞き取っているか。押した直後は求めた状態を先に見せ、Mac から実際の状態が届いたらそれに合わせる。
     private(set) var isVoiceInputActive = false
     /// iPad のマイクを使えないときの知らせ。
@@ -59,6 +63,9 @@ final class HostSession {
         renderer.onVideoSizeChange = { [weak self] size in
             Task { @MainActor in self?.videoSize = size }
         }
+        renderer.onRegionChange = { [weak self] region in
+            Task { @MainActor in self?.videoRegion = region }
+        }
         BackgroundAudio.shared.start()
         connectControl()
     }
@@ -91,6 +98,13 @@ final class HostSession {
         if wrapped.didUseModifiers {
             modifierLatch.consume()
         }
+    }
+
+    /// 拡大している間は、見えている範囲だけを Mac の解像度で送ってもらう。
+    func requestVideoRegion(_ region: VideoRegion) {
+        guard region != requestedRegion else { return }
+        requestedRegion = region
+        send(.videoRegion(region))
     }
 
     func swipeDesktop(_ direction: TouchInterpreter.SwipeDirection) {
@@ -252,6 +266,10 @@ final class HostSession {
         case let .welcome(_, status):
             hostStatus = status
             phase = .connected
+            // Mac はつながるたびに画面全体から始めるので、拡大していれば頼み直す
+            if !requestedRegion.isFull {
+                send(.videoRegion(requestedRegion))
+            }
             startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status

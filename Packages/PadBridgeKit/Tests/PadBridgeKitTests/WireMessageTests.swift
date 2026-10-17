@@ -15,6 +15,7 @@ struct WireMessageTests {
         .voiceInputState(isActive: false),
         .desktopSwipe(.left),
         .requestKeyFrame,
+        .videoRegion(VideoRegion(x: 0.25, y: 0.125, width: 0.5, height: 0.5)),
         .microphoneRelayHello(token: "abc"),
         .microphoneRelay(isListening: true),
         .microphoneRelayReady(isUsingPadMicrophone: true),
@@ -27,7 +28,7 @@ struct WireMessageTests {
 
     @Test func videoMessagesRoundTrip() throws {
         let format = WireMessage.videoFormat(VideoFormat(width: 1920, height: 1200, sps: Data([0x67, 0x64, 0x00]), pps: Data([0x68, 0xEE])))
-        let frame = WireMessage.videoFrame(VideoFrame(isKeyFrame: true, presentationTimeMicros: 123_456_789, data: Data(repeating: 0xAB, count: 4096)))
+        let frame = WireMessage.videoFrame(VideoFrame(isKeyFrame: true, presentationTimeMicros: 123_456_789, region: VideoRegion(x: 0.5, y: 0.25, width: 0.25, height: 0.25), data: Data(repeating: 0xAB, count: 4096)))
         for message in [format, frame] {
             let encoded = try message.encoded()
             #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
