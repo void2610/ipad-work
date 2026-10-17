@@ -149,8 +149,10 @@ nonisolated final class HostServer: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, TypelessMonitor.isRecording() else { return }
             let devices = TypelessMonitor.inputDeviceUIDs()
-            let usesPadMicrophone = devices.contains(PadMicrophoneDevice.uid)
             Self.logger.notice("Typeless が録音しているマイク: \(devices.joined(separator: ", "), privacy: .public)")
+            // タップの集約デバイスで録音しているときは、プロセスのデバイスの一覧が空になる。分からないときは知らせない
+            guard !devices.isEmpty else { return }
+            let usesPadMicrophone = devices.contains(PadMicrophoneDevice.uid)
             guard typelessUsesOtherMicrophone == usesPadMicrophone else { return }
             typelessUsesOtherMicrophone = !usesPadMicrophone
             publishStatus()
