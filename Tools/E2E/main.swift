@@ -4,11 +4,10 @@ import CoreMedia
 import Network
 import VideoToolbox
 
-// Host は同じペアリングコードで先に起動しておく必要がある (`just e2e` が両方まとめて行う)
+// Host は先に起動しておく必要がある (`just e2e` が両方まとめて行う)
 
 @MainActor
 final class Harness {
-    private let code: PairingCode
     private let serviceName: String
     private let loopbackPort: NWEndpoint.Port
     private var failures: [String] = []
@@ -18,8 +17,7 @@ final class Harness {
     private let fallbackTextView = AXRefusingTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
     private var animationTimer: Timer?
 
-    init(code: PairingCode, serviceName: String, loopbackPort: NWEndpoint.Port) {
-        self.code = code
+    init(serviceName: String, loopbackPort: NWEndpoint.Port) {
         self.serviceName = serviceName
         self.loopbackPort = loopbackPort
         window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 260, height: 380), styleMask: [.titled], backing: .buffered, defer: false)
@@ -51,8 +49,7 @@ final class Harness {
         await step("Bonjour で Host を見つける") { try await Self.discoverHost(named: self.serviceName) }
         // このクライアントはターミナルの権限で動き、LAN 宛ての送信はターミナルのローカルネットワーク許可に縛られるため、接続はループバックで行う
         let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: loopbackPort)
-        await step("違うコードは TLS で拒否される") { try await Self.expectRejected(endpoint: endpoint) }
-        guard let session = await step("正しいコードで接続して welcome を受け取る", { try await ClientSession.connect(endpoint: endpoint, code: self.code) }) else { return 1 }
+        guard let session = await step("接続して welcome を受け取る", { try await ClientSession.connect(endpoint: endpoint) }) else { return 1 }
         defer { session.close() }
         print("  Host の状態: 画面収録=\(session.status.canCaptureScreen) アクセシビリティ=\(session.status.canControlInput)")
 
@@ -73,6 +70,7 @@ final class Harness {
                 try await self.checkInsert(session: session, into: self.fallbackTextView, text: "日本語入力モードでの送信テスト")
             }
         }
+        await step("Typeless が聞き取りを始め、完了する") { try await self.checkTypeless(session: session) }
         await step("Return キーが届く") { try await self.checkReturnKey(session: session) }
         await step("Command+A が届く") { try await self.checkShortcut(session: session) }
 
@@ -177,6 +175,64 @@ final class Harness {
         }
     }
 
+    private func checkTypeless(session: ClientSession) async throws {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: "now.typeless.desktop").first != nil else {
+            throw HarnessError("Typeless が起動していない")
+        }
+        // 聞き取った結果が他のアプリに入らないよう、自分の入力欄を前面にしておく
+        click(axTextView, session: session)
+        try await waitUntil { self.window.firstResponder === self.axTextView }
+        guard Self.typelessWindowNumber() == nil else { throw HarnessError("始める前から Typeless の表示が出ている") }
+        session.send(.voiceInput(isActive: true))
+        do {
+            try await waitUntil(timeout: 5) { Self.typelessWindowNumber() != nil }
+            try await Task.sleep(for: .milliseconds(500))
+            // 同じ窓に、聞き取り中の小さなピルか、ショートカットの使い方の案内 (背の高いパネル) が描かれる。窓が出ただけでは区別できない
+            let height = try Self.typelessContentHeight()
+            guard height < 150 else { throw HarnessError("聞き取りではなく使い方の案内が出ている (表示の高さ \(height)px)") }
+        } catch {
+            session.send(.voiceInput(isActive: false))
+            throw error
+        }
+        session.send(.voiceInput(isActive: false))
+        try await waitUntil(timeout: 15) { Self.typelessWindowNumber() == nil }
+    }
+
+    /// Typeless が操作中に出す窓。待機中も 1x1 の窓が 1 つあるので、それより大きいものを探す。
+    private static func typelessWindowNumber() -> Int? {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.first { window in
+            guard (window[kCGWindowOwnerName as String] as? String)?.contains("Typeless") == true,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat]
+            else { return false }
+            return (bounds["Width"] ?? 0) > 10 && (bounds["Height"] ?? 0) > 10
+        }?[kCGWindowNumber as String] as? Int
+    }
+
+    /// Typeless の窓を撮影し、不透明な暗い部分が縦に何ピクセルあるかを数える。
+    private static func typelessContentHeight() throws -> Int {
+        guard let number = typelessWindowNumber() else { throw HarnessError("Typeless の表示が消えた") }
+        let path = NSTemporaryDirectory() + "padbridge-typeless-\(number).png"
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-o", "-l", "\(number)", path]
+        try capture.run()
+        capture.waitUntilExit()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        guard let image = NSImage(contentsOfFile: path), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else {
+            throw HarnessError("Typeless の表示を撮影できない")
+        }
+        var rows = 0
+        for y in 0 ..< bitmap.pixelsHigh {
+            let hasContent = stride(from: 0, to: bitmap.pixelsWide, by: 4).contains { x in
+                guard let color = bitmap.colorAt(x: x, y: y) else { return false }
+                return color.alphaComponent > 0.8 && color.brightnessComponent < 0.3
+            }
+            if hasContent { rows += 1 }
+        }
+        return rows
+    }
+
     private func checkReturnKey(session: ClientSession) async throws {
         axTextView.string = "改行"
         click(axTextView, session: session)
@@ -251,26 +307,6 @@ final class Harness {
             throw HarnessError("見つからない")
         }
     }
-
-    private static func expectRejected(endpoint: NWEndpoint) async throws {
-        var wrong = PairingCode.generate()
-        while wrong == PairingCode.generate() { wrong = PairingCode.generate() }
-        let channel = MessageChannel(connection: NWConnection(to: endpoint, using: .padBridge(pairingCode: wrong)), queue: .main)
-        defer { channel.cancel() }
-        let states = AsyncStream.makeStream(of: NWConnection.State.self)
-        channel.start(onStateChange: { states.continuation.yield($0) }, onMessage: { _ in })
-        try await withTimeout(seconds: 5) {
-            for await state in states.stream {
-                switch state {
-                case .ready: throw HarnessError("違うコードで接続できてしまった")
-                case let .failed(error), let .waiting(error):
-                    if case .tls = error { return }
-                    throw HarnessError("TLS 以外で失敗: \(error)")
-                default: continue
-                }
-            }
-        }
-    }
 }
 
 struct HarnessError: Error, CustomStringConvertible {
@@ -307,8 +343,8 @@ final class ClientSession {
         self.status = status
     }
 
-    static func connect(endpoint: NWEndpoint, code: PairingCode) async throws -> ClientSession {
-        let control = MessageChannel(connection: NWConnection(to: endpoint, using: .padBridge(pairingCode: code)), queue: .main)
+    static func connect(endpoint: NWEndpoint) async throws -> ClientSession {
+        let control = MessageChannel(connection: NWConnection(to: endpoint, using: .padBridge()), queue: .main)
         let welcome = AsyncStream.makeStream(of: HostStatus.self)
         control.start(
             onStateChange: { state in
@@ -324,7 +360,7 @@ final class ClientSession {
             for await status in welcome.stream { return status }
             throw HarnessError("welcome が来ない")
         }
-        let video = VideoReceiver(endpoint: endpoint, code: code)
+        let video = VideoReceiver(endpoint: endpoint)
         return ClientSession(control: control, video: video, status: status)
     }
 
@@ -355,8 +391,8 @@ nonisolated final class VideoReceiver: @unchecked Sendable {
     private var totalBytes = 0
     private var keyFrames = 0
 
-    init(endpoint: NWEndpoint, code: PairingCode) {
-        channel = MessageChannel(connection: NWConnection(to: endpoint, using: .padBridge(pairingCode: code)), queue: DispatchQueue(label: "e2e.video"))
+    init(endpoint: NWEndpoint) {
+        channel = MessageChannel(connection: NWConnection(to: endpoint, using: .padBridge()), queue: DispatchQueue(label: "e2e.video"))
         channel.start(
             onStateChange: { [channel] state in
                 if case .ready = state {
@@ -491,13 +527,13 @@ final class AXRefusingTextView: NSTextView {
 }
 
 let arguments = CommandLine.arguments
-guard arguments.count == 4, let code = PairingCode(arguments[1]), let port = NWEndpoint.Port(arguments[3]) else {
-    print("使い方: e2e <ペアリングコード> <Host の Bonjour 名> <Host の待ち受けポート>")
+guard arguments.count == 3, let port = NWEndpoint.Port(arguments[2]) else {
+    print("使い方: e2e <Host の Bonjour 名> <Host の待ち受けポート>")
     exit(2)
 }
 let app = NSApplication.shared
 Task { @MainActor in
-    let status = await Harness(code: code, serviceName: arguments[2], loopbackPort: port).run()
+    let status = await Harness(serviceName: arguments[1], loopbackPort: port).run()
     exit(status)
 }
 app.run()
