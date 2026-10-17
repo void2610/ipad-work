@@ -185,32 +185,45 @@ fileprivate class KeyCapButton: UIButton {
     }
 }
 
-/// 押した瞬間に 1 回送り、押し続けると実際のキーボードと同じく繰り返す。
+/// 指を離したときに 1 回送り、押し続けると実際のキーボードと同じく繰り返す。
+/// 押した瞬間に送ると、キーの列を横へずらそうとキーの上から触れただけでもキーが送られてしまう。押したことは表示と音ですぐに伝える。
 private final class RepeatingButton: KeyCapButton {
     private let fire: () -> Void
     private let repeats: Bool
     private var timer: Timer?
+    private var didRepeat = false
 
     init(title: String, repeats: Bool, fire: @escaping () -> Void) {
         self.fire = fire
         self.repeats = repeats
         super.init(title: title)
         addAction(UIAction { [weak self] _ in self?.press() }, for: .touchDown)
-        for event: UIControl.Event in [.touchUpInside, .touchUpOutside, .touchCancel] {
+        addAction(UIAction { [weak self] _ in self?.release() }, for: .touchUpInside)
+        for event: UIControl.Event in [.touchUpOutside, .touchCancel] {
             addAction(UIAction { [weak self] _ in self?.stopRepeating() }, for: event)
         }
     }
 
     private func press() {
-        fire()
+        didRepeat = false
         guard repeats else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.timer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in
+                guard let self else { return }
+                self.didRepeat = true
+                self.fire()
+                self.timer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated { self?.fire() }
                 }
             }
+        }
+    }
+
+    private func release() {
+        stopRepeating()
+        if !didRepeat {
+            fire()
         }
     }
 
