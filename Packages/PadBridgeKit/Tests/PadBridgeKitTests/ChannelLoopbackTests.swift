@@ -3,14 +3,13 @@ import Network
 @testable import PadBridgeKit
 import Testing
 
-/// 実際の TLS-PSK とフレーミングを、ループバックの TCP で通して確かめる。
+/// 実際のフレーミングを、ループバックの TCP で通して確かめる。
 struct ChannelLoopbackTests {
-    @Test func sameCodeExchangesMessagesBothWays() async throws {
-        let code = PairingCode.generate()
-        let server = try await LoopbackServer(code: code)
+    @Test func messagesRoundTripBothWays() async throws {
+        let server = try await LoopbackServer()
         defer { server.stop() }
 
-        let client = MessageChannel(connection: NWConnection(to: server.endpoint, using: .padBridge(pairingCode: code)), queue: .global())
+        let client = MessageChannel(connection: NWConnection(to: server.endpoint, using: .padBridge()), queue: .global())
         let replies = AsyncStream.makeStream(of: WireMessage.self)
         client.start(onStateChange: { _ in }, onMessage: { replies.continuation.yield($0) })
         defer { client.cancel() }
@@ -23,24 +22,6 @@ struct ChannelLoopbackTests {
         #expect(await iterator.next() == .control(.insertText("日本語のテキスト")))
         #expect(await iterator.next() == .videoFrame(big))
     }
-
-    @Test func differentCodeFailsHandshake() async throws {
-        let server = try await LoopbackServer(code: PairingCode.generate())
-        defer { server.stop() }
-
-        let client = MessageChannel(connection: NWConnection(to: server.endpoint, using: .padBridge(pairingCode: PairingCode.generate())), queue: .global())
-        let states = AsyncStream.makeStream(of: NWConnection.State.self)
-        client.start(onStateChange: { states.continuation.yield($0) }, onMessage: { _ in })
-        defer { client.cancel() }
-
-        var sawTLSFailure = false
-        for await state in states.stream {
-            if case .ready = state { break }
-            if case let .failed(error) = state, case .tls = error { sawTLSFailure = true; break }
-            if case let .waiting(error) = state, case .tls = error { sawTLSFailure = true; break }
-        }
-        #expect(sawTLSFailure)
-    }
 }
 
 /// 受け取ったメッセージをそのまま送り返すサーバー。
@@ -48,8 +29,8 @@ private final class LoopbackServer: Sendable {
     let listener: NWListener
     let endpoint: NWEndpoint
 
-    init(code: PairingCode) async throws {
-        let listener = try NWListener(using: .padBridge(pairingCode: code), on: .any)
+    init() async throws {
+        let listener = try NWListener(using: .padBridge(), on: .any)
         let ready = AsyncStream.makeStream(of: NWListener.State.self)
         listener.stateUpdateHandler = { ready.continuation.yield($0) }
         listener.newConnectionHandler = { connection in

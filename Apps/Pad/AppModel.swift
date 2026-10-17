@@ -15,110 +15,62 @@ struct DiscoveredHost: Identifiable, Hashable {
 final class AppModel {
     private(set) var hosts: [DiscoveredHost] = []
     private(set) var session: HostSession?
-    var pairingTarget: DiscoveredHost?
-    private(set) var pairingError: String?
-    private(set) var errorMessage: String?
-    let dictation = DictationController()
 
-    private let keychain = KeychainStore(service: "dev.void2610.padbridge.pad")
+    private static let lastHostKey = "lastHostName"
     private var browser: NWBrowser?
-    // バックグラウンドで接続が切れたあと、前面に戻ったら同じ Mac につなぎ直すために覚えておく
-    private var hostToResume: DiscoveredHost?
-    private var hasAutoConnected = false
+    // 利用者が自分で切断したあとは、見つかった Mac に勝手につなぎ直さない
+    private var isAutoConnectSuppressed = false
 
     init() {
         startBrowsing()
-        autoConnectForTesting()
+        autoConnectIfPossible()
     }
 
     func select(_ host: DiscoveredHost) {
-        errorMessage = nil
-        guard let code = storedCode(for: host) else {
-            pairingError = nil
-            pairingTarget = host
-            return
-        }
-        connect(to: host, code: code)
-    }
-
-    func submitPairingCode(_ input: String, for host: DiscoveredHost) {
-        guard let code = PairingCode(input) else {
-            pairingError = "コードは 10 文字です（I・L・O・0・1 は使われません）。"
-            return
-        }
-        keychain.set(code.value, forAccount: host.name)
-        pairingTarget = nil
-        connect(to: host, code: code)
-    }
-
-    func cancelPairing() {
-        pairingTarget = nil
-    }
-
-    func forgetPairing(for host: DiscoveredHost) {
-        keychain.remove(account: host.name)
+        connect(to: host)
     }
 
     func disconnect() {
-        hostToResume = nil
+        isAutoConnectSuppressed = true
         session?.close()
         session = nil
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    func reconnectIfNeeded() {
-        guard session == nil, let host = hostToResume, let code = storedCode(for: host) else { return }
-        // Bonjour の解決結果は作り直されるので、名前で引き直した最新の端点を使う
-        let current = hosts.first { $0.name == host.name } ?? host
-        connect(to: current, code: code)
+    func setForeground(_ isForeground: Bool) {
+        session?.setForeground(isForeground)
     }
 
-    /// 実機・シミュレータでの確認用。起動引数で指定した Mac へ、指定したコードで自動でつなぐ。キーチェーンには保存しない。
-    private func autoConnectForTesting() {
-        #if DEBUG
-            let defaults = UserDefaults.standard
-            // Bonjour を通さずに Mac のループバックへつなぐ指定。シミュレータは Mac とネットワークを共有している
-            let direct = defaults.string(forKey: "PadBridgeTestPort").flatMap(NWEndpoint.Port.init(_:)).map {
-                DiscoveredHost(name: "テスト用 Host", endpoint: .hostPort(host: "127.0.0.1", port: $0))
-            }
-            let named = defaults.string(forKey: "PadBridgeTestHostName").flatMap { name in hosts.first { $0.name == name } }
-            guard !hasAutoConnected, let host = direct ?? named,
-                  let code = defaults.string(forKey: "PadBridgeTestPairingCode").flatMap(PairingCode.init)
-            else { return }
-            hasAutoConnected = true
-            connect(to: host, code: code)
-        #endif
-    }
-
-    private func storedCode(for host: DiscoveredHost) -> PairingCode? {
-        keychain.string(forAccount: host.name).flatMap(PairingCode.init)
-    }
-
-    private func connect(to host: DiscoveredHost, code: PairingCode) {
+    private func connect(to host: DiscoveredHost) {
         session?.close()
-        errorMessage = nil
-        let session = HostSession(host: host, pairingCode: code) { [weak self] end in
-            self?.sessionEnded(end, host: host)
-        }
+        isAutoConnectSuppressed = false
+        UserDefaults.standard.set(host.name, forKey: Self.lastHostKey)
+        let session = HostSession(host: host)
         self.session = session
-        hostToResume = host
         session.start()
-        // 操作中に iPad が自動ロックされると、接続も映像も切れてしまう
+        // 操作中に iPad が自動ロックされないようにする
         UIApplication.shared.isIdleTimerDisabled = true
     }
 
-    private func sessionEnded(_ end: HostSession.End, host: DiscoveredHost) {
-        session = nil
-        UIApplication.shared.isIdleTimerDisabled = false
-        switch end {
-        case .rejectedPairingCode:
-            hostToResume = nil
-            keychain.remove(account: host.name)
-            pairingError = "ペアリングコードが一致しませんでした。Mac のメニューに表示されているコードを入力してください。"
-            pairingTarget = host
-        case let .lost(reason):
-            errorMessage = reason
-        }
+    private func autoConnectIfPossible() {
+        guard session == nil, !isAutoConnectSuppressed, let host = preferredHost() else { return }
+        connect(to: host)
+    }
+
+    private func preferredHost() -> DiscoveredHost? {
+        #if DEBUG
+            // 実機・シミュレータでの確認用に、起動引数で接続先を決め打ちできるようにしている
+            let defaults = UserDefaults.standard
+            if let port = defaults.string(forKey: "PadBridgeTestPort").flatMap(NWEndpoint.Port.init(_:)) {
+                // シミュレータは Mac とネットワークを共有しているので、Mac のループバックへ直接つなげる
+                return DiscoveredHost(name: "テスト用 Host", endpoint: .hostPort(host: "127.0.0.1", port: port))
+            }
+            if let name = defaults.string(forKey: "PadBridgeTestHostName") {
+                return hosts.first { $0.name == name }
+            }
+        #endif
+        let lastName = UserDefaults.standard.string(forKey: Self.lastHostKey)
+        return hosts.first { $0.name == lastName } ?? (hosts.count == 1 ? hosts.first : nil)
     }
 
     private func startBrowsing() {
@@ -132,7 +84,7 @@ final class AppModel {
             }
             MainActor.assumeIsolated {
                 self?.hosts = hosts.sorted { $0.name < $1.name }
-                self?.autoConnectForTesting()
+                self?.autoConnectIfPossible()
             }
         }
         browser.start(queue: .main)

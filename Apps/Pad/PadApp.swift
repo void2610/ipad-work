@@ -15,8 +15,10 @@ struct PadBridgeApp: App {
                 }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
-                    model.reconnectIfNeeded()
+                switch phase {
+                case .active: model.setForeground(true)
+                case .background: model.setForeground(false)
+                default: break
                 }
             }
         }

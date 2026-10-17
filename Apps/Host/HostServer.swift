@@ -11,7 +11,6 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.void2610.padbridge.host.server")
     // 文字入力の AX 呼び出しは相手アプリの応答待ちで止まりうるので、通信とは別の直列キューで順に処理する
     private let inputQueue = DispatchQueue(label: "dev.void2610.padbridge.host.input")
-    private let pairingCode: PairingCode
     private let hostName: String
     private let onClientChange: @Sendable (String?) -> Void
     private let onListenerChange: @Sendable (String) -> Void
@@ -24,13 +23,11 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var streamer: ScreenStreamer?
 
     init(
-        pairingCode: PairingCode,
         hostName: String,
         doubleClickInterval: TimeInterval,
         onClientChange: @escaping @Sendable (String?) -> Void,
         onListenerChange: @escaping @Sendable (String) -> Void
     ) {
-        self.pairingCode = pairingCode
         self.hostName = hostName
         self.onClientChange = onClientChange
         self.onListenerChange = onListenerChange
@@ -53,7 +50,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func startListener() {
         do {
-            let listener = try NWListener(using: .padBridge(pairingCode: pairingCode))
+            let listener = try NWListener(using: .padBridge())
             listener.service = NWListener.Service(name: hostName, type: PadBridgeService.type)
             listener.stateUpdateHandler = { [weak self] state in
                 Self.logger.info("listener: \(String(describing: state), privacy: .public)")
@@ -117,6 +114,9 @@ nonisolated final class HostServer: @unchecked Sendable {
             // 入力内容そのものはログに残さない
             Self.logger.info("文字入力を受信: \(text.count) 文字")
             inputQueue.async { TextInserter.insert(text) }
+        case let .voiceInput(isActive):
+            Self.logger.info("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
+            inputQueue.async { [injector] in injector.handle(message) }
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }

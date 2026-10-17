@@ -2,41 +2,24 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Observation
-import PadBridgeKit
 
 @Observable
 final class HostController {
-    private(set) var pairingCode: PairingCode
     private(set) var connectedDeviceName: String?
     private(set) var listenerDescription = "起動中"
     private(set) var canCaptureScreen = false
     private(set) var canControlInput = false
 
-    private let keychain = KeychainStore(service: "dev.void2610.padbridge.host")
     private var server: HostServer?
     private var permissionTimer: Timer?
 
     init() {
-        if let override = Self.testPairingCode {
-            pairingCode = override
-        } else if let stored = keychain.string(forAccount: "pairingCode").flatMap(PairingCode.init) {
-            pairingCode = stored
-        } else {
-            pairingCode = .generate()
-            keychain.set(pairingCode.value, forAccount: "pairingCode")
-        }
         refreshPermissions()
         startServer()
         // システム設定で許可が変わっても通知が来ないので、表示用に定期的に読み直す
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPermissions() }
         }
-    }
-
-    func regeneratePairingCode() {
-        pairingCode = .generate()
-        keychain.set(pairingCode.value, forAccount: "pairingCode")
-        startServer()
     }
 
     func refreshPermissions() {
@@ -70,15 +53,6 @@ final class HostController {
         NSApp.terminate(nil)
     }
 
-    /// E2E テスト (`just e2e`) が、保存済みのコードに触れずに既知のコードで起動するための指定口。
-    private static var testPairingCode: PairingCode? {
-        #if DEBUG
-            UserDefaults.standard.string(forKey: "PadBridgeTestPairingCode").flatMap(PairingCode.init)
-        #else
-            nil
-        #endif
-    }
-
     /// E2E テストの Host を、普段使いの Host と同時に動かしても Bonjour 名がぶつからないようにする指定口。
     private static var testServiceName: String? {
         #if DEBUG
@@ -98,7 +72,6 @@ final class HostController {
         server?.stop()
         connectedDeviceName = nil
         let server = HostServer(
-            pairingCode: pairingCode,
             hostName: Self.testServiceName ?? Host.current().localizedName ?? "Mac",
             doubleClickInterval: NSEvent.doubleClickInterval,
             onClientChange: { [weak self] name in

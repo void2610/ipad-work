@@ -12,16 +12,9 @@ struct HostMenuView: View {
                 Text(statusText).foregroundStyle(.secondary)
             }
 
-            GroupBox("ペアリングコード") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(controller.pairingCode.formatted)
-                        .font(.system(.title2, design: .monospaced).weight(.semibold))
-                        .textSelection(.enabled)
-                    Text("初回接続時に iPad で入力します。").font(.caption).foregroundStyle(.secondary)
-                    Button("コードを再発行") { controller.regeneratePairingCode() }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            Text("同じネットワークの iPad で PadBridge を開くと接続できます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             GroupBox("権限") {
                 VStack(alignment: .leading, spacing: 8) {

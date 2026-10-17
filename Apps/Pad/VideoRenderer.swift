@@ -12,6 +12,13 @@ nonisolated final class VideoRenderer: @unchecked Sendable {
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyFrame = true
 
+    /// 映像の接続を張り直すとき、前の接続の残りを捨ててキーフレームから描き直す。
+    func reset() {
+        displayLayer.sampleBufferRenderer.flush()
+        formatDescription = nil
+        waitingForKeyFrame = true
+    }
+
     func handle(_ message: WireMessage) {
         switch message {
         case let .videoFormat(format):

@@ -1,20 +1,17 @@
 import Foundation
 import Network
 import Observation
+import os
 import PadBridgeKit
 import UIKit
 
-/// 1 台の Mac との接続。操作用と映像用の 2 本の接続を持つ。
+/// 1 台の Mac との接続。操作用と映像用の 2 本の接続を持ち、切れたら自分でつなぎ直す。
 @Observable
 final class HostSession {
-    enum End {
-        case rejectedPairingCode
-        case lost(String)
-    }
-
     enum Phase {
         case connecting
         case connected
+        case reconnecting
     }
 
     let host: DiscoveredHost
@@ -22,33 +19,78 @@ final class HostSession {
     private(set) var phase = Phase.connecting
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
+    private(set) var isVoiceInputActive = false
 
-    private let pairingCode: PairingCode
-    private let onEnd: (End) -> Void
+    private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
     // 映像の受信と復号を操作の通信から切り離し、映像が重くても操作が遅れないようにする
     private let videoQueue = DispatchQueue(label: "dev.void2610.padbridge.pad.video")
     private var control: MessageChannel?
     private var video: MessageChannel?
-    private var isFinished = false
+    private var isClosed = false
+    private var isForeground = true
+    private var retryDelay: Duration = .milliseconds(500)
+    private var retryTask: Task<Void, Never>?
+    private var videoRetryTask: Task<Void, Never>?
 
-    init(host: DiscoveredHost, pairingCode: PairingCode, onEnd: @escaping (End) -> Void) {
+    init(host: DiscoveredHost) {
         self.host = host
-        self.pairingCode = pairingCode
-        self.onEnd = onEnd
     }
 
     func start() {
-        let control = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge(pairingCode: pairingCode)), queue: .main)
-        self.control = control
-        renderer.onNeedsKeyFrame = { [control] in
-            control.send(.control(.requestKeyFrame))
+        renderer.onNeedsKeyFrame = { [weak self] in
+            Task { @MainActor in self?.send(.requestKeyFrame) }
         }
         renderer.onVideoSizeChange = { [weak self] size in
             Task { @MainActor in self?.videoSize = size }
         }
-        control.start(
-            onStateChange: { [weak self] state in
-                MainActor.assumeIsolated { self?.controlStateChanged(state) }
+        BackgroundAudio.shared.start()
+        connectControl()
+    }
+
+    func send(_ message: ControlMessage) {
+        control?.send(.control(message))
+    }
+
+    /// Mac の Typeless の push-to-talk を押す (true) か離す (false)。
+    func setVoiceInput(_ isActive: Bool) {
+        guard isVoiceInputActive != isActive else { return }
+        isVoiceInputActive = isActive
+        send(.voiceInput(isActive: isActive))
+    }
+
+    func close() {
+        setVoiceInput(false)
+        isClosed = true
+        retryTask?.cancel()
+        videoRetryTask?.cancel()
+        replaceControl(with: nil)
+        stopVideo()
+        BackgroundAudio.shared.stop()
+    }
+
+    /// 裏に回っている間は操作用の接続だけ保ち、映像は止めて電池と通信量を抑える。
+    func setForeground(_ isForeground: Bool) {
+        self.isForeground = isForeground
+        if isForeground {
+            startVideoIfNeeded()
+        } else {
+            // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
+            setVoiceInput(false)
+            stopVideo()
+        }
+    }
+
+    // MARK: - 操作用の接続
+
+    private func connectControl() {
+        let channel = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge()), queue: .main)
+        replaceControl(with: channel)
+        channel.start(
+            onStateChange: { [weak self, weak channel] state in
+                MainActor.assumeIsolated {
+                    guard let self, let channel, channel === self.control else { return }
+                    self.controlStateChanged(state)
+                }
             },
             onMessage: { [weak self] message in
                 MainActor.assumeIsolated { self?.handleControl(message) }
@@ -56,38 +98,41 @@ final class HostSession {
         )
     }
 
-    func send(_ message: ControlMessage) {
-        control?.send(.control(message))
-    }
-
-    func close() {
-        isFinished = true
-        control?.cancel()
-        video?.cancel()
-    }
-
-    private func finish(_ end: End) {
-        guard !isFinished else { return }
-        close()
-        onEnd(end)
+    private func replaceControl(with channel: MessageChannel?) {
+        let old = control
+        control = channel
+        old?.cancel()
     }
 
     private func controlStateChanged(_ state: NWConnection.State) {
         switch state {
         case .ready:
+            retryDelay = .milliseconds(500)
             send(.hello(role: .control, deviceName: UIDevice.current.name, maxVideoWidth: 0, maxVideoHeight: 0))
-        case let .waiting(error):
-            if case .tls = error { finish(.rejectedPairingCode) }
-        case let .failed(error):
-            if case .tls = error {
-                finish(.rejectedPairingCode)
-            } else {
-                finish(.lost("\(host.name) に接続できませんでした（\(error.localizedDescription)）"))
-            }
+        case let .waiting(error), let .failed(error):
+            Self.logger.info("接続できない: \(error, privacy: .public)")
+            connectionLost()
         case .cancelled:
-            finish(.lost("\(host.name) との接続が切れました。"))
+            connectionLost()
         default:
             break
+        }
+    }
+
+    private func connectionLost() {
+        guard !isClosed, retryTask == nil else { return }
+        // 接続が切れた時点で Mac 側は押していたキーを離すので、こちらの表示も合わせる
+        isVoiceInputActive = false
+        replaceControl(with: nil)
+        stopVideo()
+        phase = .reconnecting
+        let delay = retryDelay
+        retryDelay = min(retryDelay * 2, .seconds(5))
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            retryTask = nil
+            connectControl()
         }
     }
 
@@ -97,7 +142,7 @@ final class HostSession {
         case let .welcome(_, status):
             hostStatus = status
             phase = .connected
-            startVideo()
+            startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status
         default:
@@ -105,18 +150,26 @@ final class HostSession {
         }
     }
 
-    private func startVideo() {
-        let channel = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge(pairingCode: pairingCode)), queue: videoQueue)
+    // MARK: - 映像用の接続
+
+    private func startVideoIfNeeded() {
+        guard phase == .connected, isForeground, video == nil, !isClosed else { return }
+        videoRetryTask?.cancel()
+        let renderer = renderer
+        videoQueue.async { renderer.reset() }
+        let channel = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge()), queue: videoQueue)
         video = channel
         let size = Self.maxVideoSize()
-        let renderer = renderer
         channel.start(
-            onStateChange: { [weak self] state in
+            onStateChange: { [weak self, weak channel] state in
                 switch state {
                 case .ready:
-                    channel.send(.control(.hello(role: .video, deviceName: "", maxVideoWidth: size.width, maxVideoHeight: size.height)))
+                    channel?.send(.control(.hello(role: .video, deviceName: "", maxVideoWidth: size.width, maxVideoHeight: size.height)))
                 case .failed, .cancelled:
-                    Task { @MainActor in self?.finish(.lost("映像の接続が切れました。")) }
+                    Task { @MainActor in
+                        guard let self, let channel, channel === self.video else { return }
+                        self.videoLost()
+                    }
                 default:
                     break
                 }
@@ -125,6 +178,21 @@ final class HostSession {
                 renderer.handle(message)
             }
         )
+    }
+
+    private func stopVideo() {
+        let old = video
+        video = nil
+        old?.cancel()
+    }
+
+    private func videoLost() {
+        video = nil
+        videoRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.startVideoIfNeeded()
+        }
     }
 
     /// 横向きにしたときの画面の画素数。Mac はこれに収まる大きさで画面を取り込む。
