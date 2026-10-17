@@ -37,10 +37,17 @@ public struct KeyModifiers: OptionSet, Codable, Sendable, Hashable {
 public struct HostStatus: Codable, Sendable, Equatable {
     public var canCaptureScreen: Bool
     public var canControlInput: Bool
+    /// iPad のマイクの音を Mac の入力デバイスとして渡せるか (システムオーディオの録音の許可)。確かめる前は true。
+    public var canRelayMicrophone: Bool
+    /// iPad のマイクに切り替えたのに、Typeless が聞き取りを始められなかった。
+    /// タップを含む入力デバイスを読むには、読む側の Typeless にもシステムオーディオの録音の許可が要る。
+    public var typelessCannotReadPadMicrophone: Bool
 
-    public init(canCaptureScreen: Bool, canControlInput: Bool) {
+    public init(canCaptureScreen: Bool, canControlInput: Bool, canRelayMicrophone: Bool = true, typelessCannotReadPadMicrophone: Bool = false) {
         self.canCaptureScreen = canCaptureScreen
         self.canControlInput = canControlInput
+        self.canRelayMicrophone = canRelayMicrophone
+        self.typelessCannotReadPadMicrophone = typelessCannotReadPadMicrophone
     }
 }
 
@@ -62,4 +69,13 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     /// 3 本指で払った向き。Mac はトラックパッドの 3 本指スワイプと同じ操作をする。
     case desktopSwipe(TouchInterpreter.SwipeDirection)
     case requestKeyFrame
+    // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする
+    /// 補助アプリが Host につないだら最初に送る。Host が起動時に渡した合言葉で、他のプロセスからの接続と見分ける。
+    case microphoneRelayHello(token: String)
+    /// Host から補助アプリへ。iPad から聞き取りを始めるか (true)、終えたか (false)。
+    case microphoneRelay(isListening: Bool)
+    /// 補助アプリから Host へ。聞き取りの準備ができたので Typeless を起動してよい。既定の入力を iPad のマイクにしたか。
+    case microphoneRelayReady(isUsingPadMicrophone: Bool)
+    /// 補助アプリから Host へ。システムオーディオの録音の許可があるか。
+    case microphoneRelayStatus(isAuthorized: Bool)
 }

@@ -15,6 +15,10 @@ struct WireMessageTests {
         .voiceInputState(isActive: false),
         .desktopSwipe(.left),
         .requestKeyFrame,
+        .microphoneRelayHello(token: "abc"),
+        .microphoneRelay(isListening: true),
+        .microphoneRelayReady(isUsingPadMicrophone: true),
+        .microphoneRelayStatus(isAuthorized: false),
     ])
     func controlMessageRoundTrips(message: ControlMessage) throws {
         let encoded = try WireMessage.control(message).encoded()
