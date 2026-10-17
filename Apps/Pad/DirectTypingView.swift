@@ -30,7 +30,9 @@ struct DirectTypingField: UIViewRepresentable {
     }
 }
 
-final class DirectTypingUIView: UIView, UIKeyInput {
+/// ソフトウェアキーボードは、入力先が UITextInput でないと削除キーの長押しを繰り返さない (UIKeyInput だけだと 3 秒押しても 1 回)。
+/// 打った内容は手元に持たず Mac へ送るだけなので、キーボードには中身の変わらない文書を見せる。
+final class DirectTypingUIView: UIView, UITextInput {
     /// 直接入力中か。画面のタップでキーボードを閉じないよう、画面側が見る。
     static var isTyping = false
 
@@ -40,7 +42,15 @@ final class DirectTypingUIView: UIView, UIKeyInput {
     var send: ((ControlMessage) -> Void)?
     var accessoryBar: UIView?
 
-    // 打った内容を手元に持たないので、削除キーをいつでも受け付けるよう常に「文字あり」とする
+    // キーボードに見せる文書。削除キーをいつでも受け付けるよう、カーソルの前に常に文字がある。
+    // 英字だとキーボードが単語とみなし、空白 2 回をピリオドに置き換えるなど勝手に書き換えるので、改行だけにする
+    private static let document = String(repeating: "\n", count: 400) as NSString
+    // iPadOS の日本語キーボードなどが変換中の文字。確定したときにまとめて送る
+    private var markedText = ""
+    weak var inputDelegate: UITextInputDelegate?
+    var markedTextStyle: [NSAttributedString.Key: Any]?
+    lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer(textInput: self)
+
     var hasText: Bool { true }
     var autocorrectionType = UITextAutocorrectionType.no
     var autocapitalizationType = UITextAutocapitalizationType.none
@@ -48,6 +58,7 @@ final class DirectTypingUIView: UIView, UIKeyInput {
     var smartQuotesType = UITextSmartQuotesType.no
     var smartDashesType = UITextSmartDashesType.no
     var smartInsertDeleteType = UITextSmartInsertDeleteType.no
+    var inlinePredictionType = UITextInlinePredictionType.no
     // 打ったキーを Mac の日本語入力に渡すので、iPad 側では変換しない英字配列にする
     var keyboardType = UIKeyboardType.asciiCapable
 
@@ -59,6 +70,11 @@ final class DirectTypingUIView: UIView, UIKeyInput {
         true
     }
 
+    // UITextInput の入力先は iPadOS の 3 本指の編集ジェスチャー (取り消しなど) を受けるが、3 本指は Mac のデスクトップ切り替えに使う
+    override var editingInteractionConfiguration: UIEditingInteractionConfiguration {
+        .none
+    }
+
     override func becomeFirstResponder() -> Bool {
         let didBecome = super.becomeFirstResponder()
         if didBecome {
@@ -68,6 +84,7 @@ final class DirectTypingUIView: UIView, UIKeyInput {
     }
 
     func insertText(_ text: String) {
+        markedText = ""
         onText?(text)
     }
 
@@ -103,4 +120,102 @@ final class DirectTypingUIView: UIView, UIKeyInput {
             super.pressesCancelled(presses, with: event)
         }
     }
+}
+
+// MARK: - UITextInput
+
+/// キーボードに見せる文書の上の位置。文書は変わらないので、文字の番号だけを持つ。
+private final class DocumentPosition: UITextPosition {
+    let index: Int
+
+    init(_ index: Int) {
+        self.index = index
+    }
+}
+
+private final class DocumentRange: UITextRange {
+    let range: NSRange
+
+    init(_ range: NSRange) {
+        self.range = range
+    }
+
+    override var start: UITextPosition { DocumentPosition(range.location) }
+    override var end: UITextPosition { DocumentPosition(NSMaxRange(range)) }
+    override var isEmpty: Bool { range.length == 0 }
+}
+
+extension DirectTypingUIView {
+    var beginningOfDocument: UITextPosition { DocumentPosition(0) }
+    var endOfDocument: UITextPosition { DocumentPosition(Self.document.length) }
+
+    var selectedTextRange: UITextRange? {
+        get { DocumentRange(NSRange(location: Self.document.length, length: 0)) }
+        set {}
+    }
+
+    var markedTextRange: UITextRange? {
+        markedText.isEmpty ? nil : DocumentRange(NSRange(location: Self.document.length, length: 0))
+    }
+
+    func setMarkedText(_ markedText: String?, selectedRange _: NSRange) {
+        self.markedText = markedText ?? ""
+    }
+
+    func unmarkText() {
+        guard !markedText.isEmpty else { return }
+        let text = markedText
+        markedText = ""
+        onText?(text)
+    }
+
+    func text(in range: UITextRange) -> String? {
+        guard let range = range as? DocumentRange else { return nil }
+        return Self.document.substring(with: range.range)
+    }
+
+    // 文書は変えず、キーボードからの削除と入力は deleteBackward と insertText で受ける
+    func replace(_: UITextRange, withText _: String) {}
+
+    func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
+        guard let from = fromPosition as? DocumentPosition, let to = toPosition as? DocumentPosition else { return nil }
+        return DocumentRange(NSRange(location: min(from.index, to.index), length: abs(from.index - to.index)))
+    }
+
+    func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
+        guard let position = position as? DocumentPosition else { return nil }
+        let index = position.index + offset
+        return (0 ... Self.document.length).contains(index) ? DocumentPosition(index) : nil
+    }
+
+    func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+        self.position(from: position, offset: direction == .left || direction == .up ? -offset : offset)
+    }
+
+    func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
+        let lhs = (position as? DocumentPosition)?.index ?? 0
+        let rhs = (other as? DocumentPosition)?.index ?? 0
+        return lhs < rhs ? .orderedAscending : lhs > rhs ? .orderedDescending : .orderedSame
+    }
+
+    func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
+        ((toPosition as? DocumentPosition)?.index ?? 0) - ((from as? DocumentPosition)?.index ?? 0)
+    }
+
+    func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
+        direction == .left || direction == .up ? range.start : range.end
+    }
+
+    func characterRange(byExtending position: UITextPosition, in _: UITextLayoutDirection) -> UITextRange? {
+        textRange(from: position, to: position)
+    }
+
+    func baseWritingDirection(for _: UITextPosition, in _: UITextStorageDirection) -> NSWritingDirection { .leftToRight }
+    func setBaseWritingDirection(_: NSWritingDirection, for _: UITextRange) {}
+    func firstRect(for _: UITextRange) -> CGRect { .zero }
+    func caretRect(for _: UITextPosition) -> CGRect { .zero }
+    func selectionRects(for _: UITextRange) -> [UITextSelectionRect] { [] }
+    func closestPosition(to _: CGPoint) -> UITextPosition? { endOfDocument }
+    func closestPosition(to _: CGPoint, within range: UITextRange) -> UITextPosition? { range.end }
+    func characterRange(at _: CGPoint) -> UITextRange? { nil }
 }
