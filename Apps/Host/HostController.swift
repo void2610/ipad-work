@@ -79,6 +79,15 @@ final class HostController {
         #endif
     }
 
+    /// E2E テストの Host を、普段使いの Host と同時に動かしても Bonjour 名がぶつからないようにする指定口。
+    private static var testServiceName: String? {
+        #if DEBUG
+            UserDefaults.standard.string(forKey: "PadBridgeTestServiceName")
+        #else
+            nil
+        #endif
+    }
+
     private func openPrivacySettings(_ anchor: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
             NSWorkspace.shared.open(url)
@@ -90,7 +99,7 @@ final class HostController {
         connectedDeviceName = nil
         let server = HostServer(
             pairingCode: pairingCode,
-            hostName: Host.current().localizedName ?? "Mac",
+            hostName: Self.testServiceName ?? Host.current().localizedName ?? "Mac",
             doubleClickInterval: NSEvent.doubleClickInterval,
             onClientChange: { [weak self] name in
                 Task { @MainActor in self?.connectedDeviceName = name }

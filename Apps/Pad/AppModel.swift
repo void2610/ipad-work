@@ -73,7 +73,7 @@ final class AppModel {
         connect(to: current, code: code)
     }
 
-    /// シミュレータでの確認用。起動引数のコードで最初に見つかった Mac へ自動でつなぐ。キーチェーンには保存しない。
+    /// 実機・シミュレータでの確認用。起動引数で指定した Mac へ、指定したコードで自動でつなぐ。キーチェーンには保存しない。
     private func autoConnectForTesting() {
         #if DEBUG
             let defaults = UserDefaults.standard
@@ -81,7 +81,8 @@ final class AppModel {
             let direct = defaults.string(forKey: "PadBridgeTestPort").flatMap(NWEndpoint.Port.init(_:)).map {
                 DiscoveredHost(name: "テスト用 Host", endpoint: .hostPort(host: "127.0.0.1", port: $0))
             }
-            guard !hasAutoConnected, let host = direct ?? hosts.first,
+            let named = defaults.string(forKey: "PadBridgeTestHostName").flatMap { name in hosts.first { $0.name == name } }
+            guard !hasAutoConnected, let host = direct ?? named,
                   let code = defaults.string(forKey: "PadBridgeTestPairingCode").flatMap(PairingCode.init)
             else { return }
             hasAutoConnected = true
