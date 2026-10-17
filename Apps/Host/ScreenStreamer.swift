@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreMedia
 import Foundation
+import os
 import PadBridgeKit
 import ScreenCaptureKit
 import Synchronization
@@ -21,6 +22,8 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var encoder: H264Encoder?
     private var isStopped = false
     private let keyFrameRequested = Atomic(true)
+    private let sentFrames = Atomic(0)
+    private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
     init(channel: MessageChannel, maxWidth: Int, maxHeight: Int) {
         self.channel = channel
@@ -51,11 +54,15 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         configuration.queueDepth = 4
 
         let bitRate = min(max(size.width * size.height * 4, 8_000_000), 40_000_000)
-        let encoder = try H264Encoder(width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60) { [channel] format, frame in
+        let encoder = try H264Encoder(width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60) { [channel, weak self] format, frame in
             if let format {
                 channel.send(.videoFormat(format))
             }
             channel.send(.videoFrame(frame))
+            guard let count = self?.sentFrames.add(1, ordering: .relaxed).newValue else { return }
+            if count == 1 || count.isMultiple(of: 600) {
+                Self.logger.info("映像を送信: \(count) フレーム目 (\(frame.data.count) バイト)")
+            }
         }
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -68,6 +75,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         }
         guard shouldStart else { return }
         try await stream.startCapture()
+        Self.logger.info("画面の取り込みを開始: \(size.width)x\(size.height)、\(bitRate / 1_000_000) Mbps")
     }
 
     func stop() {

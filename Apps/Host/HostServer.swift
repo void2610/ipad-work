@@ -114,8 +114,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .requestKeyFrame:
             streamer?.requestKeyFrame()
         case let .insertText(text):
+            // 入力内容そのものはログに残さない
+            Self.logger.info("文字入力を受信: \(text.count) 文字")
             inputQueue.async { TextInserter.insert(text) }
         case .mouseMove, .mouseButton, .scroll, .key:
+            Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
         case .hello, .welcome, .hostStatus:
             break
@@ -126,6 +129,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
+        Self.logger.info("接続: \(deviceName, privacy: .public)")
         channel.send(.control(.welcome(hostName: hostName, status: Self.currentStatus())))
         onClientChange(deviceName)
     }
@@ -138,6 +142,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         stopVideo()
         video = channel
         let status = Self.currentStatus()
+        Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
         let streamer = ScreenStreamer(channel: channel, maxWidth: maxWidth, maxHeight: maxHeight)
@@ -146,6 +151,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             do {
                 try await streamer.start()
             } catch {
+                Self.logger.error("画面の取り込みを開始できない: \(error, privacy: .public)")
                 self.queue.async {
                     if self.streamer === streamer { self.stopVideo() }
                 }
@@ -172,6 +178,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func closeSession() {
         stopVideo()
         guard let control else { return }
+        Self.logger.info("切断")
         control.cancel()
         self.control = nil
         inputQueue.async { [injector] in injector.releaseAll() }
