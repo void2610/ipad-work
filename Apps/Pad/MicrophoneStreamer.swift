@@ -22,8 +22,10 @@ final class MicrophoneStreamer {
         case .denied:
             completion(.denied)
         default:
-            AVAudioApplication.requestRecordPermission { granted in
-                Task { @MainActor in completion(granted ? .granted : .denied) }
+            // 返事は別のスレッドから来るので、メインアクターの上で待って受け取る
+            Task { @MainActor in
+                let granted = await AVAudioApplication.requestRecordPermission()
+                completion(granted ? .granted : .denied)
             }
         }
     }
@@ -37,17 +39,22 @@ final class MicrophoneStreamer {
             Self.logger.error("マイクの形式を変換できない: \(inputFormat, privacy: .public)")
             return
         }
-        let converterBox = ConverterBox(converter)
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
-            guard let data = converterBox.convert(buffer) else { return }
-            send(data)
-        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: Self.tapBlock(converter: ConverterBox(converter), send: send))
         do {
             try engine.start()
             isRunning = true
         } catch {
             input.removeTap(onBus: 0)
             Self.logger.error("マイクを始められない: \(error, privacy: .public)")
+        }
+    }
+
+    /// マイクの音を受け取る処理。AVFAudio が自分のスレッドから呼ぶので、メインアクターに属さない場所で作る。
+    /// メインアクターのメソッドの中で書いた処理はメインアクターに属するとみなされ、別のスレッドから呼ばれた時点で実行時の検査に止められる。
+    private nonisolated static func tapBlock(converter: ConverterBox, send: @escaping @Sendable (Data) -> Void) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            guard let data = converter.convert(buffer) else { return }
+            send(data)
         }
     }
 
@@ -60,7 +67,7 @@ final class MicrophoneStreamer {
 }
 
 /// マイクのスレッドの中でだけ使う変換器。
-private final class ConverterBox: @unchecked Sendable {
+private nonisolated final class ConverterBox: @unchecked Sendable {
     private let converter: AVAudioConverter
 
     init(_ converter: AVAudioConverter) {
