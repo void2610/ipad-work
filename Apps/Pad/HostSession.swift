@@ -24,6 +24,11 @@ final class HostSession {
     /// iPad のマイクを使えないときの知らせ。
     private(set) var microphoneNotice: String?
 
+    /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
+    @ObservationIgnored var microphoneLevel: Float {
+        microphone.level
+    }
+
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
     // 映像の受信と復号を操作の通信から切り離し、映像が重くても操作が遅れないようにする
     private let videoQueue = DispatchQueue(label: "dev.void2610.padbridge.pad.video")

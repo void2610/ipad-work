@@ -8,6 +8,7 @@ struct TypelessButton: UIViewRepresentable {
     func makeUIView(context _: Context) -> PushToTalkButton {
         let button = PushToTalkButton()
         button.onActiveChange = { [weak session] isActive in session?.setVoiceInput(isActive) }
+        button.levelProvider = { [weak session] in session?.microphoneLevel ?? 0 }
         return button
     }
 
@@ -24,6 +25,8 @@ struct TypelessButton: UIViewRepresentable {
 /// UIControl の追跡なら区別できるので、キャンセルされたときは押しっぱなしに切り替えて聞き取りを続ける。
 final class PushToTalkButton: UIButton {
     var onActiveChange: ((Bool) -> Void)?
+    /// iPad のマイクで拾っている声の大きさ (0...1)。聞き取りの間、ボタンの周りの輪で見せる。
+    var levelProvider: (() -> Float)?
 
     /// Mac 側の実際の状態。裏に回ったときなど、ボタン以外の理由で離されたらここで知らされる。
     var isVoiceInputActive = false {
@@ -32,8 +35,14 @@ final class PushToTalkButton: UIButton {
                 isLatched = false
             }
             updateAppearance()
+            updateLevelDisplay()
         }
     }
+
+    // 声の大きさの輪。iPad のマイクが声を拾っているかを、話しながら確かめられるようにする
+    private let levelRing = CAShapeLayer()
+    private var levelLink: CADisplayLink?
+    private var shownLevel: CGFloat = 0
 
     private static let latchThreshold: TimeInterval = 0.35
     private var isLatched = false
@@ -44,7 +53,48 @@ final class PushToTalkButton: UIButton {
     init() {
         super.init(frame: .zero)
         accessibilityLabel = "Typeless"
+        levelRing.fillColor = nil
+        levelRing.strokeColor = UIColor.systemRed.withAlphaComponent(0.45).cgColor
+        levelRing.opacity = 0
+        layer.insertSublayer(levelRing, at: 0)
         updateAppearance()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        levelRing.frame = bounds
+        levelRing.path = UIBezierPath(ovalIn: bounds.insetBy(dx: -3, dy: -3)).cgPath
+    }
+
+    override func removeFromSuperview() {
+        levelLink?.invalidate()
+        levelLink = nil
+        super.removeFromSuperview()
+    }
+
+    private func updateLevelDisplay() {
+        if isVoiceInputActive, levelLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(stepLevel))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30)
+            link.add(to: .main, forMode: .common)
+            levelLink = link
+        } else if !isVoiceInputActive {
+            levelLink?.invalidate()
+            levelLink = nil
+            shownLevel = 0
+            levelRing.opacity = 0
+        }
+    }
+
+    @objc private func stepLevel() {
+        // 上がるときはすぐ、下がるときはゆっくり動かして、ちらつかないようにする
+        let level = CGFloat(levelProvider?() ?? 0)
+        shownLevel = max(level, shownLevel * 0.85)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        levelRing.lineWidth = 2 + shownLevel * 8
+        levelRing.opacity = shownLevel > 0.02 ? 1 : 0
+        CATransaction.commit()
     }
 
     @available(*, unavailable)

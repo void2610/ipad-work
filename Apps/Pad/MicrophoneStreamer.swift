@@ -12,7 +12,13 @@ final class MicrophoneStreamer {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "microphone")
     private static let sendFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(PadAudio.sampleRate), channels: 1, interleaved: false)!
     private let engine = AVAudioEngine()
+    private let meter = LevelMeter()
     private(set) var isRunning = false
+
+    /// 今の声の大きさ (0...1)。マイクを止めている間は 0。
+    var level: Float {
+        meter.value
+    }
 
     /// マイクの許可を確かめ、まだ尋ねていなければ尋ねる。
     func requestPermission(_ completion: @escaping @MainActor (Permission) -> Void) {
@@ -39,7 +45,7 @@ final class MicrophoneStreamer {
             Self.logger.error("マイクの形式を変換できない: \(inputFormat, privacy: .public)")
             return
         }
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: Self.tapBlock(converter: ConverterBox(converter), send: send))
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: Self.tapBlock(converter: ConverterBox(converter), meter: meter, send: send))
         do {
             try engine.start()
             isRunning = true
@@ -51,9 +57,10 @@ final class MicrophoneStreamer {
 
     /// マイクの音を受け取る処理。AVFAudio が自分のスレッドから呼ぶので、メインアクターに属さない場所で作る。
     /// メインアクターのメソッドの中で書いた処理はメインアクターに属するとみなされ、別のスレッドから呼ばれた時点で実行時の検査に止められる。
-    private nonisolated static func tapBlock(converter: ConverterBox, send: @escaping @Sendable (Data) -> Void) -> AVAudioNodeTapBlock {
+    private nonisolated static func tapBlock(converter: ConverterBox, meter: LevelMeter, send: @escaping @Sendable (Data) -> Void) -> AVAudioNodeTapBlock {
         { buffer, _ in
-            guard let data = converter.convert(buffer) else { return }
+            guard let (data, peak) = converter.convert(buffer) else { return }
+            meter.update(peak: peak)
             send(data)
         }
     }
@@ -63,6 +70,7 @@ final class MicrophoneStreamer {
         isRunning = false
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        meter.reset()
     }
 }
 
@@ -74,7 +82,8 @@ private nonisolated final class ConverterBox: @unchecked Sendable {
         self.converter = converter
     }
 
-    func convert(_ buffer: AVAudioPCMBuffer) -> Data? {
+    /// 送る形にした音と、その中のいちばん大きな振れ幅を返す。
+    func convert(_ buffer: AVAudioPCMBuffer) -> (Data, Float)? {
         let ratio = converter.outputFormat.sampleRate / converter.inputFormat.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else { return nil }
@@ -90,6 +99,29 @@ private nonisolated final class ConverterBox: @unchecked Sendable {
             return buffer
         }
         guard error == nil, output.frameLength > 0, let samples = output.floatChannelData?[0] else { return nil }
-        return PadAudio.encode(UnsafeBufferPointer(start: samples, count: Int(output.frameLength)))
+        let converted = UnsafeBufferPointer(start: samples, count: Int(output.frameLength))
+        let peak = converted.reduce(Float(0)) { max($0, abs($1)) }
+        return (PadAudio.encode(converted), peak)
+    }
+}
+
+/// 声の大きさを、マイクのスレッドで書き込み、画面の側で読み出す。
+private nonisolated final class LevelMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var level: Float = 0
+
+    var value: Float {
+        lock.withLock { level }
+    }
+
+    /// 振れ幅を、話し声で見て分かるよう -50dB〜-10dB を 0〜1 に割り当てる。
+    func update(peak: Float) {
+        let decibels = 20 * log10(max(peak, 1e-6))
+        let value = min(max((decibels + 50) / 40, 0), 1)
+        lock.withLock { level = value }
+    }
+
+    func reset() {
+        lock.withLock { level = 0 }
     }
 }
