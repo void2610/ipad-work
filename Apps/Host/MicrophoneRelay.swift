@@ -41,7 +41,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         self.onAuthorizationChange = onAuthorizationChange
     }
 
-    /// iPad がつながったときに呼ぶ。補助アプリを起動する。
+    /// iPad がつながったときに呼ぶ。補助アプリがまだ動いていなければ起動する。
     func start() {
         isRunning = true
         let now = ProcessInfo.processInfo.systemUptime
@@ -53,7 +53,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         }
     }
 
-    /// iPad の接続が切れたときに呼ぶ。接続を閉じると、補助アプリはデバイスを消して終わる。
+    /// iPad の接続が切れてしばらくたったときに呼ぶ。接続を閉じると、補助アプリはデバイスを消して終わる。
     func stop() {
         isRunning = false
         finishPendingReady()

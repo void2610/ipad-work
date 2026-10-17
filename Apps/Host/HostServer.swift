@@ -29,6 +29,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
+    private var microphoneStop: DispatchWorkItem?
     private var typelessCannotReadPadMicrophone = false
     private var typelessUsesOtherMicrophone = false
     private var didOpenAudioCaptureSettings = false
@@ -72,6 +73,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             self.pending.values.forEach { $0.cancel() }
             self.pending.removeAll()
             self.closeSession()
+            self.microphoneStop?.cancel()
+            self.microphone?.stop()
         }
     }
 
@@ -308,11 +311,15 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
-        Self.logger.notice("接続: \(deviceName, privacy: .public)")
+        // つなぎ直しの原因を後から追えるよう、どの経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信 awdl か) かも記録する
+        let interface = channel.connection.currentPath?.availableInterfaces.first?.name ?? "不明"
+        Self.logger.notice("接続: \(deviceName, privacy: .public) (\(interface, privacy: .public))")
         didOpenAudioCaptureSettings = false
         // 前の iPad が拡大していた範囲を引き継がない。拡大していれば iPad が頼み直す
         videoRegion = .full
         typeless?.start()
+        microphoneStop?.cancel()
+        microphoneStop = nil
         microphone?.start()
         // 補助アプリがデバイスを作り、Typeless がそれをマイクの一覧に載せてから、Typeless に使わせる設定をする
         setUpTypelessMicrophone(after: 5)
@@ -369,7 +376,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         control.cancel()
         self.control = nil
         typeless?.stop()
-        microphone?.stop()
+        microphone?.endListening()
+        // つなぎ直すたびに補助アプリを起動し直すと、デバイスを作り直して点検し終えるまで iPad のマイクを使えない。しばらく残しておく
+        let stopMicrophone = DispatchWorkItem { [weak self] in self?.microphone?.stop() }
+        microphoneStop = stopMicrophone
+        queue.asyncAfter(deadline: .now() + 60, execute: stopMicrophone)
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
     }
