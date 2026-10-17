@@ -1,6 +1,5 @@
 import AVFoundation
 import CoreAudio
-import IOKit
 import os
 import PadBridgeKit
 
@@ -22,7 +21,6 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 8 / 100)
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
-    private var previousDefaultInputUID: String?
     // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は無音を流し続ける。
     // 止めるとタップだけの集約デバイスは入力を持たなくなり、Typeless (Chromium) がマイクとして数えない。
     // 許可がないとタップのミュートが効かないが、そのときは無音しか流さないので何も聞こえない
@@ -95,28 +93,23 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     /// デバイスを消す。iPad の接続が切れたときに呼ぶ。消し終えるまで待つ (このあとすぐ終わっても Mac に残らないように)。
     func stop() {
         queue.sync { [self] in
-            restoreDefaultInput()
             engine.stop()
             destroyDevice()
         }
     }
 
-    /// iPad から聞き取りを始めるとき、Typeless が拾うよう Mac の既定の入力をこのデバイスにする。準備ができたら、切り替えたかを `ready` に渡す。
-    /// Typeless のマイクは「自動検出」(既定の入力) のままでよく、Typeless の設定は変えない。
+    /// iPad から聞き取りを始めるときに呼ぶ。iPad の声をこのデバイスに流せるかを `ready` に渡す。
+    /// このデバイスは Mac の既定の入力になれない (タップだけの集約デバイスは CanBeDefaultDevice が 0) ので、
+    /// Typeless のマイクの設定でこのデバイスを選んでもらう。既定の入力は切り替えない。
     func beginListening(ready: @escaping @Sendable (Bool) -> Void) {
         queue.async { [self] in
-            defer { ready(previousDefaultInputUID != nil) }
-            guard deviceID != kAudioObjectUnknown else { return }
             if !isAuthorized {
                 // システム設定であとから許可された場合に気づけるよう、その都度確かめ直す
                 setAuthorized(AudioCapturePermission.current() == .authorized)
             }
-            guard isAuthorized else { return }
-            // 蓋が開いているか、ほかに使えるマイクがあるなら切り替えない。Mac のマイクで動いていた Typeless を巻き込まないため
-            if let reason = Self.reasonNotToUsePadMicrophone() {
-                Self.logger.notice("既定の入力は切り替えない: \(reason, privacy: .public)")
-                return
-            }
+            let isUsingPadMicrophone = isAuthorized && deviceID != kAudioObjectUnknown
+            defer { ready(isUsingPadMicrophone) }
+            guard isUsingPadMicrophone else { return }
             renderLock.withLock {
                 buffer.removeAll()
                 isListening = true
@@ -124,14 +117,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 playedPeak = 0
             }
             startInputMonitor()
-            guard previousDefaultInputUID == nil, let current = Self.defaultInputDevice(), current != deviceID else { return }
-            previousDefaultInputUID = Self.uid(of: current)
-            Self.setDefaultInput(deviceID)
-            Self.logger.notice("既定の入力を \(Self.deviceName, privacy: .public) に切り替えた")
         }
     }
 
-    /// 聞き取りが終わったら、届いた音を鳴らすのをやめ、既定の入力を元に戻す。
+    /// 聞き取りが終わったら、届いた音を鳴らすのをやめる。既定の入力は iPad のマイクのままにしておく。
     func endListening() {
         queue.async { [self] in
             let (wasListening, received, played) = renderLock.withLock {
@@ -147,7 +136,6 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 let input = monitored.map { String(format: "%.4f", $0) } ?? "測れない (PadBridge Host にマイクの許可がない)"
                 Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、デバイスの入力の最大 \(input, privacy: .public)")
             }
-            restoreDefaultInput()
         }
     }
 
@@ -388,64 +376,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    private func restoreDefaultInput() {
-        guard let previous = previousDefaultInputUID else { return }
-        previousDefaultInputUID = nil
-        if let device = Self.device(uid: previous) {
-            Self.setDefaultInput(device)
-            Self.logger.notice("既定の入力を元に戻した")
-        }
-    }
-
     // MARK: - CoreAudio
-
-    // マイクとして数えない接続の種類。AVAudioEngine は自分のプロセスの中に既定の入出力をまとめた非公開の集約デバイスを作り、
-    // それが入力を持つので数えてしまう (中身は蓋を閉じて使えない内蔵マイク)。このデバイス自身も集約デバイス
-    private static let transportsThatAreNotMicrophones: Set<UInt32> = [
-        kAudioDeviceTransportTypeBuiltIn,
-        kAudioDeviceTransportTypeAggregate,
-        kAudioDeviceTransportTypeVirtual,
-        kAudioDeviceTransportTypeUnknown,
-    ]
-
-    /// iPad のマイクに切り替えない理由。蓋が閉じていて (内蔵マイクはハードウェアで切り離される)、ほかにマイクがなければ nil。
-    private static func reasonNotToUsePadMicrophone() -> String? {
-        guard isClamshellClosed() else { return "蓋が開いていて Mac の内蔵マイクが使える" }
-        let others = objects(kAudioHardwarePropertyDevices).filter { device in
-            hasInput(device) && !transportsThatAreNotMicrophones.contains(transportType(device))
-        }
-        guard others.isEmpty else { return "ほかのマイクがある (\(others.compactMap(name(of:)).joined(separator: "、")))" }
-        return nil
-    }
-
-    private static func name(of device: AudioObjectID) -> String? {
-        var address = address(kAudioObjectPropertyName)
-        var name: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return nil }
-        return name?.takeRetainedValue() as String?
-    }
-
-    private static func isClamshellClosed() -> Bool {
-        let rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
-        defer { IOObjectRelease(rootDomain) }
-        let state = IORegistryEntryCreateCFProperty(rootDomain, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
-        return (state as? Bool) ?? false
-    }
-
-    private static func hasInput(_ device: AudioObjectID) -> Bool {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
-    }
-
-    private static func transportType(_ device: AudioObjectID) -> UInt32 {
-        var address = address(kAudioDevicePropertyTransportType)
-        var transport: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
-        return transport
-    }
 
     private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -502,20 +433,6 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &device) == noErr, device != kAudioObjectUnknown else { return nil }
         return device
-    }
-
-    private static func defaultInputDevice() -> AudioObjectID? {
-        var address = address(kAudioHardwarePropertyDefaultInputDevice)
-        var device = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &device) == noErr, device != kAudioObjectUnknown else { return nil }
-        return device
-    }
-
-    private static func setDefaultInput(_ device: AudioObjectID) {
-        var address = address(kAudioHardwarePropertyDefaultInputDevice)
-        var device = device
-        AudioObjectSetPropertyData(systemObject, &address, 0, nil, UInt32(MemoryLayout<AudioObjectID>.size), &device)
     }
 }
 

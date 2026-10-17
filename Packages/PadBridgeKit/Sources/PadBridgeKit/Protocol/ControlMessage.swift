@@ -42,12 +42,22 @@ public struct HostStatus: Codable, Sendable, Equatable {
     /// iPad のマイクに切り替えたのに、Typeless が聞き取りを始められなかった。
     /// タップを含む入力デバイスを読むには、読む側の Typeless にもシステムオーディオの録音の許可が要る。
     public var typelessCannotReadPadMicrophone: Bool
+    /// iPad から聞き取りを始めたのに、Typeless が「PadBridge iPad マイク」ではないマイクで録音していた。
+    /// このデバイスは Mac の既定の入力になれないので、Typeless のマイクの設定で選んでもらう必要がある。
+    public var typelessUsesOtherMicrophone: Bool
 
-    public init(canCaptureScreen: Bool, canControlInput: Bool, canRelayMicrophone: Bool = true, typelessCannotReadPadMicrophone: Bool = false) {
+    public init(
+        canCaptureScreen: Bool,
+        canControlInput: Bool,
+        canRelayMicrophone: Bool = true,
+        typelessCannotReadPadMicrophone: Bool = false,
+        typelessUsesOtherMicrophone: Bool = false
+    ) {
         self.canCaptureScreen = canCaptureScreen
         self.canControlInput = canControlInput
         self.canRelayMicrophone = canRelayMicrophone
         self.typelessCannotReadPadMicrophone = typelessCannotReadPadMicrophone
+        self.typelessUsesOtherMicrophone = typelessUsesOtherMicrophone
     }
 }
 

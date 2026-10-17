@@ -50,6 +50,26 @@ nonisolated final class TypelessMonitor: @unchecked Sendable {
         typelessProcesses().contains(where: isRunningInput)
     }
 
+    /// Typeless が今録音に使っている入力デバイスの UID。
+    static func inputDeviceUIDs() -> [String] {
+        typelessProcesses().flatMap { process -> [String] in
+            var address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+            var size: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(process, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+            var devices = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+            guard AudioObjectGetPropertyData(process, &address, 0, nil, &size, &devices) == noErr else { return [] }
+            return devices.compactMap(uid(of:))
+        }
+    }
+
+    private static func uid(of device: AudioObjectID) -> String? {
+        var address = address(kAudioDevicePropertyDeviceUID)
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid) == noErr else { return nil }
+        return uid?.takeRetainedValue() as String?
+    }
+
     private func poll() {
         let now = ProcessInfo.processInfo.systemUptime
         if now - processesFetchedAt >= Self.processRefreshInterval {

@@ -9,6 +9,11 @@ import PadBridgeKit
 /// Host のバンドルの中の補助アプリを LaunchServices で起動すると、許可は PadBridge Host のものとして求められる。
 /// Host 自身をアプリとして起動し直す必要がないので、画面収録などの許可を取り直す間に画面が映らなくなることもない。
 /// HostServer のキューの上でだけ使う。
+/// 補助アプリが作る入力デバイス。
+enum PadMicrophoneDevice {
+    static let uid = "dev.void2610.padbridge.ipad-mic"
+}
+
 nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "microphone")
     // 補助アプリが応えないときに、Typeless の起動を待たせ続けない

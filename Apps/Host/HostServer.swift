@@ -30,6 +30,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
     private var typelessCannotReadPadMicrophone = false
+    private var typelessUsesOtherMicrophone = false
     private var didOpenAudioCaptureSettings = false
     // iPad から音声入力の開始・完了が来るたびに増やし、古い要求の結果を知らせないようにする
     private var voiceInputRequestCount = 0
@@ -108,6 +109,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         control?.send(.control(.voiceInputState(isActive: isRecording)))
         if isRecording, isUsingPadMicrophone {
             checkTypelessAudioCaptureRefusal()
+            checkTypelessMicrophone()
         }
         if !isRecording {
             microphone?.endListening()
@@ -138,6 +140,20 @@ nonisolated final class HostServer: @unchecked Sendable {
                 Self.logger.notice("Typeless のシステムオーディオの録音: \(refused ? "拒否された" : "拒否の記録なし", privacy: .public)")
                 self.setTypelessCannotReadPadMicrophone(refused)
             }
+        }
+    }
+
+    /// Typeless が「PadBridge iPad マイク」で録音しているかを確かめる。このデバイスは Mac の既定の入力になれないので、
+    /// Typeless の「自動検出」のままだと内蔵マイク (蓋を閉じていると無音) で録音してしまう。
+    private func checkTypelessMicrophone() {
+        queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, TypelessMonitor.isRecording() else { return }
+            let devices = TypelessMonitor.inputDeviceUIDs()
+            let usesPadMicrophone = devices.contains(PadMicrophoneDevice.uid)
+            Self.logger.notice("Typeless が録音しているマイク: \(devices.joined(separator: ", "), privacy: .public)")
+            guard typelessUsesOtherMicrophone == usesPadMicrophone else { return }
+            typelessUsesOtherMicrophone = !usesPadMicrophone
+            publishStatus()
         }
     }
 
@@ -329,7 +345,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             canCaptureScreen: CGPreflightScreenCaptureAccess(),
             canControlInput: AXIsProcessTrusted(),
             canRelayMicrophone: !(microphone?.isKnownUnauthorized ?? false),
-            typelessCannotReadPadMicrophone: typelessCannotReadPadMicrophone
+            typelessCannotReadPadMicrophone: typelessCannotReadPadMicrophone,
+            typelessUsesOtherMicrophone: typelessUsesOtherMicrophone
         )
     }
 }
