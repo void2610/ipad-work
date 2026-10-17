@@ -29,6 +29,8 @@ final class RemoteScreenUIView: UIView {
     var videoSize = CGSize.zero
 
     private let displayLayer: AVSampleBufferDisplayLayer
+    // ビューの座標での、画面の下端に付いたキーボードの上端。キーボードがなければ無限大
+    private var keyboardTop = CGFloat.infinity
     private var interpreter = TouchInterpreter()
     private var longPressTimer: DispatchWorkItem?
     // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
@@ -50,6 +52,8 @@ final class RemoteScreenUIView: UIView {
         // VoiceOver 中も、指の操作をそのまま Mac に届ける
         accessibilityTraits = .allowsDirectInteraction
         installGestureRecognizers()
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -72,21 +76,43 @@ final class RemoteScreenUIView: UIView {
         super.layoutSubviews()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        displayLayer.frame = bounds
+        displayLayer.frame = screenArea
         CATransaction.commit()
-        // キーボードの上に縮んでいる間は、ビューの下端は画面の下端ではないので、下端からの払いを受けない
-        if let window, convert(bounds, to: window).maxY >= window.bounds.maxY - 1 {
-            interpreter.bottomEdge = bounds.maxY
-        } else {
-            interpreter.bottomEdge = .infinity
-        }
+        // キーボードが出ている間は、その上端は画面の下端ではないので、下端からの払いを受けない
+        interpreter.bottomEdge = isKeyboardShown ? .infinity : bounds.maxY
+    }
+
+    // MARK: - キーボード
+
+    // キーボードの分は、SwiftUI の余白や keyboardLayoutGuide ではなく、キーボードの通知が知らせる位置から決める。
+    // 特殊キーの列を付けた入力欄をプログラムから外すと、どちらも列の高さ分を残したまま戻らない (通知は正しく画面外を知らせる)
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, let window else { return }
+        let frame = window.screen.coordinateSpace.convert(end, to: self)
+        // 画面の下端に付いていない (フローティングの) キーボードは、映像に重ねるだけにする
+        keyboardTop = frame.minY < bounds.maxY && frame.maxY >= bounds.maxY - 1 ? frame.minY : .infinity
+        setNeedsLayout()
+    }
+
+    @objc private func keyboardWillHide(_: Notification) {
+        keyboardTop = .infinity
+        setNeedsLayout()
+    }
+
+    private var isKeyboardShown: Bool {
+        keyboardTop < bounds.maxY - 1
+    }
+
+    /// Mac の画面を映す範囲。キーボードが出ている間は、その上までに縮める。
+    private var screenArea: CGRect {
+        CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: max(0, min(keyboardTop, bounds.maxY) - bounds.minY))
     }
 
     // MARK: - 座標
 
     private var videoRect: CGRect {
-        guard videoSize.width > 0, videoSize.height > 0 else { return bounds }
-        return AVMakeRect(aspectRatio: videoSize, insideRect: bounds)
+        guard videoSize.width > 0, videoSize.height > 0 else { return screenArea }
+        return AVMakeRect(aspectRatio: videoSize, insideRect: screenArea)
     }
 
     private func normalized(_ location: CGPoint) -> NormalizedPoint {

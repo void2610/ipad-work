@@ -11,9 +11,9 @@ struct SessionView: View {
         ZStack {
             Color.black
                 .ignoresSafeArea()
-            // キーボードの領域は避けて縮み、打っている場所が隠れないようにする
+            // キーボードの分は RemoteScreenView が UIKit のキーボードの位置から自分で縮める
             RemoteScreenView(session: session)
-                .ignoresSafeArea(.container)
+                .ignoresSafeArea()
             statusOverlay
             FloatingControls(model: model, session: session, isTyping: $isTyping)
             DirectTypingField(session: session, isActive: $isTyping)
