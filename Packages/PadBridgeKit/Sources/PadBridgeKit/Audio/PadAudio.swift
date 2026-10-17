@@ -47,16 +47,27 @@ public struct PCMJitterBuffer: Sendable {
     public mutating func write(_ data: Data) {
         data.withUnsafeBytes { raw in
             for offset in stride(from: 0, to: raw.count - 1, by: 2) {
-                if count == storage.count {
-                    readIndex = (readIndex + 1) % storage.count
-                    count -= 1
-                    consumed += 1
-                }
-                storage[(readIndex + count) % storage.count] = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: Int16.self))
-                count += 1
-                written += 1
+                append(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: Int16.self)))
             }
         }
+    }
+
+    /// -1...1 の浮動小数の音を書き込む。メモリを確保しないので、オーディオのスレッドから呼べる。
+    public mutating func write(_ samples: UnsafeBufferPointer<Float>) {
+        for sample in samples {
+            append(Int16(min(max(sample, -1), 1) * Float(Int16.max)))
+        }
+    }
+
+    private mutating func append(_ sample: Int16) {
+        if count == storage.count {
+            readIndex = (readIndex + 1) % storage.count
+            count -= 1
+            consumed += 1
+        }
+        storage[(readIndex + count) % storage.count] = sample
+        count += 1
+        written += 1
     }
 
     /// `output` を埋める。まだたまっていないときや足りない分は無音にする。

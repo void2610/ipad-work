@@ -78,6 +78,13 @@ struct PadAudioTests {
         #expect(buffer.underruns == 1)
     }
 
+    /// 浮動小数の音もそのまま書き込め、範囲外は切り詰める。
+    @Test func writesFloatSamples() {
+        var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 1)
+        [Float(0.5), -0.25, 2].withUnsafeBufferPointer { buffer.write($0) }
+        #expect(read(&buffer, count: 3).map { ($0 * 100).rounded() } == [50, -25, 100])
+    }
+
     /// あふれたら古い音から捨て、遅れがたまらないようにする。
     @Test func overflowDropsOldestSamples() {
         var buffer = PCMJitterBuffer(capacity: 3, startThreshold: 1)

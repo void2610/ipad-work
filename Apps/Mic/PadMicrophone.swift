@@ -49,6 +49,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     // iPad から話していない間に読まれているときだけ、Mac の既定の入力の音をこのデバイスに流す
     private var isPassingThrough = false
     private var passThroughEngine: AVAudioEngine?
+    // Mac のマイクの音は同じ Mac の中で約 10ms ごとに届き、揺れが小さいので、少しだけためて鳴らす。Typeless が止めたときに切れる話し終わりを短くする
+    private var passThroughBuffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 3 / 100)
     private var passThroughGate = PassThroughGate()
     private var readingListener: AudioObjectPropertyListenerBlock?
 
@@ -68,7 +70,9 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                             phase += 2 * Double.pi * 20_000 / Double(PadAudio.sampleRate)
                         }
                         checkPhase = phase.truncatingRemainder(dividingBy: 2 * .pi)
-                    } else if isRead, isListening || isPassingThrough {
+                    } else if isRead, isPassingThrough {
+                        passThroughBuffer.read(into: output)
+                    } else if isRead, isListening {
                         buffer.read(into: output)
                         playedPeak = output.reduce(playedPeak) { max($0, abs($1)) }
                     } else {
@@ -376,28 +380,41 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
         // 鳴らしている方のエンジンで入力を使うと出力が組み直されて途切れるので、取り込みは別のエンジンで行う
         let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        let format = engine.inputNode.outputFormat(forBus: 0)
         guard let converter = PadAudioConverter(from: format) else {
             Self.logger.notice("\(Self.deviceName, privacy: .public) が読まれたが、Mac に使えるマイクがない")
             return
         }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self, let (samples, _) = converter.convert(buffer) else { return }
-            renderLock.withLock {
-                if isPassingThrough {
-                    self.buffer.write(samples)
+        // タップは 100ms ごとにしか音を渡さない。シンクなら入力の 1 回ごと (この Mac では 512 フレーム、約 10ms) に受け取れる
+        let isSendFormat = format.sampleRate == Double(PadAudio.sampleRate) && format.commonFormat == .pcmFormatFloat32 && !format.isInterleaved
+        let sink = AVAudioSinkNode { [weak self] _, frameCount, inputData in
+            guard let self else { return noErr }
+            if isSendFormat, let data = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)).first?.mData {
+                // Mac のマイクは送る形と同じ 48kHz のことが多いので、そのときは変換せず先頭のチャンネルを流す
+                let samples = UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(frameCount))
+                renderLock.withLock {
+                    if isPassingThrough {
+                        passThroughBuffer.write(samples)
+                    }
+                }
+            } else if let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData), let (samples, _) = converter.convert(buffer) {
+                renderLock.withLock {
+                    if isPassingThrough {
+                        passThroughBuffer.write(samples)
+                    }
                 }
             }
+            return noErr
         }
+        engine.attach(sink)
+        engine.connect(engine.inputNode, to: sink, format: format)
         renderLock.withLock {
-            buffer.removeAll()
+            passThroughBuffer.removeAll()
             isPassingThrough = true
         }
         do {
             try engine.start()
         } catch {
-            input.removeTap(onBus: 0)
             renderLock.withLock { isPassingThrough = false }
             Self.logger.error("Mac のマイクを始められない: \(error, privacy: .public)")
             return
@@ -409,11 +426,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private func stopPassThrough() {
         guard let engine = passThroughEngine else { return }
         passThroughEngine = nil
-        engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         renderLock.withLock {
             isPassingThrough = false
-            buffer.removeAll()
+            passThroughBuffer.removeAll()
         }
         Self.logger.notice("Mac のマイクの音を流すのをやめた")
     }
