@@ -19,8 +19,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let renderLock = NSLock()
     // iPad の音は 100ms ごとの塊で届く (AVAudioNode のタップは 100〜400ms ごとに渡す) ので、塊の揺れを吸収できるよう 150ms たまってから鳴らす。
-    // Typeless が読み始めるまでは鳴らさずにためておき、話し始めを落とさない。3 秒より遅れたら古い音を捨てる
-    private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate * 3, startThreshold: PadAudio.sampleRate * 15 / 100)
+    // Typeless が読み始めるまでは鳴らさずにためておき、話し始めを落とさない。Typeless は前の聞き取りを貼り付け終えるまで数秒始まらないことがあるので、6 秒までためる
+    private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate * 6, startThreshold: PadAudio.sampleRate * 15 / 100)
     // 止める直前の声は、iPad のタップの塊に入って止めた知らせより最大 100ms ほど遅れて届くので、その分を待つ
     private static let inFlightDelay: TimeInterval = 0.2
     // 鳴らした音が、タップと集約デバイスを通って Typeless に届くまでの分
@@ -145,7 +145,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     func finishListening(done: @escaping @Sendable () -> Void) {
         queue.asyncAfter(deadline: .now() + Self.inFlightDelay) { [self] in
             let target = renderLock.withLock { buffer.written }
-            waitUntilPlayed(target, deadline: .now() + 3, done: done)
+            waitUntilPlayed(target, deadline: .now() + 7, done: done)
         }
     }
 

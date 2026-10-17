@@ -19,7 +19,8 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "microphone")
     // 補助アプリが応えないときに、Typeless の起動や完了を待たせ続けない
     private static let readyTimeout: TimeInterval = 1.5
-    private static let finishTimeout: TimeInterval = 4
+    // 補助アプリは、ためている音 (最大 6 秒) を流し終えるまで待ってから返す
+    private static let finishTimeout: TimeInterval = 8
 
     private let queue: DispatchQueue
     private let onAuthorizationChange: @Sendable () -> Void
