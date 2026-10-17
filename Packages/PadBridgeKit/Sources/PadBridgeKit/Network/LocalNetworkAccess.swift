@@ -1,0 +1,14 @@
+import Network
+
+/// ローカルネットワークの許可を、Bonjour の検索の状態から見分ける。許可を直接読む API はない (TN3179)。
+public enum LocalNetworkAccess {
+    /// 許可がないと、検索は `kDNSServiceErr_PolicyDenied` (-65570) で止まる。
+    public static func isDenied(_ state: NWBrowser.State) -> Bool {
+        switch state {
+        case let .waiting(error), let .failed(error):
+            error == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
+        default:
+            false
+        }
+    }
+}

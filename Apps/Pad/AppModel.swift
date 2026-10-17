@@ -69,14 +69,7 @@ final class AppModel {
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: PadBridgeService.type, domain: nil), using: parameters)
         browser.stateUpdateHandler = { [weak self] state in
-            let isDenied: Bool
-            switch state {
-            case let .waiting(error), let .failed(error):
-                // ローカルネットワークの許可がないと、Bonjour の検索が PolicyDenied で止まる
-                isDenied = error == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
-            default:
-                isDenied = false
-            }
+            let isDenied = LocalNetworkAccess.isDenied(state)
             MainActor.assumeIsolated { self?.isLocalNetworkDenied = isDenied }
         }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
