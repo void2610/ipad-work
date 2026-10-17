@@ -83,6 +83,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
         Self.logger.info("Host との接続が切れたので終わる")
         // 自分が作ったものだけを消す。名前で探して消すと、入れ替わりに起動した補助アプリのデバイスまで消してしまう
         microphone?.stop()
+        microphone = nil
         DispatchQueue.main.async {
             NSApplication.shared.terminate(nil)
         }

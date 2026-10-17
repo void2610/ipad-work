@@ -23,6 +23,12 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var previousDefaultInputUID: String?
+    // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は無音を流し続ける。
+    // 止めるとタップだけの集約デバイスは入力を持たなくなり、Typeless (Chromium) がマイクとして数えない。
+    // 許可がないとタップのミュートが効かないが、そのときは無音しか流さないので何も聞こえない
+    private var isListening = false
+    // 聞き取りの間に iPad から届いた音のバイト数。届いていないのか Typeless が読めていないのかを見分けるために記録に出す
+    private var receivedBytes = 0
     // 許可がないとタップのミュートが効かず、iPad の声が Mac のスピーカーから流れてしまう。確かめるまでは鳴らさない
     private var isAuthorized = false
     private let authorizationLock = NSLock()
@@ -36,7 +42,13 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             guard let data = UnsafeMutableAudioBufferListPointer(bufferList).first?.mData else { return noErr }
             let output = UnsafeMutableBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(frameCount))
             if let self {
-                renderLock.withLock { buffer.read(into: output) }
+                renderLock.withLock {
+                    if isListening {
+                        buffer.read(into: output)
+                    } else {
+                        output.update(repeating: 0)
+                    }
+                }
             } else {
                 output.update(repeating: 0)
             }
@@ -60,9 +72,9 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// デバイスを消す。iPad の接続が切れたときに呼ぶ。
+    /// デバイスを消す。iPad の接続が切れたときに呼ぶ。消し終えるまで待つ (このあとすぐ終わっても Mac に残らないように)。
     func stop() {
-        queue.async { [self] in
+        queue.sync { [self] in
             restoreDefaultInput()
             engine.stop()
             destroyDevice()
@@ -85,12 +97,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 Self.logger.info("既定の入力は切り替えない: \(reason, privacy: .public)")
                 return
             }
-            renderLock.withLock { buffer.removeAll() }
-            do {
-                try engine.start()
-            } catch {
-                Self.logger.error("音を鳴らすエンジンを動かせない: \(error, privacy: .public)")
-                return
+            renderLock.withLock {
+                buffer.removeAll()
+                isListening = true
+                receivedBytes = 0
             }
             guard previousDefaultInputUID == nil, let current = Self.defaultInputDevice(), current != deviceID else { return }
             previousDefaultInputUID = Self.uid(of: current)
@@ -99,19 +109,34 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// 聞き取りが終わったら、鳴らすのをやめ、既定の入力を元に戻す。
+    /// 聞き取りが終わったら、届いた音を鳴らすのをやめ、既定の入力を元に戻す。
     func endListening() {
         queue.async { [self] in
-            if engine.isRunning {
-                engine.pause()
+            let (wasListening, received) = renderLock.withLock {
+                defer {
+                    isListening = false
+                    buffer.removeAll()
+                }
+                return (isListening, receivedBytes)
+            }
+            if wasListening {
+                let seconds = Double(received) / 2 / Double(PadAudio.sampleRate)
+                Self.logger.info("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分")
             }
             restoreDefaultInput()
         }
     }
 
     func feed(_ samples: Data) {
-        renderLock.withLock { buffer.write(samples) }
+        renderLock.withLock {
+            if isListening {
+                buffer.write(samples)
+                receivedBytes += samples.count
+            }
+        }
     }
+
+
 
     /// 前に Host が落ちて残ったデバイスとタップを消す。作ったプロセスが終わっても、HAL からは消えないため。
     static func removeLeftovers() {
@@ -141,7 +166,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             if process != kAudioObjectUnknown { break }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        engine.pause()
+        // 出力を止めたままタップを作ると、タップだけの集約デバイスは入力を持たないまま固まる。無音を流したままにする
         guard process != kAudioObjectUnknown else {
             Self.logger.error("自分のプロセスのオーディオオブジェクトが見つからない")
             return
@@ -150,6 +175,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         tapDescription.uuid = UUID()
         tapDescription.name = Self.deviceName
         tapDescription.muteBehavior = .muted
+        // 既定の非公開のタップは作ったプロセスにしか見えず、ほかのアプリからは集約デバイスに入力がないように見える
+        tapDescription.isPrivate = false
         var tap = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(tapDescription, &tap) == noErr, tap != kAudioObjectUnknown else {
             Self.logger.error("プロセスタップを作れない")
