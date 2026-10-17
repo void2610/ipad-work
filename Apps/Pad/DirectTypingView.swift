@@ -19,10 +19,13 @@ struct DirectTypingField: UIViewRepresentable {
     func updateUIView(_ view: DirectTypingUIView, context _: Context) {
         // キーボードを閉じるボタンなど、こちら以外の理由で入力先から外れたらボタンの表示を戻す
         view.onResign = { isActive = false }
-        if isActive, !view.isFirstResponder {
-            _ = view.becomeFirstResponder()
-        } else if !isActive, view.isFirstResponder {
-            _ = view.resignFirstResponder()
+        // SwiftUI の更新の途中でキーボードを出し入れすると、キーボードの分の余白が戻らないので、更新が終わってから行う
+        DispatchQueue.main.async {
+            if isActive, !view.isFirstResponder {
+                _ = view.becomeFirstResponder()
+            } else if !isActive, view.isFirstResponder {
+                _ = view.resignFirstResponder()
+            }
         }
     }
 }
