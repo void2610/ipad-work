@@ -10,9 +10,13 @@ extension NWParameters {
     public static func padBridge() -> NWParameters {
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
-        // iPad が圏外などで消えたとき、Mac 側の接続を早めに畳むため
+        // 相手が黙って消えたとき (圏外・スリープ) に、既定の 75 秒×8 回の確認を待たず、10 秒ほどで切れたと分かってつなぎ直す
         tcpOptions.enableKeepalive = true
         tcpOptions.keepaliveIdle = 2
+        tcpOptions.keepaliveInterval = 2
+        tcpOptions.keepaliveCount = 4
+        // 送っている最中に消えたときは確認が送られず、再送が届かないまま待つ時間で決まる
+        tcpOptions.connectionDropTime = 10
 
         let parameters = NWParameters(tls: nil, tcp: tcpOptions)
         parameters.includePeerToPeer = true
