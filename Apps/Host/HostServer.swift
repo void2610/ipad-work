@@ -154,6 +154,32 @@ nonisolated final class HostServer: @unchecked Sendable {
             guard typelessUsesOtherMicrophone == usesPadMicrophone else { return }
             typelessUsesOtherMicrophone = !usesPadMicrophone
             publishStatus()
+            if !usesPadMicrophone {
+                setUpTypelessMicrophone(after: 0)
+            }
+        }
+    }
+
+    /// Typeless が聞き取っていない間に、Typeless のマイクを「PadBridge iPad マイク」にする (一度だけ。Typeless を起動し直す)。
+    private func setUpTypelessMicrophone(after delay: TimeInterval) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+            // 聞き取りの途中で Typeless を終了させない
+            for _ in 0 ..< 300 where TypelessMonitor.isRecording() {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            let result = TypelessMicrophoneSetup.selectPadMicrophone(deviceName: PadMicrophoneDevice.name)
+            guard let self else { return }
+            queue.async {
+                switch result {
+                case .configured, .alreadySelected:
+                    if self.typelessUsesOtherMicrophone {
+                        self.typelessUsesOtherMicrophone = false
+                        self.publishStatus()
+                    }
+                case let .skipped(reason):
+                    Self.logger.notice("Typeless のマイクの設定をしない: \(reason, privacy: .public)")
+                }
+            }
         }
     }
 
@@ -275,6 +301,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         videoRegion = .full
         typeless?.start()
         microphone?.start()
+        // 補助アプリがデバイスを作り、Typeless がそれをマイクの一覧に載せてから、Typeless に使わせる設定をする
+        setUpTypelessMicrophone(after: 5)
         channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
         channel.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         onClientChange(deviceName)

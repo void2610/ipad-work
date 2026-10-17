@@ -12,6 +12,7 @@ import PadBridgeKit
 /// 補助アプリが作る入力デバイス。
 enum PadMicrophoneDevice {
     static let uid = "dev.void2610.padbridge.ipad-mic"
+    static let name = "PadBridge iPad マイク"
 }
 
 nonisolated final class MicrophoneRelay: @unchecked Sendable {
