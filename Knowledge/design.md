@@ -32,6 +32,9 @@
     - マイクだけ許可された Ghostty から読むと、`AudioDeviceStart` が `nope` で失敗した (coreaudiod が Ghostty の `kTCCServiceAudioCapture` を確かめ、未許可だった)。
     - システムオーディオの録音だけ許可された補助アプリから読むと、無音だった (`kTCCServiceMicrophone` が未許可)。
     - Typeless の Info.plist にはマイクの説明しかないので、Typeless は自分ではこの許可を求めない。システム設定の「画面とシステムオーディオの録音」→「システムオーディオ録音のみ」に、利用者が Typeless を加える必要がある。
+    - 許可がないとき、Typeless は「PadBridge iPad マイク」を開けはするが、中身は無音になり、聞き取りは続く (2026-10-17 の「音声入力が動かない」の原因)。tccd は Typeless の確認に authValue=0、authReason=8 (理由の説明がない) を返し、「Refusing authorization request for service kTCCServiceAudioCapture and subject Sub:{now.typeless.desktop}」を記録した。断ったことは許可の一覧に残らないので、Typeless は一覧に自動では載らず、「＋」で加える必要がある。
+    - アプリから他のアプリの許可を前もって読む方法はない。`TCCAccessPreflightWithAuditToken` は、権限のない呼び出し元には実際の許可と違う値 (許可されているマイクも「拒否」) を返した。
+    - そこで Host は、iPad のマイクで聞き取りが始まった 1 秒後に、直近 5 秒の tccd の記録から上の拒否の行を探す。あれば iPad に手順を知らせ、Mac で「画面とシステムオーディオの録音」の設定を開く。なければ知らせを消す。
     - iPad のマイクに切り替えたのに 1 秒たっても Typeless が聞き取りを始めなければ、読めていないとみて既定の入力を戻し、iPad にこの手順を知らせる。
   - Typeless (Chromium) にこのデバイスをマイクとして数えさせるには、次の 2 つが要った (2026-10-17、「使えない」と報告されて調べた)。聞き取りの間に Typeless の「システムオーディオの録音」の確認が一度も起きず、Typeless の設定のマイクの一覧にもこのデバイスがなかったことから、内蔵マイクを開いていたと分かった。
     - タップを公開にする (`isPrivate = false`)。既定の非公開のタップは作ったプロセスにしか見えず、ほかのアプリからは集約デバイスの入力が 0 本に見える。

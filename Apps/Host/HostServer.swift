@@ -104,10 +104,37 @@ nonisolated final class HostServer: @unchecked Sendable {
         inputQueue.async { [injector] in injector.typelessRecordingChanged(isRecording) }
         control?.send(.control(.voiceInputState(isActive: isRecording)))
         if isRecording, isUsingPadMicrophone {
-            setTypelessCannotReadPadMicrophone(false)
+            checkTypelessAudioCaptureRefusal()
         }
         if !isRecording {
             microphone?.endListening()
+        }
+    }
+
+    /// Typeless が「PadBridge iPad マイク」を読めたかを、macOS の許可の記録から見分ける。
+    /// 読めないとき Typeless は無音のまま聞き取りを続けるので、聞き取りの状態からは分からない。
+    /// Typeless は録音の理由の説明を持たないので、許可を加えていないと tccd が「Refusing ... kTCCServiceAudioCapture ... now.typeless.desktop」を記録する。
+    /// アプリから他のアプリの許可を前もって読む方法はない (TCCAccessPreflightWithAuditToken は権限のない呼び出し元には正しい値を返さない)。
+    private func checkTypelessAudioCaptureRefusal() {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+            process.arguments = [
+                "show", "--last", "5s", "--style", "compact", "--predicate",
+                #"process == "tccd" AND eventMessage CONTAINS "Refusing" AND eventMessage CONTAINS "kTCCServiceAudioCapture" AND eventMessage CONTAINS "now.typeless.desktop""#,
+            ]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return }
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            let refused = output.contains("Refusing")
+            guard let self else { return }
+            queue.async {
+                Self.logger.notice("Typeless のシステムオーディオの録音: \(refused ? "拒否された" : "拒否の記録なし", privacy: .public)")
+                self.setTypelessCannotReadPadMicrophone(refused)
+            }
         }
     }
 
