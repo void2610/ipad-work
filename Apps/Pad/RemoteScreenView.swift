@@ -152,7 +152,8 @@ final class RemoteScreenUIView: UIView {
         stopMomentum()
         for touch in touches {
             let location = touch.location(in: self)
-            if touch.type == .indirectPointer {
+            // Apple Pencil は Sidecar と同じく、触れたところを押してそのまま動かすとドラッグにする (指で払うのはスクロールのまま)
+            if touch.type == .indirectPointer || touch.type == .pencil {
                 let button: MouseButton = event?.buttonMask.contains(.secondary) == true ? .right : .left
                 pointerButtons[ObjectIdentifier(touch)] = button
                 sendPointer?([.mouseMove(normalized(location)), .mouseButton(button, isDown: true, at: normalized(location))])
