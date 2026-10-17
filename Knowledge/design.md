@@ -21,15 +21,15 @@
   - iPad は Typeless のボタンを押している間だけマイクの音を取り、48kHz・モノラル・16 ビットのまま操作用の接続で送る (`WireMessage.audio`)。
   - Mac では、届いた音を自分のプロセスで鳴らし、自分の出力だけを取り出すミュートのプロセスタップ (`CATapDescription`、`muteBehavior = .muted`) を作る。タップだけを入力に持つ集約デバイス「PadBridge iPad マイク」を作ると、他のアプリから入力デバイスとして見える。出力のサブデバイスを入れると、出力デバイスとしても一覧に出てしまう。
   - **このデバイスは Mac の既定の入力になれない**。タップだけの集約デバイスは `kAudioDevicePropertyDeviceCanBeDefaultDevice` が 0 で、既定の入力に設定しても、ほかのアプリからは内蔵マイクのままに見える (2026-10-17 に確かめた)。既定の入力は切り替えない。
-  - 利用者に Typeless の設定を変えさせる作りは「ゴミ仕様」「こっちに指示を出すな」と否定された (2026-10-17)。そこで Host が、iPad がつながった 5 秒後に一度だけ、Typeless の `selectedMicrophoneDevice` をこのデバイスにする (`TypelessMicrophoneSetup`)。
+  - 利用者に Typeless の設定を変えさせる作りは「ゴミ仕様」「こっちに指示を出すな」と否定された (2026-10-17)。そこで Host が、iPad がつながった 5 秒後に、Typeless の `selectedMicrophoneDevice` をこのデバイスにする (`TypelessMicrophoneSetup`)。
     - Typeless の中身 (app.asar) を読んで確かめたこと: 設定は electron-store で、外からの書き換えを読み直す `watch` は使っていない。動いている間に書き換えても上書きされるので、Typeless を終了させてから書き換え、起動し直す。選んだマイクは今のマイクの一覧から deviceId で探し、なければ null (自動検出) に戻るので、iPad がつながっていないときは内蔵マイクで聞き取れる。
     - 蓋を閉じると Typeless が「マイクがない」と言う理由も中身で分かった: マイクが「自動検出」のときだけ蓋の開閉を 3 秒ごとに見ており、閉じていると既定の入力 ('default') を使わず、録音するデバイスがなくなる。特定のマイクを選んでいれば、蓋の開閉に関係なくそれを使う。
     - 選んだマイクが一覧にないときは自動検出として扱うだけで、`selectedMicrophoneDevice` を null に書き戻さない。一覧は `devicechange` のたびに取り直す。そのため、Typeless が iPad のつながっていないときに起動しても、補助アプリがデバイスを作り直しても、選んだままになる。
     - 値は、Typeless 自身が設定に書いたマイクの一覧の項目をそのまま使う (deviceId は Chromium が作る値なので、自分では作れない)。書き換えるのはこの 1 項目だけで、ほかの項目が変わらないことを写しで確かめた。
-    - 聞き取りの途中では終了させない。利用者があとで別のマイクを選んだら上書きしないよう、自動で設定するのは一度だけ (UserDefaults に記録)。
+    - 聞き取りの途中では終了させない。選ぶのは、選んだマイクが自動検出 (null か deviceId が `default`) のときだけ (`TypelessMicrophoneChoice`)。利用者が特定のマイクを選んでいれば、その選択として残す。初めは一度だけ設定して UserDefaults に記録していたが、それだと Typeless を入れ直したり設定が消えたりしたあと二度と選ばれず、iPad に設定の手順を出すことになるのでやめた。
     - 最初は聞き取りの間だけ既定の入力を切り替えていたが、Typeless は内蔵マイクで録音していた。coreaudiod の記録では、既定の入力をこのデバイスにした直後に、Typeless の入力は BuiltInMicrophoneDevice で始まっていた。
     - 内蔵マイクをサブデバイスに加えた集約デバイスなら既定になれるが、チャンネル 1 が内蔵マイク、2〜3 がタップの順に並ぶ。Chromium が先頭のチャンネルを読むと、蓋を閉じた内蔵マイクの無音を拾うので採らなかった。
-    - Host は、iPad から聞き取りを始めたあと、Typeless が録音しているデバイスを `kAudioProcessPropertyDevices` (入力側) で読む。このデバイスでなければ、Typeless の設定をし直し (一度だけ)、それでも違えば iPad に知らせる。
+    - Host は、iPad から聞き取りを始めたあと、Typeless が録音しているデバイスを `kAudioProcessPropertyDevices` (入力側) で読む。このデバイスでなければ、Typeless の設定をし直し (自動検出のときだけ)、利用者が別のマイクを選んでいれば iPad に知らせる。
       - Typeless がこのデバイス (タップだけの集約デバイス) で録音しているときは、この一覧が空になる (内蔵マイクのときは BuiltInMicrophoneDevice が入る)。空を「別のマイク」と見なして、正しく聞き取れているのに iPad に警告を出していた (2026-10-17 に利用者が気づいた)。空のときは分からないものとして知らせない。
     - Typeless がこのデバイスを選んだままなので、iPad がつながったまま Mac で直接 Typeless を使うと、無音で録音されてしまう (補助アプリは iPad から話している間しか音を流さないため)。そこで補助アプリは、iPad から話していない間にこのデバイスが読まれたら (`kAudioDevicePropertyDeviceIsRunningSomewhere`)、Mac の既定の入力の音を別の `AVAudioEngine` で取り込んで流す。この通知は集約デバイスでもすぐ届く (プロセスの入力状態と違い、待たずに使える) ことを確かめた。
       - iPad からの聞き取りのあと Typeless がまだ読んでいる間に流し始めると、その続きに Mac のマイクの音が混ざる。読むのが一度止まるまでは流さない (`PassThroughGate`)。
