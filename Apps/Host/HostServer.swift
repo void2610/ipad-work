@@ -447,6 +447,11 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func keepDisplayAwake(_ isAwake: Bool) {
         if isAwake, displayAssertion == nil {
+            // 眠らせないアサーションは、もう眠っている画面を起こさない。映し始めるときに操作があったと知らせて起こす
+            var activity = IOPMAssertionID(0)
+            if IOPMAssertionDeclareUserActivity("iPad に画面を映し始めた" as CFString, kIOPMUserActiveLocal, &activity) == kIOReturnSuccess {
+                IOPMAssertionRelease(activity)
+            }
             var id = IOPMAssertionID(0)
             if IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "iPad に画面を映している" as CFString, &id) == kIOReturnSuccess {
                 displayAssertion = id
