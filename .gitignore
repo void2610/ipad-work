@@ -1,0 +1,8 @@
+.DS_Store
+# project.yml から生成する
+*.xcodeproj/
+build/
+.build/
+.swiftpm/
+xcuserdata/
+Config/Local.xcconfig
