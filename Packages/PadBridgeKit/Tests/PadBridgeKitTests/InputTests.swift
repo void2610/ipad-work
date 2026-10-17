@@ -8,6 +8,8 @@ struct KeyboardMappingTests {
         (0x27, 0x1D), // 0
         (0x28, 0x24), // Return
         (0x2A, 0x33), // Backspace
+        (0x2D, 0x1B), // - (かなモードで「ー」になる)
+        (0x3C, 0x63), // F3 (⌃F3 でドックに移る。この Mac の「ドックを操作対象にする」の設定もキーコード 99 だった)
         (0x50, 0x7B), // ←
         (0x91, 0x66), // 英数
         (0xE3, 0x37), // 左 Command
@@ -25,6 +27,8 @@ struct KeyboardMappingTests {
         #expect(KeyboardMapping.eventFlags(modifiers: [.control], macVirtualKeyCode: 0x7E) == 0x40101 | 0x200000 | 0x800000)
         #expect(KeyboardMapping.eventFlags(modifiers: [], macVirtualKeyCode: 0x00) == 0x100)
         #expect(KeyboardMapping.eventFlags(modifiers: [.command, .shift], macVirtualKeyCode: 0x73) == 0x100108 | 0x20002 | 0x800000)
+        // ⌃F3 は本物のキーボードと同じく Fn のビットを付ける
+        #expect(KeyboardMapping.eventFlags(modifiers: [.control], macVirtualKeyCode: 0x63) == 0x40101 | 0x800000)
     }
 
     @Test func modifiersAreDetected() {
