@@ -21,6 +21,8 @@ final class HostSession {
     private(set) var videoSize = CGSize.zero
     /// Mac の Typeless が聞き取っているか。押した直後は求めた状態を先に見せ、Mac から実際の状態が届いたらそれに合わせる。
     private(set) var isVoiceInputActive = false
+    /// iPad のマイクを使えないときの知らせ。
+    private(set) var microphoneNotice: String?
 
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
     // 映像の受信と復号を操作の通信から切り離し、映像が重くても操作が遅れないようにする
@@ -31,6 +33,8 @@ final class HostSession {
     private var isForeground = true
     // iPad から始めさせた聞き取りか。裏に回るときに、Mac で直接始めた聞き取りまで止めないために覚える
     private var isVoiceInputStartedHere = false
+    private let microphone = MicrophoneStreamer()
+    private var microphoneStopTask: Task<Void, Never>?
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
@@ -110,16 +114,47 @@ final class HostSession {
     }
 
     /// Mac の Typeless で音声入力を始める (true) か、終える (false)。
+    /// 始めるときは iPad のマイクの音を Mac へ送り始めてから、Typeless を起動する。Mac は蓋を閉じると内蔵マイクが使えないため。
     func setVoiceInput(_ isActive: Bool) {
         guard isVoiceInputActive != isActive else { return }
         isVoiceInputActive = isActive
         isVoiceInputStartedHere = isActive
-        send(.voiceInput(isActive: isActive))
+        if isActive {
+            startMicrophone()
+        } else {
+            send(.voiceInput(isActive: false))
+            // Mac が Typeless を止めたら知らせが来て止める。来なかったときのために、少し待ってからも止める
+            microphoneStopTask?.cancel()
+            microphoneStopTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.microphone.stop()
+            }
+        }
+    }
+
+    private func startMicrophone() {
+        microphoneStopTask?.cancel()
+        microphone.requestPermission { [weak self] permission in
+            // 許可を尋ねている間に離された場合は、始めない
+            guard let self, isVoiceInputActive, isVoiceInputStartedHere else { return }
+            switch permission {
+            case .granted:
+                microphoneNotice = nil
+                if !microphone.isRunning, let channel = control {
+                    microphone.start { samples in channel.send(.audio(samples)) }
+                }
+            case .denied:
+                microphoneNotice = "iPad のマイクが許可されていないので、Mac のマイクで聞き取ります。設定の「PadBridge」でマイクを許可してください。"
+            }
+            send(.voiceInput(isActive: true))
+        }
     }
 
     func close() {
         commitAppSwitch()
         stopVoiceInputStartedHere()
+        microphone.stop()
         isClosed = true
         retryTask?.cancel()
         videoRetryTask?.cancel()
@@ -136,6 +171,7 @@ final class HostSession {
         } else {
             // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
             stopVoiceInputStartedHere()
+            microphone.stop()
             commitAppSwitch()
             stopVideo()
         }
@@ -191,6 +227,7 @@ final class HostSession {
         // 接続が切れた時点で Mac 側は iPad が始めさせた聞き取りを止める。つなぎ直したら Mac から実際の状態が届く
         isVoiceInputActive = false
         isVoiceInputStartedHere = false
+        microphone.stop()
         replaceControl(with: nil)
         stopVideo()
         phase = .reconnecting
@@ -217,6 +254,7 @@ final class HostSession {
             isVoiceInputActive = isActive
             if !isActive {
                 isVoiceInputStartedHere = false
+                microphone.stop()
             }
         default:
             break

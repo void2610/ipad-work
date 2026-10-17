@@ -49,7 +49,8 @@ final class BackgroundAudio {
     }
 
     private func setCategory() throws {
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        // Typeless で話すときにマイクも使うので、録音もできる種類にしておく (切り替えると流している無音が止まるため、最初からこれにする)
+        try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
     }
 
     private func restartEngine() {

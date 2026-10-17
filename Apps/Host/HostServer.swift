@@ -22,6 +22,10 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var video: MessageChannel?
     private var streamer: ScreenStreamer?
     private var typeless: TypelessMonitor?
+    private var microphone: MicrophoneRelay?
+    // 今の聞き取りで、既定の入力を iPad のマイクにしたか
+    private var isUsingPadMicrophone = false
+    private var typelessCannotReadPadMicrophone = false
     // iPad から音声入力の開始・完了が来るたびに増やし、古い要求の結果を知らせないようにする
     private var voiceInputRequestCount = 0
 
@@ -45,6 +49,10 @@ nonisolated final class HostServer: @unchecked Sendable {
             self.typeless = TypelessMonitor { [weak self] isRecording in
                 guard let self else { return }
                 queue.async { self.typelessRecordingChanged(isRecording) }
+            }
+            self.microphone = MicrophoneRelay(queue: self.queue) { [weak self] in
+                guard let self else { return }
+                control?.send(.control(.hostStatus(currentStatus())))
             }
         }
     }
@@ -91,6 +99,18 @@ nonisolated final class HostServer: @unchecked Sendable {
         Self.logger.info("Typeless の聞き取り: \(isRecording ? "開始" : "終了", privacy: .public)")
         inputQueue.async { [injector] in injector.typelessRecordingChanged(isRecording) }
         control?.send(.control(.voiceInputState(isActive: isRecording)))
+        if isRecording, isUsingPadMicrophone {
+            setTypelessCannotReadPadMicrophone(false)
+        }
+        if !isRecording {
+            microphone?.endListening()
+        }
+    }
+
+    private func setTypelessCannotReadPadMicrophone(_ value: Bool) {
+        guard typelessCannotReadPadMicrophone != value else { return }
+        typelessCannotReadPadMicrophone = value
+        control?.send(.control(.hostStatus(currentStatus())))
     }
 
     private func accept(_ connection: NWConnection) {
@@ -115,6 +135,12 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func handle(_ message: WireMessage, from channel: MessageChannel) {
+        if case let .audio(samples) = message {
+            if channel === control {
+                microphone?.feed(samples)
+            }
+            return
+        }
         guard case let .control(message) = message else { return }
         if case let .hello(role, deviceName, maxWidth, maxHeight) = message {
             pending[ObjectIdentifier(channel)] = nil
@@ -134,26 +160,46 @@ nonisolated final class HostServer: @unchecked Sendable {
             inputQueue.async { TextInserter.insert(text) }
         case let .voiceInput(isActive):
             Self.logger.info("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
-            inputQueue.async { [injector] in injector.handle(message) }
-            reportVoiceInputAfterSettling()
+            reportVoiceInputAfterSettling(isActive: isActive)
+            if isActive {
+                // Typeless が録音を始める前に、既定の入力を iPad のマイクにしておく
+                microphone?.beginListening { [weak self, inputQueue, injector] isUsingPadMicrophone in
+                    self?.isUsingPadMicrophone = isUsingPadMicrophone
+                    inputQueue.async { injector.handle(message) }
+                }
+            } else {
+                // 送られてきた音を鳴らしきってから止めるよう、ためている分 (80ms) より少し長く待つ
+                inputQueue.asyncAfter(deadline: .now() + 0.25) { [injector] in injector.handle(message) }
+                let requestCount = voiceInputRequestCount
+                queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime + 0.5) { [weak self] in
+                    guard let self, requestCount == voiceInputRequestCount else { return }
+                    microphone?.endListening()
+                }
+            }
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus:
             break
         }
     }
 
     /// Typeless がショートカットに反応しなかったときは状態の変化が来ないので、待ってから実際の状態を知らせて iPad の表示を戻す。
-    private func reportVoiceInputAfterSettling() {
+    private func reportVoiceInputAfterSettling(isActive: Bool) {
         voiceInputRequestCount += 1
         let requestCount = voiceInputRequestCount
         queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime) { [weak self] in
             guard let self, requestCount == voiceInputRequestCount else { return }
-            control?.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
+            let isRecording = TypelessMonitor.isRecording()
+            control?.send(.control(.voiceInputState(isActive: isRecording)))
+            // iPad のマイクに切り替えたのに聞き取りが始まらないなら、Typeless がこのデバイスを読めていない
+            if isActive, isUsingPadMicrophone, !isRecording {
+                setTypelessCannotReadPadMicrophone(true)
+                microphone?.endListening()
+            }
         }
     }
 
@@ -163,7 +209,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         control = channel
         Self.logger.info("接続: \(deviceName, privacy: .public)")
         typeless?.start()
-        channel.send(.control(.welcome(hostName: hostName, status: Self.currentStatus())))
+        microphone?.start()
+        channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
         channel.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         onClientChange(deviceName)
     }
@@ -175,7 +222,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
         stopVideo()
         video = channel
-        let status = Self.currentStatus()
+        let status = currentStatus()
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
@@ -216,11 +263,17 @@ nonisolated final class HostServer: @unchecked Sendable {
         control.cancel()
         self.control = nil
         typeless?.stop()
+        microphone?.stop()
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
     }
 
-    private static func currentStatus() -> HostStatus {
-        HostStatus(canCaptureScreen: CGPreflightScreenCaptureAccess(), canControlInput: AXIsProcessTrusted())
+    private func currentStatus() -> HostStatus {
+        HostStatus(
+            canCaptureScreen: CGPreflightScreenCaptureAccess(),
+            canControlInput: AXIsProcessTrusted(),
+            canRelayMicrophone: !(microphone?.isKnownUnauthorized ?? false),
+            typelessCannotReadPadMicrophone: typelessCannotReadPadMicrophone
+        )
     }
 }

@@ -20,6 +20,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>iPad のマイクの音を、Mac の Typeless が使える一時的なマイク「PadBridge iPad マイク」として渡すために使います。</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>

@@ -30,7 +30,7 @@ struct SessionView: View {
     @ViewBuilder
     private var statusOverlay: some View {
         VStack {
-            if let notice = permissionNotice {
+            ForEach([permissionNotice, relayNotice, session.microphoneNotice].compactMap(\.self), id: \.self) { notice in
                 Label(notice, systemImage: "exclamationmark.triangle.fill")
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -60,5 +60,16 @@ struct SessionView: View {
         if !status.canControlInput { missing.append("アクセシビリティ") }
         guard !missing.isEmpty else { return nil }
         return "Mac の PadBridge Host で「\(missing.joined(separator: "」と「"))」を許可してください。"
+    }
+
+    private var relayNotice: String? {
+        guard let status = session.hostStatus else { return nil }
+        if !status.canRelayMicrophone {
+            return "iPad のマイクを Mac に渡すには、Mac で「PadBridge Host」に「システムオーディオの録音」を許可してください。"
+        }
+        if status.typelessCannotReadPadMicrophone {
+            return "Typeless が iPad のマイクを読めません。Mac のシステム設定の「プライバシーとセキュリティ」→「画面とシステムオーディオの録音」の「システムオーディオ録音のみ」に Typeless を加えてください。"
+        }
+        return nil
     }
 }

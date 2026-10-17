@@ -46,6 +46,12 @@ targets:
           - Info.plist
     dependencies:
       - package: PadBridgeKit
+      # 補助アプリは Host のバンドルの中に入れ、Mac に別のものをインストールしない
+      - target: PadBridgeMic
+        embed: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.void2610.padbridge.host
@@ -54,6 +60,25 @@ targets:
         # CGEvent で他アプリへ入力を送るには App Sandbox の外で動かす必要がある
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES
+  PadBridgeMic:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/Mic
+        excludes:
+          - Info.plist
+          - Mic.entitlements
+    dependencies:
+      - package: PadBridgeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.void2610.padbridge.mic
+        PRODUCT_NAME: PadBridge Mic
+        INFOPLIST_FILE: Apps/Mic/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Apps/Mic/Mic.entitlements
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
 schemes:
   PadBridge:
     build:

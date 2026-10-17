@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mac の Typeless で音声入力するとき、iPad のマイクの音を Mac に送るために使います。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_padbridge._tcp</string>
