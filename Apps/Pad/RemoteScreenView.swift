@@ -28,6 +28,8 @@ final class RemoteScreenUIView: UIView {
     // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
     private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
     private var lastScrollTranslation = CGPoint.zero
+    private var momentum: ScrollMomentum?
+    private var momentumLink: CADisplayLink?
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
@@ -37,6 +39,11 @@ final class RemoteScreenUIView: UIView {
         isMultipleTouchEnabled = true
         displayLayer.videoGravity = .resizeAspect
         layer.addSublayer(displayLayer)
+        isAccessibilityElement = true
+        accessibilityLabel = "Mac の画面"
+        accessibilityIdentifier = "remoteScreen"
+        // VoiceOver 中も、指の操作をそのまま Mac に届ける
+        accessibilityTraits = .allowsDirectInteraction
         installGestureRecognizers()
     }
 
@@ -84,6 +91,8 @@ final class RemoteScreenUIView: UIView {
         if !isFirstResponder {
             becomeFirstResponder()
         }
+        // 慣性で流れている途中に触れたら、iPad と同じくその場で止める
+        stopMomentum()
         for touch in touches {
             let location = touch.location(in: self)
             if touch.type == .indirectPointer {
@@ -104,7 +113,7 @@ final class RemoteScreenUIView: UIView {
             if pointerButtons[ObjectIdentifier(touch)] != nil {
                 send?(.mouseMove(normalized(location)))
             } else {
-                perform(interpreter.moved(touch: Self.id(of: touch), to: location))
+                perform(interpreter.moved(touch: Self.id(of: touch), to: location, time: touch.timestamp))
             }
         }
         scheduleLongPressIfNeeded()
@@ -160,10 +169,41 @@ final class RemoteScreenUIView: UIView {
             case let .scroll(dx, dy):
                 guard rect.width > 0, rect.height > 0 else { continue }
                 send?(.scroll(dx: dx / rect.width, dy: dy / rect.height))
+            case let .scrollEnded(velocityX, velocityY):
+                startMomentum(velocityX: velocityX, velocityY: velocityY)
             case .longPressRecognized:
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             }
         }
+    }
+
+    private func startMomentum(velocityX: CGFloat, velocityY: CGFloat) {
+        let momentum = ScrollMomentum(velocityX: velocityX, velocityY: velocityY)
+        guard !momentum.isFinished else { return }
+        self.momentum = momentum
+        let link = CADisplayLink(target: self, selector: #selector(stepMomentum))
+        link.add(to: .main, forMode: .common)
+        momentumLink = link
+    }
+
+    @objc private func stepMomentum(_ link: CADisplayLink) {
+        let rect = videoRect
+        guard var momentum, rect.width > 0, rect.height > 0 else {
+            stopMomentum()
+            return
+        }
+        let delta = momentum.step(interval: link.targetTimestamp - link.timestamp)
+        self.momentum = momentum
+        send?(.scroll(dx: delta.dx / rect.width, dy: delta.dy / rect.height))
+        if momentum.isFinished {
+            stopMomentum()
+        }
+    }
+
+    private func stopMomentum() {
+        momentumLink?.invalidate()
+        momentumLink = nil
+        momentum = nil
     }
 
     private static func id(of touch: UITouch) -> Int {
