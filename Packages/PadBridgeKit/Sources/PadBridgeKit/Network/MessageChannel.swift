@@ -54,14 +54,15 @@ public final class MessageChannel: Sendable {
     private func receiveNext(_ onMessage: @escaping @Sendable (WireMessage) -> Void) {
         connection.receiveMessage { [weak self] content, context, _, error in
             guard let self, error == nil else { return }
-            guard let framerMessage = context?.protocolMetadata(definition: PadBridgeFramer.definition) as? NWProtocolFramer.Message,
-                  let message = try? WireMessage(type: framerMessage.padBridgeMessageType, payload: content ?? Data())
-            else {
-                // 相手が閉じたか、解釈できないデータが来た。どちらも続行できないので畳む
+            guard let framerMessage = context?.protocolMetadata(definition: PadBridgeFramer.definition) as? NWProtocolFramer.Message else {
+                // 相手が閉じた
                 connection.cancel()
                 return
             }
-            onMessage(message)
+            // 区切りは framer が切り出しているので、相手が新しいビルドで送ってきた知らないメッセージは飛ばして続けられる
+            if let message = try? WireMessage(type: framerMessage.padBridgeMessageType, payload: content ?? Data()) {
+                onMessage(message)
+            }
             receiveNext(onMessage)
         }
     }
