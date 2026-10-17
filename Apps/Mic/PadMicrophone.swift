@@ -94,7 +94,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             guard isAuthorized else { return }
             // 蓋が開いているか、ほかに使えるマイクがあるなら切り替えない。Mac のマイクで動いていた Typeless を巻き込まないため
             if let reason = Self.reasonNotToUsePadMicrophone() {
-                Self.logger.info("既定の入力は切り替えない: \(reason, privacy: .public)")
+                Self.logger.notice("既定の入力は切り替えない: \(reason, privacy: .public)")
                 return
             }
             renderLock.withLock {
@@ -105,7 +105,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             guard previousDefaultInputUID == nil, let current = Self.defaultInputDevice(), current != deviceID else { return }
             previousDefaultInputUID = Self.uid(of: current)
             Self.setDefaultInput(deviceID)
-            Self.logger.info("既定の入力を \(Self.deviceName, privacy: .public) に切り替えた")
+            Self.logger.notice("既定の入力を \(Self.deviceName, privacy: .public) に切り替えた")
         }
     }
 
@@ -121,7 +121,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             }
             if wasListening {
                 let seconds = Double(received) / 2 / Double(PadAudio.sampleRate)
-                Self.logger.info("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分")
+                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分")
             }
             restoreDefaultInput()
         }
@@ -142,7 +142,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     static func removeLeftovers() {
         if let device = device(uid: deviceUID) {
             AudioHardwareDestroyAggregateDevice(device)
-            logger.info("前に残った \(deviceName, privacy: .public) を消した")
+            logger.notice("前に残った \(deviceName, privacy: .public) を消した")
         }
         for tap in objects(kAudioHardwarePropertyTapList) where tapName(tap) == deviceName {
             AudioHardwareDestroyProcessTap(tap)
@@ -198,7 +198,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
         tapID = tap
         deviceID = device
-        Self.logger.info("\(Self.deviceName, privacy: .public) を作った")
+        Self.logger.notice("\(Self.deviceName, privacy: .public) を作った")
     }
 
     private func destroyDevice() {
@@ -246,7 +246,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             return reportedAuthorization != authorized
         }
         if changed {
-            Self.logger.info("システムオーディオの録音の許可: \(authorized ? "あり" : "なし", privacy: .public)")
+            Self.logger.notice("システムオーディオの録音の許可: \(authorized ? "あり" : "なし", privacy: .public)")
             onAuthorizationChange(authorized)
         }
     }
@@ -256,7 +256,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         previousDefaultInputUID = nil
         if let device = Self.device(uid: previous) {
             Self.setDefaultInput(device)
-            Self.logger.info("既定の入力を元に戻した")
+            Self.logger.notice("既定の入力を元に戻した")
         }
     }
 

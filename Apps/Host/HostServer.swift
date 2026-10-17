@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -26,6 +27,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
     private var typelessCannotReadPadMicrophone = false
+    private var didOpenAudioCaptureSettings = false
     // iPad から音声入力の開始・完了が来るたびに増やし、古い要求の結果を知らせないようにする
     private var voiceInputRequestCount = 0
 
@@ -96,7 +98,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// Mac で直接 Typeless を使ったときや、Typeless が自分で聞き取りを終えたときも、iPad のボタンの表示を合わせる。
     private func typelessRecordingChanged(_ isRecording: Bool) {
-        Self.logger.info("Typeless の聞き取り: \(isRecording ? "開始" : "終了", privacy: .public)")
+        Self.logger.notice("Typeless の聞き取り: \(isRecording ? "開始" : "終了", privacy: .public)")
         inputQueue.async { [injector] in injector.typelessRecordingChanged(isRecording) }
         control?.send(.control(.voiceInputState(isActive: isRecording)))
         if isRecording, isUsingPadMicrophone {
@@ -111,6 +113,15 @@ nonisolated final class HostServer: @unchecked Sendable {
         guard typelessCannotReadPadMicrophone != value else { return }
         typelessCannotReadPadMicrophone = value
         control?.send(.control(.hostStatus(currentStatus())))
+        guard value, !didOpenAudioCaptureSettings else { return }
+        // Typeless に許可を足す画面を Mac で開いておき、iPad に映った画面で「＋」を押すだけにする。接続ごとに 1 回だけ
+        didOpenAudioCaptureSettings = true
+        Self.logger.notice("Typeless が iPad のマイクを読めないので、画面とシステムオーディオの録音の設定を開く")
+        DispatchQueue.main.async {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     private func accept(_ connection: NWConnection) {
@@ -159,7 +170,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             Self.logger.info("文字入力を受信: \(text.count) 文字")
             inputQueue.async { TextInserter.insert(text) }
         case let .voiceInput(isActive):
-            Self.logger.info("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
+            Self.logger.notice("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
             reportVoiceInputAfterSettling(isActive: isActive)
             if isActive {
                 // Typeless が録音を始める前に、既定の入力を iPad のマイクにしておく
@@ -207,7 +218,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
-        Self.logger.info("接続: \(deviceName, privacy: .public)")
+        Self.logger.notice("接続: \(deviceName, privacy: .public)")
+        didOpenAudioCaptureSettings = false
         typeless?.start()
         microphone?.start()
         channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
@@ -259,7 +271,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func closeSession() {
         stopVideo()
         guard let control else { return }
-        Self.logger.info("切断")
+        Self.logger.notice("切断")
         control.cancel()
         self.control = nil
         typeless?.stop()

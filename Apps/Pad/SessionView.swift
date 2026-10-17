@@ -68,7 +68,7 @@ struct SessionView: View {
             return "iPad のマイクを Mac に渡すには、Mac で「PadBridge Host」に「システムオーディオの録音」を許可してください。"
         }
         if status.typelessCannotReadPadMicrophone {
-            return "Typeless が iPad のマイクを読めません。Mac のシステム設定の「プライバシーとセキュリティ」→「画面とシステムオーディオの録音」の「システムオーディオ録音のみ」に Typeless を加えてください。"
+            return "Typeless が iPad のマイクを読めません。Mac で「画面とシステムオーディオの録音」の設定を開いたので、下の「システムオーディオ録音のみ」の「＋」で Typeless を加えてください。"
         }
         return nil
     }

@@ -154,7 +154,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     self.channel?.cancel()
                     self.channel = channel
                     launchedAt = nil
-                    Self.logger.info("補助アプリとつながった")
+                    Self.logger.notice("補助アプリとつながった")
                 // 合言葉を確かめた接続からのものだけを受ける
                 case let .microphoneRelayReady(isUsingPadMicrophone) where channel === self.channel:
                     finishPendingReady(isUsingPadMicrophone: isUsingPadMicrophone)

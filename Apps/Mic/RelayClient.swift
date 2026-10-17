@@ -80,7 +80,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
 
     /// Host が終わったか、接続できなかった。作ったデバイスを消してから終わる。
     private func finish() {
-        Self.logger.info("Host との接続が切れたので終わる")
+        Self.logger.notice("Host との接続が切れたので終わる")
         // 自分が作ったものだけを消す。名前で探して消すと、入れ替わりに起動した補助アプリのデバイスまで消してしまう
         microphone?.stop()
         microphone = nil
