@@ -24,6 +24,12 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var control: MessageChannel?
     private var video: MessageChannel?
     private var streamer: ScreenStreamer?
+    // 映像の要求で受け取った、iPad が表示できる最大の大きさ。画面の構成が変わって取り込みを作り直すときにも使う
+    private var videoMaxSize = (width: 0, height: 0)
+    // 取り込みを始めたときのメインディスプレイ。解像度や画面が変わったら、取り込みを作り直す
+    private var streamedDisplay: DisplayLayout?
+    private var screenObserver: (any NSObjectProtocol)?
+    private var displayChange: DispatchWorkItem?
     // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
     private var displayAssertion: IOPMAssertionID?
     // iPad が見ている範囲。映像の接続を張り直しても引き継ぐ
@@ -68,6 +74,10 @@ nonisolated final class HostServer: @unchecked Sendable {
                 guard let self else { return }
                 publishStatus()
             }
+            self.screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: nil) { [weak self] _ in
+                guard let self else { return }
+                queue.async { self.screenParametersChanged() }
+            }
         }
     }
 
@@ -80,6 +90,11 @@ nonisolated final class HostServer: @unchecked Sendable {
             self.closeSession()
             self.microphoneStop?.cancel()
             self.microphone?.stop()
+            self.displayChange?.cancel()
+            if let screenObserver = self.screenObserver {
+                NotificationCenter.default.removeObserver(screenObserver)
+                self.screenObserver = nil
+            }
         }
     }
 
@@ -349,13 +364,20 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
         stopVideo()
         video = channel
+        videoMaxSize = (maxWidth, maxHeight)
         let status = currentStatus()
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
-        let streamer = ScreenStreamer(channel: channel, maxWidth: maxWidth, maxHeight: maxHeight, region: videoRegion)
-        self.streamer = streamer
+        startStreamer(on: channel)
         keepDisplayAwake(true)
+    }
+
+    private func startStreamer(on channel: MessageChannel) {
+        streamer?.stop()
+        let streamer = ScreenStreamer(channel: channel, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion)
+        self.streamer = streamer
+        streamedDisplay = DisplayLayout.main()
         Task {
             do {
                 try await streamer.start()
@@ -377,10 +399,25 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
+    /// 取り込みは始めたときの画面の大きさのまま続き、触った位置とずれるので、解像度やメインディスプレイが変わったら作り直す。
+    private func screenParametersChanged() {
+        displayChange?.cancel()
+        // 1 回の変更で続けて届くことがあるので、落ち着いてから 1 度だけ作り直す
+        let change = DispatchWorkItem { [weak self] in
+            guard let self, let video, streamer != nil, streamedDisplay != DisplayLayout.main() else { return }
+            Self.logger.notice("Mac の画面の構成が変わったので、取り込みを作り直す")
+            startStreamer(on: video)
+        }
+        displayChange = change
+        queue.asyncAfter(deadline: .now() + 0.5, execute: change)
+    }
+
     private func stopVideo() {
         keepDisplayAwake(false)
+        displayChange?.cancel()
         streamer?.stop()
         streamer = nil
+        streamedDisplay = nil
         video?.cancel()
         video = nil
     }

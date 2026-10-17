@@ -11,6 +11,20 @@ enum ScreenStreamerError: Error {
     case displayNotFound
 }
 
+/// メインディスプレイと、その大きさ。取り込みを作り直すべき変化かを見分ける。
+nonisolated struct DisplayLayout: Equatable {
+    var displayID: CGDirectDisplayID
+    var bounds: CGRect
+    var pixelWidth: Int
+    var pixelHeight: Int
+
+    static func main() -> DisplayLayout {
+        let displayID = CGMainDisplayID()
+        let mode = CGDisplayCopyDisplayMode(displayID)
+        return DisplayLayout(displayID: displayID, bounds: CGDisplayBounds(displayID), pixelWidth: mode?.pixelWidth ?? 0, pixelHeight: mode?.pixelHeight ?? 0)
+    }
+}
+
 /// メインディスプレイを取り込み、H.264 にして映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let channel: MessageChannel
