@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 @testable import PadBridgeKit
 import Testing
 
@@ -128,6 +129,61 @@ struct TouchInterpreterTests {
         _ = interpreter.ended(touch: 2, at: a, time: 0.1)
         _ = interpreter.began(touch: 3, at: a, time: 1)
         #expect(interpreter.ended(touch: 3, at: a, time: 1.1) == click(.left, at: a))
+    }
+}
+
+struct ThreeFingerSwipeTests {
+    private func threeFingers(_ interpreter: inout TouchInterpreter) {
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.01)
+        _ = interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.02)
+    }
+
+    private func moveAll(_ interpreter: inout TouchInterpreter, dx: CGFloat, dy: CGFloat, time: TimeInterval) -> [TouchInterpreter.Action] {
+        [(1, 100), (2, 150), (3, 200)].flatMap { id, x in
+            interpreter.moved(touch: id, to: CGPoint(x: x + dx, y: 300 + dy), time: time)
+        }
+    }
+
+    @Test(arguments: [
+        (CGFloat(-80), CGFloat(5), TouchInterpreter.SwipeDirection.left),
+        (80, -5, .right),
+        (5, -80, .up),
+        (-5, 80, .down),
+    ])
+    func swipeFiresOnceInDominantDirection(dx: CGFloat, dy: CGFloat, direction: TouchInterpreter.SwipeDirection) {
+        var interpreter = TouchInterpreter()
+        threeFingers(&interpreter)
+        #expect(moveAll(&interpreter, dx: dx, dy: dy, time: 0.1) == [.threeFingerSwipe(direction)])
+        #expect(moveAll(&interpreter, dx: dx * 2, dy: dy * 2, time: 0.2).isEmpty)
+        for id in 1 ... 3 {
+            #expect(interpreter.ended(touch: id, at: .zero, time: 0.3).isEmpty)
+        }
+    }
+
+    @Test func smallThreeFingerMoveDoesNothing() {
+        var interpreter = TouchInterpreter()
+        threeFingers(&interpreter)
+        #expect(moveAll(&interpreter, dx: 20, dy: 0, time: 0.1).isEmpty)
+        for id in 1 ... 3 {
+            #expect(interpreter.ended(touch: id, at: .zero, time: 0.3).isEmpty)
+        }
+    }
+
+    @Test func thirdFingerDuringScrollEndsScrollAndWaitsForSwipe() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 340), time: 0.05)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.06)
+        #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.07) == [.scrollEnded(velocityX: 0, velocityY: 0)])
+    }
+
+    /// 左へ払うと右隣のデスクトップへ移る、トラックパッドと同じ向きにすること。
+    @Test func directionsMapToTrackpadShortcuts() {
+        #expect(TouchInterpreter.SwipeDirection.left.controlArrowUsage == KeyboardMapping.ArrowUsage.right)
+        #expect(TouchInterpreter.SwipeDirection.right.controlArrowUsage == KeyboardMapping.ArrowUsage.left)
+        #expect(TouchInterpreter.SwipeDirection.up.controlArrowUsage == KeyboardMapping.ArrowUsage.up)
+        #expect(TouchInterpreter.SwipeDirection.down.controlArrowUsage == KeyboardMapping.ArrowUsage.down)
     }
 }
 

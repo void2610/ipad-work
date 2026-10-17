@@ -9,6 +9,7 @@ struct RemoteScreenView: UIViewRepresentable {
     func makeUIView(context _: Context) -> RemoteScreenUIView {
         let view = RemoteScreenUIView(displayLayer: session.renderer.displayLayer)
         view.send = { [weak session] message in session?.send(message) }
+        view.onThreeFingerSwipe = { [weak session] direction in session?.pressControlArrow(usage: direction.controlArrowUsage) }
         return view
     }
 
@@ -20,6 +21,7 @@ struct RemoteScreenView: UIViewRepresentable {
 /// Mac の画面を映し、指・ポインタ・ハードウェアキーボードの操作を Mac の操作に変換する。対応表は README を参照。
 final class RemoteScreenUIView: UIView {
     var send: ((ControlMessage) -> Void)?
+    var onThreeFingerSwipe: ((TouchInterpreter.SwipeDirection) -> Void)?
     var videoSize = CGSize.zero
 
     private let displayLayer: AVSampleBufferDisplayLayer
@@ -173,6 +175,8 @@ final class RemoteScreenUIView: UIView {
                 startMomentum(velocityX: velocityX, velocityY: velocityY)
             case .longPressRecognized:
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            case let .threeFingerSwipe(direction):
+                onThreeFingerSwipe?(direction)
             }
         }
     }

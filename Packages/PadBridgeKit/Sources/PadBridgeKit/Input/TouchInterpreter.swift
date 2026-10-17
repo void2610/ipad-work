@@ -13,6 +13,26 @@ public struct TouchInterpreter {
         case scrollEnded(velocityX: CGFloat, velocityY: CGFloat)
         /// 長押しが成立した。離せば右クリック、動かせばドラッグになる。
         case longPressRecognized
+        /// 3 本指で払った。指が動いた向き。
+        case threeFingerSwipe(SwipeDirection)
+    }
+
+    public enum SwipeDirection: Equatable, Sendable {
+        case left
+        case right
+        case up
+        case down
+
+        /// トラックパッドと同じく、払った向きに応じて Control と組み合わせる矢印キー (HID usage)。
+        /// 左へ払うと右隣のデスクトップへ、上へ払うと Mission Control、下へ払うとアプリケーションウインドウ。
+        public var controlArrowUsage: Int {
+            switch self {
+            case .left: KeyboardMapping.ArrowUsage.right
+            case .right: KeyboardMapping.ArrowUsage.left
+            case .up: KeyboardMapping.ArrowUsage.up
+            case .down: KeyboardMapping.ArrowUsage.down
+            }
+        }
     }
 
     private enum State {
@@ -22,6 +42,7 @@ public struct TouchInterpreter {
         case dragging(touch: Int)
         case twoFingerPending(start: CGPoint, startTime: TimeInterval)
         case scrolling(last: CGPoint, lastTime: TimeInterval)
+        case threeFinger(start: CGPoint, hasSwiped: Bool)
         /// 判定を終えた指が残っている間は何もしない。全部離れたら idle に戻る。
         case ignoring
     }
@@ -31,6 +52,7 @@ public struct TouchInterpreter {
     public var twoFingerTapMaxDuration: TimeInterval = 0.35
     // 指を止めてから離したときに、慣性で流れないようにするための猶予
     public var flickTimeout: TimeInterval = 0.08
+    public var threeFingerSwipeDistance: CGFloat = 50
 
     private var state = State.idle
     private var touches: [Int: CGPoint] = [:]
@@ -46,6 +68,9 @@ public struct TouchInterpreter {
 
     public mutating func began(touch id: Int, at point: CGPoint, time: TimeInterval) -> [Action] {
         touches[id] = point
+        if touches.count == 3 {
+            return beginThreeFinger()
+        }
         switch state {
         case .idle:
             state = .pending(touch: id, start: point)
@@ -55,7 +80,7 @@ public struct TouchInterpreter {
         case let .scrolling(_, lastTime):
             // 指が増えると重心が飛ぶので、そこを新しい基準にする。慣性の判定に使う最後に動いた時刻は保つ
             state = .scrolling(last: centroid, lastTime: lastTime)
-        case .dragging, .twoFingerPending, .ignoring:
+        case .dragging, .twoFingerPending, .threeFinger, .ignoring:
             break
         }
         return []
@@ -83,6 +108,14 @@ public struct TouchInterpreter {
             velocity = .zero
             state = .scrolling(last: center, lastTime: time)
             return [.move(start), .scroll(dx: center.x - start.x, dy: center.y - start.y)]
+        case let .threeFinger(start, hasSwiped):
+            let center = centroid
+            let dx = center.x - start.x
+            let dy = center.y - start.y
+            guard !hasSwiped, max(abs(dx), abs(dy)) > threeFingerSwipeDistance else { return [] }
+            state = .threeFinger(start: start, hasSwiped: true)
+            let direction: SwipeDirection = abs(dx) > abs(dy) ? (dx < 0 ? .left : .right) : (dy < 0 ? .up : .down)
+            return [.threeFingerSwipe(direction)]
         case let .scrolling(last, lastTime):
             let center = centroid
             let dx = center.x - last.x
@@ -147,6 +180,21 @@ public struct TouchInterpreter {
         guard case let .pending(touch, start) = state else { return [] }
         state = .longPressed(touch: touch, start: start)
         return [.longPressRecognized]
+    }
+
+    /// 3 本目の指が触れたら、それまでの判定をやめて 3 本指の払いだけを待つ。
+    private mutating func beginThreeFinger() -> [Action] {
+        var actions: [Action] = []
+        switch state {
+        case .pending, .longPressed, .twoFingerPending:
+            break
+        case .scrolling:
+            actions = [.scrollEnded(velocityX: 0, velocityY: 0)]
+        case .idle, .dragging, .threeFinger, .ignoring:
+            return []
+        }
+        state = .threeFinger(start: centroid, hasSwiped: false)
+        return actions
     }
 
     private mutating func finishIfAllLifted() -> [Action] {

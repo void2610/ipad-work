@@ -42,13 +42,20 @@ struct SessionView: View {
     }
 
     private var controlBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button("切断", systemImage: "xmark", action: model.disconnect)
                 .labelStyle(.iconOnly)
-            KeyButton(label: "esc", usage: 0x29, session: session)
-            KeyButton(label: "⇥", usage: 0x2B, session: session)
-            KeyButton(label: "⌫", usage: 0x2A, session: session)
-            KeyButton(label: "⏎", usage: 0x28, session: session)
+            KeyButton(label: "esc", usage: HIDUsage.escape, session: session)
+            KeyButton(label: "⇥", usage: HIDUsage.tab, session: session)
+            KeyButton(label: "⌫", usage: HIDUsage.backspace, session: session, repeats: true)
+            KeyButton(label: "⏎", usage: HIDUsage.returnKey, session: session)
+            KeyButton(label: "←", usage: KeyboardMapping.ArrowUsage.left, session: session, repeats: true)
+            KeyButton(label: "↑", usage: KeyboardMapping.ArrowUsage.up, session: session, repeats: true)
+            KeyButton(label: "↓", usage: KeyboardMapping.ArrowUsage.down, session: session, repeats: true)
+            KeyButton(label: "→", usage: KeyboardMapping.ArrowUsage.right, session: session, repeats: true)
+            Button("アプリ切替", systemImage: "square.stack.3d.up", action: session.switchApp)
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("アプリ切替")
             TextField("ここに入力して Mac へ送る", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.send)
@@ -83,13 +90,15 @@ private struct KeyButton: View {
     let label: String
     let usage: Int
     let session: HostSession
+    var repeats = false
 
     var body: some View {
         Button(label) {
-            session.send(.key(usage: usage, isDown: true, modifiers: []))
-            session.send(.key(usage: usage, isDown: false, modifiers: []))
+            session.tapKey(usage: usage)
         }
         .font(.body.monospaced())
+        // 矢印や削除は、実際のキーボードと同じく押し続けると繰り返す
+        .buttonRepeatBehavior(repeats ? .enabled : .disabled)
     }
 }
 

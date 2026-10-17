@@ -31,6 +31,7 @@ final class HostSession {
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
+    private var appSwitchCommit: Task<Void, Never>?
 
     init(host: DiscoveredHost) {
         self.host = host
@@ -51,7 +52,41 @@ final class HostSession {
         control?.send(.control(message))
     }
 
-    /// Mac の Typeless の push-to-talk を押す (true) か離す (false)。
+    func tapKey(usage: Int, modifiers: KeyModifiers = []) {
+        send(.key(usage: usage, isDown: true, modifiers: modifiers))
+        send(.key(usage: usage, isDown: false, modifiers: modifiers))
+    }
+
+    /// Control を押したまま矢印キーを押す。トラックパッドの 3 本指スワイプと同じく、デスクトップの切り替えや Mission Control になる。
+    func pressControlArrow(usage: Int) {
+        send(.key(usage: HIDUsage.leftControl, isDown: true, modifiers: [.control]))
+        tapKey(usage: usage, modifiers: [.control])
+        send(.key(usage: HIDUsage.leftControl, isDown: false, modifiers: []))
+    }
+
+    /// Command+Tab のアプリ切り替え。押すたびに次のアプリへ進み、1 秒間が空いたら Command を離して確定する。
+    /// iPadOS がハードウェアキーボードの Command+Tab を先に受け取ってしまうため、ボタンで代わりにする。
+    func switchApp() {
+        if appSwitchCommit == nil {
+            send(.key(usage: HIDUsage.leftCommand, isDown: true, modifiers: [.command]))
+        }
+        appSwitchCommit?.cancel()
+        tapKey(usage: HIDUsage.tab, modifiers: [.command])
+        appSwitchCommit = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.commitAppSwitch()
+        }
+    }
+
+    private func commitAppSwitch() {
+        guard let task = appSwitchCommit else { return }
+        task.cancel()
+        appSwitchCommit = nil
+        send(.key(usage: HIDUsage.leftCommand, isDown: false, modifiers: []))
+    }
+
+    /// Mac の Typeless で音声入力を始める (true) か、終える (false)。
     func setVoiceInput(_ isActive: Bool) {
         guard isVoiceInputActive != isActive else { return }
         isVoiceInputActive = isActive
@@ -59,6 +94,7 @@ final class HostSession {
     }
 
     func close() {
+        commitAppSwitch()
         setVoiceInput(false)
         isClosed = true
         retryTask?.cancel()
@@ -76,6 +112,7 @@ final class HostSession {
         } else {
             // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
             setVoiceInput(false)
+            commitAppSwitch()
             stopVideo()
         }
     }
@@ -201,4 +238,13 @@ final class HostSession {
         let bounds = screen?.nativeBounds ?? CGRect(x: 0, y: 0, width: 2048, height: 2732)
         return (Int(max(bounds.width, bounds.height)), Int(min(bounds.width, bounds.height)))
     }
+}
+
+enum HIDUsage {
+    static let returnKey = 0x28
+    static let escape = 0x29
+    static let backspace = 0x2A
+    static let tab = 0x2B
+    static let leftControl = 0xE0
+    static let leftCommand = 0xE3
 }
