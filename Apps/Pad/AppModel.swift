@@ -15,6 +15,8 @@ struct DiscoveredHost: Identifiable, Hashable {
 final class AppModel {
     private(set) var hosts: [DiscoveredHost] = []
     private(set) var session: HostSession?
+    /// iPad の設定で、このアプリにローカルネットワークが許可されていない。Mac を探せない。
+    private(set) var isLocalNetworkDenied = false
 
     private static let lastHostKey = "lastHostName"
     private var browser: NWBrowser?
@@ -66,6 +68,17 @@ final class AppModel {
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: PadBridgeService.type, domain: nil), using: parameters)
+        browser.stateUpdateHandler = { [weak self] state in
+            let isDenied: Bool
+            switch state {
+            case let .waiting(error), let .failed(error):
+                // ローカルネットワークの許可がないと、Bonjour の検索が PolicyDenied で止まる
+                isDenied = error == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
+            default:
+                isDenied = false
+            }
+            MainActor.assumeIsolated { self?.isLocalNetworkDenied = isDenied }
+        }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             let hosts = results.compactMap { result -> DiscoveredHost? in
                 guard case let .service(name, _, _, _) = result.endpoint else { return nil }

@@ -17,7 +17,19 @@ struct HostListView: View {
                 }
             }
             .overlay {
-                if model.hosts.isEmpty {
+                if model.isLocalNetworkDenied {
+                    ContentUnavailableView {
+                        Label("ローカルネットワークを使えません", systemImage: "network.slash")
+                    } description: {
+                        Text("Mac を探すには、iPad の設定で PadBridge に「ローカルネットワーク」の許可が要ります。")
+                    } actions: {
+                        Button("設定を開く") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                } else if model.hosts.isEmpty {
                     ContentUnavailableView(
                         "Mac が見つかりません",
                         systemImage: "laptopcomputer.slash",
