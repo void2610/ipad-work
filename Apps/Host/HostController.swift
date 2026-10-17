@@ -2,6 +2,8 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Observation
+import os
+import ServiceManagement
 
 @Observable
 final class HostController {
@@ -13,7 +15,10 @@ final class HostController {
     private(set) var canRelayMicrophone = true
     /// Typeless がシステムオーディオの録音を断られ、iPad のマイクを読めなかった。
     private(set) var typelessCannotReadPadMicrophone = false
+    /// ログインしたときに Host を起動するか。蓋を閉じた Mac では、再起動のあと Host を手で開けないため。
+    private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
+    private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "app")
     private var server: HostServer?
     private var permissionTimer: Timer?
 
@@ -62,6 +67,19 @@ final class HostController {
         process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
         try? process.run()
         NSApp.terminate(nil)
+    }
+
+    func setLaunchesAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            Self.logger.error("ログイン時の起動を変えられない: \(error, privacy: .public)")
+        }
+        launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     func openAudioCaptureSettings() {

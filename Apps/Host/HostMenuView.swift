@@ -41,6 +41,13 @@ struct HostMenuView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            Toggle(isOn: Binding(get: { controller.launchesAtLogin }, set: { controller.setLaunchesAtLogin($0) })) {
+                VStack(alignment: .leading) {
+                    Text("ログイン時に起動")
+                    Text("蓋を閉じた Mac を再起動しても、iPad からつなげる").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             HStack {
                 Button("再起動") { controller.relaunch() }
                 Spacer()
