@@ -12,6 +12,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var scrollRemainder = CGPoint.zero
     private var location = CGPoint.zero
     private var isVoiceInputActive = false
+    private var heldModifiers = HeldModifiers()
 
     init(doubleClickInterval: TimeInterval) {
         // iPad の指は狙った位置から数ポイントずれるので、Mac のマウスより判定を緩める
@@ -52,6 +53,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
             event.post(tap: .cghidEventTap)
         }
         pressedKeys.removeAll()
+        heldModifiers.removeAll()
     }
 
     /// Typeless の音声入力を始める (true) / 終える (false)。
@@ -129,12 +131,15 @@ nonisolated final class InputInjector: @unchecked Sendable {
         guard wheelX != 0 || wheelY != 0 else { return }
         scrollRemainder.x -= CGFloat(wheelX)
         scrollRemainder.y -= CGFloat(wheelY)
-        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheelY, wheel2: wheelX, wheel3: 0)?
-            .post(tap: .cghidEventTap)
+        let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheelY, wheel2: wheelX, wheel3: 0)
+        // ⌘ を押しながらのスクロールで拡大するアプリがあるので、押されている修飾キーを載せる
+        event?.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
+        event?.post(tap: .cghidEventTap)
     }
 
     private func key(usage: Int, isDown: Bool, modifiers: KeyModifiers) {
         guard let keyEvent = MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers) else { return }
+        heldModifiers.apply(keyEvent)
         if isDown {
             pressedKeys.insert(keyEvent.keyCode)
         } else {
@@ -168,6 +173,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
         if let clickCount {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         }
+        // ⌘クリックや ⇧クリックになるよう、押されている修飾キーを載せる
+        event.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
         event.post(tap: .cghidEventTap)
     }
 }

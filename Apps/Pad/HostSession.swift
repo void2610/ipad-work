@@ -31,6 +31,8 @@ final class HostSession {
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
+    private(set) var modifierLatch = ModifierLatch()
+    private var pointerModifiers = PointerModifierHold()
     private var appSwitcher = AppSwitcher()
     private var appSwitchCommit: Task<Void, Never>?
 
@@ -53,8 +55,30 @@ final class HostSession {
         control?.send(.control(message))
     }
 
-    func tapKey(usage: Int, modifiers: KeyModifiers = []) {
-        RemoteKeys.tap(usage: usage, modifiers: modifiers).forEach(send)
+    func toggleModifier(_ modifier: KeyModifiers) {
+        modifierLatch.tap(modifier, at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// バーのキーを押す。バーの修飾キーが有効なら一緒に押す。
+    func tapKey(usage: Int) {
+        RemoteKeys.withModifiers(modifierLatch.active, RemoteKeys.tap(usage: usage)).forEach(send)
+        modifierLatch.consume()
+    }
+
+    /// ソフトウェアキーボードで打った文字を、そのまま Mac に送る。
+    func typeText(_ text: String) {
+        guard !text.isEmpty else { return }
+        RemoteKeys.typed(text, modifiers: modifierLatch.active).forEach(send)
+        modifierLatch.consume()
+    }
+
+    /// 画面のタッチから来たクリックやドラッグに、バーの修飾キーを効かせて送る。
+    func sendPointer(_ messages: [ControlMessage]) {
+        let wrapped = pointerModifiers.wrap(messages, modifiers: modifierLatch.active)
+        wrapped.messages.forEach(send)
+        if wrapped.didUseModifiers {
+            modifierLatch.consume()
+        }
     }
 
     func swipeDesktop(_ direction: TouchInterpreter.SwipeDirection) {

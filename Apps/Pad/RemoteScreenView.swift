@@ -9,6 +9,7 @@ struct RemoteScreenView: UIViewRepresentable {
     func makeUIView(context _: Context) -> RemoteScreenUIView {
         let view = RemoteScreenUIView(displayLayer: session.renderer.displayLayer)
         view.send = { [weak session] message in session?.send(message) }
+        view.sendPointer = { [weak session] messages in session?.sendPointer(messages) }
         view.onThreeFingerSwipe = { [weak session] direction in session?.swipeDesktop(direction) }
         return view
     }
@@ -21,6 +22,7 @@ struct RemoteScreenView: UIViewRepresentable {
 /// Mac の画面を映し、指・ポインタ・ハードウェアキーボードの操作を Mac の操作に変換する。対応表は README を参照。
 final class RemoteScreenUIView: UIView {
     var send: ((ControlMessage) -> Void)?
+    var sendPointer: (([ControlMessage]) -> Void)?
     var onThreeFingerSwipe: ((TouchInterpreter.SwipeDirection) -> Void)?
     var videoSize = CGSize.zero
 
@@ -89,8 +91,8 @@ final class RemoteScreenUIView: UIView {
     // MARK: - タッチ
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // 入力欄を触ったあとでも、画面に触れればハードウェアキーボードの入力を Mac に戻す
-        if !isFirstResponder {
+        // 入力欄を触ったあとでも、画面に触れればハードウェアキーボードの入力を Mac に戻す。直接入力中はキーボードを閉じないよう奪わない
+        if !isFirstResponder, !DirectTypingUIView.isTyping {
             becomeFirstResponder()
         }
         // 慣性で流れている途中に触れたら、iPad と同じくその場で止める
@@ -100,8 +102,7 @@ final class RemoteScreenUIView: UIView {
             if touch.type == .indirectPointer {
                 let button: MouseButton = event?.buttonMask.contains(.secondary) == true ? .right : .left
                 pointerButtons[ObjectIdentifier(touch)] = button
-                send?(.mouseMove(normalized(location)))
-                send?(.mouseButton(button, isDown: true, at: normalized(location)))
+                sendPointer?([.mouseMove(normalized(location)), .mouseButton(button, isDown: true, at: normalized(location))])
             } else {
                 perform(interpreter.began(touch: Self.id(of: touch), at: location, time: touch.timestamp))
             }
@@ -113,7 +114,7 @@ final class RemoteScreenUIView: UIView {
         for touch in touches {
             let location = touch.location(in: self)
             if pointerButtons[ObjectIdentifier(touch)] != nil {
-                send?(.mouseMove(normalized(location)))
+                sendPointer?([.mouseMove(normalized(location))])
             } else {
                 perform(interpreter.moved(touch: Self.id(of: touch), to: location, time: touch.timestamp))
             }
@@ -125,7 +126,7 @@ final class RemoteScreenUIView: UIView {
         for touch in touches {
             let location = touch.location(in: self)
             if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
-                send?(.mouseButton(button, isDown: false, at: normalized(location)))
+                sendPointer?([.mouseButton(button, isDown: false, at: normalized(location))])
             } else {
                 perform(interpreter.ended(touch: Self.id(of: touch), at: location, time: touch.timestamp))
             }
@@ -136,7 +137,7 @@ final class RemoteScreenUIView: UIView {
     override func touchesCancelled(_ touches: Set<UITouch>, with _: UIEvent?) {
         for touch in touches {
             if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
-                send?(.mouseButton(button, isDown: false, at: normalized(touch.location(in: self))))
+                sendPointer?([.mouseButton(button, isDown: false, at: normalized(touch.location(in: self)))])
             } else {
                 perform(interpreter.cancelled(touch: Self.id(of: touch)))
             }
@@ -162,15 +163,21 @@ final class RemoteScreenUIView: UIView {
 
     private func perform(_ actions: [TouchInterpreter.Action]) {
         let rect = videoRect
+        var pointerMessages: [ControlMessage] = []
+        defer {
+            if !pointerMessages.isEmpty {
+                sendPointer?(pointerMessages)
+            }
+        }
         for action in actions {
             switch action {
             case let .move(point):
-                send?(.mouseMove(normalized(point)))
+                pointerMessages.append(.mouseMove(normalized(point)))
             case let .press(button, isDown, point):
-                send?(.mouseButton(button, isDown: isDown, at: normalized(point)))
+                pointerMessages.append(.mouseButton(button, isDown: isDown, at: normalized(point)))
             case let .scroll(dx, dy):
                 guard rect.width > 0, rect.height > 0 else { continue }
-                send?(.scroll(dx: dx / rect.width, dy: dy / rect.height))
+                pointerMessages.append(.scroll(dx: dx / rect.width, dy: dy / rect.height))
             case let .scrollEnded(velocityX, velocityY):
                 startMomentum(velocityX: velocityX, velocityY: velocityY)
             case .longPressRecognized:
@@ -198,7 +205,7 @@ final class RemoteScreenUIView: UIView {
         }
         let delta = momentum.step(interval: link.targetTimestamp - link.timestamp)
         self.momentum = momentum
-        send?(.scroll(dx: delta.dx / rect.width, dy: delta.dy / rect.height))
+        sendPointer?([.scroll(dx: delta.dx / rect.width, dy: delta.dy / rect.height)])
         if momentum.isFinished {
             stopMomentum()
         }
@@ -231,13 +238,13 @@ final class RemoteScreenUIView: UIView {
         switch recognizer.state {
         case .began:
             lastScrollTranslation = .zero
-            send?(.mouseMove(normalized(recognizer.location(in: self))))
+            sendPointer?([.mouseMove(normalized(recognizer.location(in: self)))])
         case .changed:
             let translation = recognizer.translation(in: self)
             let dx = translation.x - lastScrollTranslation.x
             let dy = translation.y - lastScrollTranslation.y
             lastScrollTranslation = translation
-            send?(.scroll(dx: dx / rect.width, dy: dy / rect.height))
+            sendPointer?([.scroll(dx: dx / rect.width, dy: dy / rect.height)])
         default:
             break
         }
@@ -245,7 +252,7 @@ final class RemoteScreenUIView: UIView {
 
     @objc private func handleHover(_ recognizer: UIHoverGestureRecognizer) {
         guard recognizer.state == .began || recognizer.state == .changed else { return }
-        send?(.mouseMove(normalized(recognizer.location(in: self))))
+        sendPointer?([.mouseMove(normalized(recognizer.location(in: self)))])
     }
 
     // MARK: - ハードウェアキーボード
@@ -269,9 +276,16 @@ final class RemoteScreenUIView: UIView {
     }
 
     private func forward(_ presses: Set<UIPress>, isDown: Bool) -> Bool {
+        HardwareKeys.forward(presses, isDown: isDown, send: send)
+    }
+}
+
+/// iPad のハードウェアキーボードのキーを、そのまま Mac のキーとして送る。
+enum HardwareKeys {
+    static func forward(_ presses: Set<UIPress>, isDown: Bool, send: ((ControlMessage) -> Void)?) -> Bool {
         let keys = presses.compactMap(\.key)
         for key in keys {
-            send?(.key(usage: key.keyCode.rawValue, isDown: isDown, modifiers: Self.modifiers(from: key.modifierFlags)))
+            send?(.key(usage: key.keyCode.rawValue, isDown: isDown, modifiers: modifiers(from: key.modifierFlags)))
         }
         return !keys.isEmpty
     }

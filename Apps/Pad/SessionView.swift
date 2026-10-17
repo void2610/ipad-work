@@ -5,6 +5,7 @@ struct SessionView: View {
     let model: AppModel
     let session: HostSession
     @State private var draft = ""
+    @State private var isDirectTyping = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,21 +46,34 @@ struct SessionView: View {
         HStack(spacing: 8) {
             Button("切断", systemImage: "xmark", action: model.disconnect)
                 .labelStyle(.iconOnly)
-            KeyButton(label: "esc", usage: HIDUsage.escape, session: session)
-            KeyButton(label: "⇥", usage: HIDUsage.tab, session: session)
-            KeyButton(label: "⌫", usage: HIDUsage.backspace, session: session, repeats: true)
-            KeyButton(label: "⏎", usage: HIDUsage.returnKey, session: session)
-            KeyButton(label: "←", usage: KeyboardMapping.ArrowUsage.left, session: session, repeats: true)
-            KeyButton(label: "↑", usage: KeyboardMapping.ArrowUsage.up, session: session, repeats: true)
-            KeyButton(label: "↓", usage: KeyboardMapping.ArrowUsage.down, session: session, repeats: true)
-            KeyButton(label: "→", usage: KeyboardMapping.ArrowUsage.right, session: session, repeats: true)
-            Button("アプリ切替", systemImage: "square.stack.3d.up", action: session.switchApp)
-                .labelStyle(.iconOnly)
-                .accessibilityLabel("アプリ切替")
-            TextField("ここに入力して Mac へ送る", text: $draft)
+            // 縦向きなどで幅が足りなくても、キーのボタンは横にずらして全部使えるようにする
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    KeyButton(label: "esc", usage: HIDUsage.escape, session: session)
+                    KeyButton(label: "⇥", usage: HIDUsage.tab, session: session)
+                    KeyButton(label: "⌫", usage: HIDUsage.backspace, session: session, repeats: true)
+                    KeyButton(label: "⏎", usage: HIDUsage.returnKey, session: session)
+                    KeyButton(label: "←", usage: KeyboardMapping.ArrowUsage.left, session: session, repeats: true)
+                    KeyButton(label: "↑", usage: KeyboardMapping.ArrowUsage.up, session: session, repeats: true)
+                    KeyButton(label: "↓", usage: KeyboardMapping.ArrowUsage.down, session: session, repeats: true)
+                    KeyButton(label: "→", usage: KeyboardMapping.ArrowUsage.right, session: session, repeats: true)
+                    ModifierButton(label: "⌘", modifier: .command, session: session)
+                    ModifierButton(label: "⌥", modifier: .option, session: session)
+                    ModifierButton(label: "⌃", modifier: .control, session: session)
+                    ModifierButton(label: "⇧", modifier: .shift, session: session)
+                    Button("アプリ切替", systemImage: "square.stack.3d.up", action: session.switchApp)
+                        .labelStyle(.iconOnly)
+                    Button(isDirectTyping ? "キーボードを閉じる" : "キーボード", systemImage: isDirectTyping ? "keyboard.chevron.compact.down" : "keyboard") {
+                        isDirectTyping.toggle()
+                    }
+                    .labelStyle(.iconOnly)
+                }
+            }
+            TextField("日本語はここで変換して送る", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.send)
                 .onSubmit(sendDraft)
+                .frame(minWidth: 160, maxWidth: 280)
             Button("送信", action: sendDraft)
                 .disabled(draft.isEmpty)
             TypelessButton(session: session)
@@ -68,6 +82,11 @@ struct SessionView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+        .background {
+            DirectTypingField(session: session, isActive: $isDirectTyping)
+                .frame(width: 1, height: 1)
+                .opacity(0)
+        }
     }
 
     private var permissionNotice: String? {
@@ -83,6 +102,31 @@ struct SessionView: View {
         guard !draft.isEmpty else { return }
         session.send(.insertText(draft))
         draft = ""
+    }
+}
+
+/// 押すと次の 1 回にだけ効き (薄く色付き)、続けて 2 回押すと固定される (濃く色付き)。
+private struct ModifierButton: View {
+    let label: String
+    let modifier: KeyModifiers
+    let session: HostSession
+
+    var body: some View {
+        let state = session.modifierLatch.state(of: modifier)
+        Button(label) {
+            session.toggleModifier(modifier)
+        }
+        .font(.body.weight(state == .off ? .regular : .bold))
+        .background(highlight(for: state), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityValue(state == .off ? "オフ" : state == .once ? "次の 1 回" : "固定")
+    }
+
+    private func highlight(for state: ModifierLatch.State) -> Color {
+        switch state {
+        case .off: .clear
+        case .once: .accentColor.opacity(0.3)
+        case .locked: .accentColor.opacity(0.7)
+        }
     }
 }
 

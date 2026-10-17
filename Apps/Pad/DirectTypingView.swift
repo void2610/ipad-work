@@ -1,0 +1,95 @@
+import PadBridgeKit
+import SwiftUI
+import UIKit
+
+/// ソフトウェアキーボードで打った文字を、入力欄を通さずに 1 文字ずつ Mac へ送る見えない入力先。
+struct DirectTypingField: UIViewRepresentable {
+    let session: HostSession
+    @Binding var isActive: Bool
+
+    func makeUIView(context _: Context) -> DirectTypingUIView {
+        let view = DirectTypingUIView()
+        view.onText = { [weak session] text in session?.typeText(text) }
+        view.onDeleteBackward = { [weak session] in session?.tapKey(usage: HIDUsage.backspace) }
+        view.send = { [weak session] message in session?.send(message) }
+        return view
+    }
+
+    func updateUIView(_ view: DirectTypingUIView, context _: Context) {
+        // キーボードを閉じるボタンなど、こちら以外の理由で入力先から外れたらボタンの表示を戻す
+        view.onResign = { isActive = false }
+        if isActive, !view.isFirstResponder {
+            _ = view.becomeFirstResponder()
+        } else if !isActive, view.isFirstResponder {
+            _ = view.resignFirstResponder()
+        }
+    }
+}
+
+final class DirectTypingUIView: UIView, UIKeyInput {
+    /// 直接入力中か。画面のタップでキーボードを閉じないよう、画面側が見る。
+    static var isTyping = false
+
+    var onText: ((String) -> Void)?
+    var onDeleteBackward: (() -> Void)?
+    var onResign: (() -> Void)?
+    var send: ((ControlMessage) -> Void)?
+
+    // 打った内容を手元に持たないので、削除キーをいつでも受け付けるよう常に「文字あり」とする
+    var hasText: Bool { true }
+    var autocorrectionType = UITextAutocorrectionType.no
+    var autocapitalizationType = UITextAutocapitalizationType.none
+    var spellCheckingType = UITextSpellCheckingType.no
+    var smartQuotesType = UITextSmartQuotesType.no
+    var smartDashesType = UITextSmartDashesType.no
+    var smartInsertDeleteType = UITextSmartInsertDeleteType.no
+
+    override var canBecomeFirstResponder: Bool {
+        true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let didBecome = super.becomeFirstResponder()
+        if didBecome {
+            Self.isTyping = true
+        }
+        return didBecome
+    }
+
+    func insertText(_ text: String) {
+        onText?(text)
+    }
+
+    func deleteBackward() {
+        onDeleteBackward?()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        if didResign {
+            Self.isTyping = false
+            let onResign = onResign
+            DispatchQueue.main.async { onResign?() }
+        }
+        return didResign
+    }
+
+    // ハードウェアキーボードのキーは文字にせず、修飾キーや矢印も含めてそのまま Mac へ送る
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !HardwareKeys.forward(presses, isDown: true, send: send) {
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !HardwareKeys.forward(presses, isDown: false, send: send) {
+            super.pressesEnded(presses, with: event)
+        }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !HardwareKeys.forward(presses, isDown: false, send: send) {
+            super.pressesCancelled(presses, with: event)
+        }
+    }
+}
