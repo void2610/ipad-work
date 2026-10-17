@@ -81,8 +81,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             }
             guard isAuthorized else { return }
             // 蓋が開いているか、ほかに使えるマイクがあるなら切り替えない。Mac のマイクで動いていた Typeless を巻き込まないため
-            guard Self.needsPadMicrophone(excluding: deviceID) else {
-                Self.logger.info("Mac のマイクが使えるので、既定の入力は切り替えない")
+            if let reason = Self.reasonNotToUsePadMicrophone() {
+                Self.logger.info("既定の入力は切り替えない: \(reason, privacy: .public)")
                 return
             }
             renderLock.withLock { buffer.removeAll() }
@@ -235,12 +235,31 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     // MARK: - CoreAudio
 
-    /// 蓋が閉じていて (内蔵マイクはハードウェアで切り離される)、ほかに入力デバイスがないか。
-    private static func needsPadMicrophone(excluding padDevice: AudioObjectID) -> Bool {
-        guard isClamshellClosed() else { return false }
-        return !objects(kAudioHardwarePropertyDevices).contains { device in
-            device != padDevice && hasInput(device) && transportType(device) != kAudioDeviceTransportTypeBuiltIn
+    // マイクとして数えない接続の種類。AVAudioEngine は自分のプロセスの中に既定の入出力をまとめた非公開の集約デバイスを作り、
+    // それが入力を持つので数えてしまう (中身は蓋を閉じて使えない内蔵マイク)。このデバイス自身も集約デバイス
+    private static let transportsThatAreNotMicrophones: Set<UInt32> = [
+        kAudioDeviceTransportTypeBuiltIn,
+        kAudioDeviceTransportTypeAggregate,
+        kAudioDeviceTransportTypeVirtual,
+        kAudioDeviceTransportTypeUnknown,
+    ]
+
+    /// iPad のマイクに切り替えない理由。蓋が閉じていて (内蔵マイクはハードウェアで切り離される)、ほかにマイクがなければ nil。
+    private static func reasonNotToUsePadMicrophone() -> String? {
+        guard isClamshellClosed() else { return "蓋が開いていて Mac の内蔵マイクが使える" }
+        let others = objects(kAudioHardwarePropertyDevices).filter { device in
+            hasInput(device) && !transportsThatAreNotMicrophones.contains(transportType(device))
         }
+        guard others.isEmpty else { return "ほかのマイクがある (\(others.compactMap(name(of:)).joined(separator: "、")))" }
+        return nil
+    }
+
+    private static func name(of device: AudioObjectID) -> String? {
+        var address = address(kAudioObjectPropertyName)
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return nil }
+        return name?.takeRetainedValue() as String?
     }
 
     private static func isClamshellClosed() -> Bool {
