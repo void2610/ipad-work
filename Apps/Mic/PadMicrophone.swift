@@ -93,7 +93,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         authorizationLock.withLock { reportedAuthorization == false }
     }
 
-    /// デバイスを作り、許可があるかを確かめる。iPad がつながったときに呼ぶ。
+    /// デバイスを作り、許可があるかを確かめる。Host につながったときに呼ぶ。
     func start() {
         queue.async { [self] in
             Self.removeLeftovers()
@@ -108,7 +108,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// デバイスを消す。iPad の接続が切れたときに呼ぶ。消し終えるまで待つ (このあとすぐ終わっても Mac に残らないように)。
+    /// デバイスを消す。Host との接続が切れたときに呼ぶ。消し終えるまで待つ (このあとすぐ終わっても Mac に残らないように)。
     func stop() {
         queue.sync { [self] in
             engine.stop()
@@ -118,7 +118,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     /// iPad から聞き取りを始めるときに呼ぶ。iPad の声をこのデバイスに流せるかを `ready` に渡す。
     /// このデバイスは Mac の既定の入力になれない (タップだけの集約デバイスは CanBeDefaultDevice が 0) ので、
-    /// Typeless のマイクの設定でこのデバイスを選んでもらう。既定の入力は切り替えない。
+    /// Typeless のマイクの設定でこのデバイスを選ぶ (Host が一度だけ自動で行う)。既定の入力は切り替えない。
     func beginListening(ready: @escaping @Sendable (Bool) -> Void) {
         queue.async { [self] in
             if !isAuthorized {
