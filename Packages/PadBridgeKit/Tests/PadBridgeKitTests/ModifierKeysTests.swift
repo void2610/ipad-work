@@ -76,7 +76,14 @@ struct TypedTextTests {
 
     /// 配列で記号の位置が変わるので、記号や日本語はまとめて文字として挿入すること。
     @Test func otherCharactersAreInsertedAsText() {
-        #expect(RemoteKeys.typed("@あ!x") == [.insertText("@あ!")] + tap(0x1B))
+        #expect(RemoteKeys.typed("@あ#x") == [.insertText("@あ#")] + tap(0x1B))
+    }
+
+    /// US と JIS で位置が同じ記号は、Mac の日本語入力が「ー」「、」「。」に変えられるようキーとして送ること。
+    @Test func layoutIndependentSymbolsAreSentAsKeys() {
+        #expect(RemoteKeys.typed("-,./") == tap(0x2D) + tap(0x36) + tap(0x37) + tap(0x38))
+        #expect(RemoteKeys.typed("?") == RemoteKeys.withModifiers([.shift], tap(0x38)))
+        #expect(RemoteKeys.typed("!") == RemoteKeys.withModifiers([.shift], tap(0x1E)))
     }
 
     @Test func newlineIsReturnKey() {

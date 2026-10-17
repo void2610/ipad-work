@@ -110,6 +110,7 @@ extension RemoteKeys {
     }
 
     /// ソフトウェアキーボードで打った文字の並び。英数字と空白はキーとして、記号や日本語は文字として送る (記号は US と JIS の配列でキーの位置が違うため)。
+    /// ただし、どちらの配列でも同じ位置にある記号はキーとして送り、かなモードの Mac の日本語入力に「ー」「、」「。」などへ変えさせる。
     public static func typed(_ text: String, modifiers: KeyModifiers = []) -> [ControlMessage] {
         var messages: [ControlMessage] = []
         var pendingText = ""
@@ -143,6 +144,12 @@ extension RemoteKeys {
         case 0x30: return (0x27, false) // 0
         case 0x20: return (0x2C, false) // 空白
         case 0x09: return (0x2B, false) // Tab
+        case 0x2D: return (0x2D, false) // - (かなモードでは「ー」)
+        case 0x2C: return (0x36, false) // , (かなモードでは「、」)
+        case 0x2E: return (0x37, false) // . (かなモードでは「。」)
+        case 0x2F: return (0x38, false) // / (かなモードでは「・」)
+        case 0x21: return (0x1E, true) // !
+        case 0x3F: return (0x38, true) // ?
         default: return nil
         }
     }

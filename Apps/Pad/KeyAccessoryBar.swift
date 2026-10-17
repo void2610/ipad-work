@@ -2,7 +2,7 @@ import Observation
 import PadBridgeKit
 import UIKit
 
-/// キーボードを出している間だけ、そのすぐ上に出る特殊キーの列。ソフトウェアキーボードにない esc・修飾キー・矢印・英数/かなを置く。
+/// キーボードを出している間だけ、そのすぐ上に出る特殊キーの列。ソフトウェアキーボードにない esc・修飾キー・矢印・英数/かな・長音を置く。
 final class KeyAccessoryBar: UIInputView {
     private enum Key {
         case tap(String, usage: Int, repeats: Bool)
@@ -27,6 +27,8 @@ final class KeyAccessoryBar: UIInputView {
         // iPad のソフトウェアキーボードには Mac の日本語入力を切り替えるキーがないので、JIS キーボードの英数・かなを置く
         .tap("英数", usage: 0x91, repeats: false),
         .tap("かな", usage: 0x90, repeats: false),
+        // 英字配列のキーボードでは - が記号の面にしかないので、かなモードで「ー」になる - のキーを置く
+        .tap("ー", usage: 0x2D, repeats: true),
     ]
 
     private weak var session: HostSession?
