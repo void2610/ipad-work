@@ -183,6 +183,24 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             let peak = measureTap(includingOutputDevice: includesOutput)
             Self.logger.notice("タップの点検 (出力デバイスを\(includesOutput ? "含む" : "含まない", privacy: .public)): 最大 \(peak.map { String(format: "%.4f", $0) } ?? "測れない", privacy: .public) (鳴らした音は 0.0100)")
         }
+        // Typeless が読むのと同じ「PadBridge iPad マイク」そのものも測る。読むにはマイクの許可も要る
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, deviceID != kAudioObjectUnknown else { return }
+        let peak = PeakMeter()
+        var procID: AudioDeviceIOProcID?
+        AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, nil) { _, inputData, _, _, _ in
+            for buffer in UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)) {
+                guard let data = buffer.mData else { continue }
+                peak.add(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size))
+            }
+        }
+        guard let procID else { return }
+        renderLock.withLock { checkPhase = 0 }
+        let started = AudioDeviceStart(deviceID, procID)
+        Thread.sleep(forTimeInterval: 0.5)
+        AudioDeviceStop(deviceID, procID)
+        AudioDeviceDestroyIOProcID(deviceID, procID)
+        renderLock.withLock { checkPhase = nil }
+        Self.logger.notice("\(Self.deviceName, privacy: .public) の点検: 開始=\(started) 最大 \(String(format: "%.4f", peak.value), privacy: .public) (鳴らした音は 0.0100)")
     }
 
     private func measureTap(includingOutputDevice: Bool) -> Float? {
