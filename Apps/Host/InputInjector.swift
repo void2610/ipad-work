@@ -11,7 +11,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var pressedKeys: Set<UInt16> = []
     private var scrollRemainder = CGPoint.zero
     private var location = CGPoint.zero
-    private var isVoiceInputActive = false
+    private var typeless = TypelessToggle()
     private var heldModifiers = HeldModifiers()
 
     init(doubleClickInterval: TimeInterval) {
@@ -38,9 +38,16 @@ nonisolated final class InputInjector: @unchecked Sendable {
         }
     }
 
+    /// Typeless のマイクが動き出したり止まったりしたときに呼ぶ。
+    func typelessRecordingChanged(_ isRecording: Bool) {
+        typeless.observe(isRecording: isRecording)
+    }
+
     /// 接続が切れたときに、押しっぱなしのボタンやキーが残らないよう全部離す。
     func releaseAll() {
-        setVoiceInput(false)
+        if typeless.isStartedByPad {
+            setVoiceInput(false)
+        }
         for button in pressedButtons {
             press(button, isDown: false, at: location)
         }
@@ -59,8 +66,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     /// Typeless の音声入力を始める (true) / 終える (false)。
     /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、押し続けると使い方の案内が出るだけなので、短く 1 回押す。
     private func setVoiceInput(_ isActive: Bool) {
-        guard isVoiceInputActive != isActive else { return }
-        isVoiceInputActive = isActive
+        guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
         // Typeless 側でショートカットを変えても追従できるよう、押すたびに設定を読み直す
         let shortcut = Self.typelessPushToTalk()
         post(shortcut.events(isDown: true))

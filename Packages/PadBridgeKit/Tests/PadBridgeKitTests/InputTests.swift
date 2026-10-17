@@ -79,3 +79,53 @@ struct TypelessShortcutTests {
         #expect(TypelessShortcut(text) == nil)
     }
 }
+
+struct TypelessToggleTests {
+    @Test func pressesOnlyWhenTypelessIsInTheOtherState() {
+        var toggle = TypelessToggle()
+        let pressedToStart = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
+        #expect(pressedToStart)
+        toggle.observe(isRecording: true)
+        let pressedAgain = toggle.shouldPress(toBecome: true, isRecording: true, at: 2)
+        #expect(!pressedAgain)
+        let pressedToStop = toggle.shouldPress(toBecome: false, isRecording: true, at: 3)
+        #expect(pressedToStop)
+    }
+
+    /// Typeless が自分で聞き取りを終えたあとに「完了」が来ても押さない。押すと逆に聞き取りが始まってしまう。
+    @Test func doesNotPressWhenTypelessAlreadyStopped() {
+        var toggle = TypelessToggle()
+        _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
+        toggle.observe(isRecording: true)
+        toggle.observe(isRecording: false)
+        let pressed = toggle.shouldPress(toBecome: false, isRecording: false, at: 10)
+        #expect(!pressed)
+    }
+
+    /// 押した直後はまだマイクが動いていないので、すぐの「完了」は押した結果を待たずに押す。
+    @Test func treatsPressAsAppliedUntilTypelessCatchesUp() {
+        var toggle = TypelessToggle()
+        _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
+        let pressed = toggle.shouldPress(toBecome: false, isRecording: false, at: 0.1)
+        #expect(pressed)
+    }
+
+    /// Typeless が押されたことに反応しなかったら、猶予のあとは実際の状態に戻って押し直せる。
+    @Test func fallsBackToActualStateWhenPressWasIgnored() {
+        var toggle = TypelessToggle()
+        _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
+        let pressed = toggle.shouldPress(toBecome: true, isRecording: false, at: TypelessToggle.settleTime + 0.1)
+        #expect(pressed)
+    }
+
+    /// Mac で自分で始めた聞き取りは、iPad が始めさせたものとして扱わない。
+    @Test func remembersOnlyListeningStartedByPad() {
+        var toggle = TypelessToggle()
+        #expect(!toggle.isStartedByPad)
+        _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
+        #expect(toggle.isStartedByPad)
+        toggle.observe(isRecording: true)
+        toggle.observe(isRecording: false)
+        #expect(!toggle.isStartedByPad)
+    }
+}

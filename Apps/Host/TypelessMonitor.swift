@@ -1,0 +1,93 @@
+import CoreAudio
+import Foundation
+
+/// Typeless が今マイクで聞き取っているかを、CoreAudio のプロセスごとの入力状態から読む。
+/// Typeless は聞き取りの状態を外へ公開しておらず、聞き取っている間だけマイクを使うので、それを実際の状態とする。
+nonisolated final class TypelessMonitor: @unchecked Sendable {
+    // Typeless は Electron 製で、マイクは本体ではなく Typeless Helper のプロセスが使う
+    private static let bundleIDPrefix = "now.typeless.desktop"
+    // プロセスの入力状態は、変わっても AudioObjectAddPropertyListenerBlock の通知が来ないので読み直す
+    private static let pollInterval: TimeInterval = 0.2
+    // Typeless を起動し直したときに追えるよう、プロセスの一覧はときどき取り直す
+    private static let processRefreshInterval: TimeInterval = 2
+    private static let systemObject = AudioObjectID(kAudioObjectSystemObject)
+
+    private let queue = DispatchQueue(label: "dev.void2610.padbridge.host.typeless")
+    private let onChange: @Sendable (Bool) -> Void
+    private var timer: DispatchSourceTimer?
+    private var processes: [AudioObjectID] = []
+    private var processesFetchedAt = -TimeInterval.infinity
+    private var isRecording = false
+
+    /// `onChange` は聞き取りの開始と終了のたびに、このクラスのキューから呼ばれる。
+    init(onChange: @escaping @Sendable (Bool) -> Void) {
+        self.onChange = onChange
+    }
+
+    /// iPad がつながっている間だけ見る。
+    func start() {
+        queue.async { [self] in
+            guard timer == nil else { return }
+            processesFetchedAt = -.infinity
+            isRecording = Self.isRecording()
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval)
+            timer.setEventHandler { [weak self] in self?.poll() }
+            timer.resume()
+            self.timer = timer
+        }
+    }
+
+    func stop() {
+        queue.async { [self] in
+            timer?.cancel()
+            timer = nil
+        }
+    }
+
+    /// 今この瞬間の状態を CoreAudio に問い合わせる。どのスレッドからでも呼べる。
+    static func isRecording() -> Bool {
+        typelessProcesses().contains(where: isRunningInput)
+    }
+
+    private func poll() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - processesFetchedAt >= Self.processRefreshInterval {
+            processes = Self.typelessProcesses()
+            processesFetchedAt = now
+        }
+        let isRecording = processes.contains(where: Self.isRunningInput)
+        guard isRecording != self.isRecording else { return }
+        self.isRecording = isRecording
+        onChange(isRecording)
+    }
+
+    private static func typelessProcesses() -> [AudioObjectID] {
+        var address = address(kAudioHardwarePropertyProcessObjectList)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(systemObject, &address, 0, nil, &size) == noErr else { return [] }
+        var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &processes) == noErr else { return [] }
+        return processes.filter { bundleID(of: $0)?.hasPrefix(bundleIDPrefix) == true }
+    }
+
+    private static func bundleID(of process: AudioObjectID) -> String? {
+        var address = address(kAudioProcessPropertyBundleID)
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        var bundleID: Unmanaged<CFString>?
+        guard AudioObjectGetPropertyData(process, &address, 0, nil, &size, &bundleID) == noErr, let bundleID else { return nil }
+        return bundleID.takeRetainedValue() as String
+    }
+
+    private static func isRunningInput(_ process: AudioObjectID) -> Bool {
+        var address = address(kAudioProcessPropertyIsRunningInput)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var isRunning: UInt32 = 0
+        guard AudioObjectGetPropertyData(process, &address, 0, nil, &size, &isRunning) == noErr else { return false }
+        return isRunning != 0
+    }
+
+    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    }
+}

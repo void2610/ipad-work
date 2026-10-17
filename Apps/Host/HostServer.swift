@@ -21,6 +21,9 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var control: MessageChannel?
     private var video: MessageChannel?
     private var streamer: ScreenStreamer?
+    private var typeless: TypelessMonitor?
+    // iPad から音声入力の開始・完了が来るたびに増やし、古い要求の結果を知らせないようにする
+    private var voiceInputRequestCount = 0
 
     init(
         hostName: String,
@@ -35,7 +38,13 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     func start() {
-        queue.async { self.startListener() }
+        queue.async {
+            self.startListener()
+            self.typeless = TypelessMonitor { [weak self] isRecording in
+                guard let self else { return }
+                queue.async { self.typelessRecordingChanged(isRecording) }
+            }
+        }
     }
 
     func stop() {
@@ -73,6 +82,13 @@ nonisolated final class HostServer: @unchecked Sendable {
             Self.logger.error("listener の作成に失敗: \(error, privacy: .public)")
             onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
         }
+    }
+
+    /// Mac で直接 Typeless を使ったときや、Typeless が自分で聞き取りを終えたときも、iPad のボタンの表示を合わせる。
+    private func typelessRecordingChanged(_ isRecording: Bool) {
+        Self.logger.info("Typeless の聞き取り: \(isRecording ? "開始" : "終了", privacy: .public)")
+        inputQueue.async { [injector] in injector.typelessRecordingChanged(isRecording) }
+        control?.send(.control(.voiceInputState(isActive: isRecording)))
     }
 
     private func accept(_ connection: NWConnection) {
@@ -117,14 +133,25 @@ nonisolated final class HostServer: @unchecked Sendable {
         case let .voiceInput(isActive):
             Self.logger.info("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
+            reportVoiceInputAfterSettling()
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus:
+        case .hello, .welcome, .hostStatus, .voiceInputState:
             break
+        }
+    }
+
+    /// Typeless がショートカットに反応しなかったときは状態の変化が来ないので、待ってから実際の状態を知らせて iPad の表示を戻す。
+    private func reportVoiceInputAfterSettling() {
+        voiceInputRequestCount += 1
+        let requestCount = voiceInputRequestCount
+        queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime) { [weak self] in
+            guard let self, requestCount == voiceInputRequestCount else { return }
+            control?.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         }
     }
 
@@ -133,7 +160,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         closeSession()
         control = channel
         Self.logger.info("接続: \(deviceName, privacy: .public)")
+        typeless?.start()
         channel.send(.control(.welcome(hostName: hostName, status: Self.currentStatus())))
+        channel.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         onClientChange(deviceName)
     }
 
@@ -184,6 +213,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         Self.logger.info("切断")
         control.cancel()
         self.control = nil
+        typeless?.stop()
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
     }

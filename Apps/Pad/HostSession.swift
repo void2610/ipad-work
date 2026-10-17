@@ -19,6 +19,7 @@ final class HostSession {
     private(set) var phase = Phase.connecting
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
+    /// Mac の Typeless が聞き取っているか。押した直後は求めた状態を先に見せ、Mac から実際の状態が届いたらそれに合わせる。
     private(set) var isVoiceInputActive = false
 
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
@@ -28,6 +29,8 @@ final class HostSession {
     private var video: MessageChannel?
     private var isClosed = false
     private var isForeground = true
+    // iPad から始めさせた聞き取りか。裏に回るときに、Mac で直接始めた聞き取りまで止めないために覚える
+    private var isVoiceInputStartedHere = false
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
@@ -106,12 +109,13 @@ final class HostSession {
     func setVoiceInput(_ isActive: Bool) {
         guard isVoiceInputActive != isActive else { return }
         isVoiceInputActive = isActive
+        isVoiceInputStartedHere = isActive
         send(.voiceInput(isActive: isActive))
     }
 
     func close() {
         commitAppSwitch()
-        setVoiceInput(false)
+        stopVoiceInputStartedHere()
         isClosed = true
         retryTask?.cancel()
         videoRetryTask?.cancel()
@@ -127,9 +131,15 @@ final class HostSession {
             startVideoIfNeeded()
         } else {
             // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
-            setVoiceInput(false)
+            stopVoiceInputStartedHere()
             commitAppSwitch()
             stopVideo()
+        }
+    }
+
+    private func stopVoiceInputStartedHere() {
+        if isVoiceInputStartedHere {
+            setVoiceInput(false)
         }
     }
 
@@ -174,8 +184,9 @@ final class HostSession {
 
     private func connectionLost() {
         guard !isClosed, retryTask == nil else { return }
-        // 接続が切れた時点で Mac 側は押していたキーを離すので、こちらの表示も合わせる
+        // 接続が切れた時点で Mac 側は iPad が始めさせた聞き取りを止める。つなぎ直したら Mac から実際の状態が届く
         isVoiceInputActive = false
+        isVoiceInputStartedHere = false
         replaceControl(with: nil)
         stopVideo()
         phase = .reconnecting
@@ -198,6 +209,11 @@ final class HostSession {
             startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status
+        case let .voiceInputState(isActive):
+            isVoiceInputActive = isActive
+            if !isActive {
+                isVoiceInputStartedHere = false
+            }
         default:
             break
         }
