@@ -9,6 +9,10 @@ final class HostController {
     private(set) var listenerDescription = "起動中"
     private(set) var canCaptureScreen = false
     private(set) var canControlInput = false
+    /// iPad のマイクを渡すための、PadBridge Host のシステムオーディオの録音の許可。
+    private(set) var canRelayMicrophone = true
+    /// Typeless がシステムオーディオの録音を断られ、iPad のマイクを読めなかった。
+    private(set) var typelessCannotReadPadMicrophone = false
 
     private var server: HostServer?
     private var permissionTimer: Timer?
@@ -60,6 +64,10 @@ final class HostController {
         NSApp.terminate(nil)
     }
 
+    func openAudioCaptureSettings() {
+        openPrivacySettings("Privacy_ScreenCapture")
+    }
+
     private func openPrivacySettings(_ anchor: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
             NSWorkspace.shared.open(url)
@@ -79,6 +87,12 @@ final class HostController {
             },
             onListenerChange: { [weak self] description in
                 Task { @MainActor in self?.listenerDescription = description }
+            },
+            onStatusChange: { [weak self] status in
+                Task { @MainActor in
+                    self?.canRelayMicrophone = status.canRelayMicrophone
+                    self?.typelessCannotReadPadMicrophone = status.typelessCannotReadPadMicrophone
+                }
             }
         )
         server.start()

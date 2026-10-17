@@ -28,6 +28,19 @@ struct HostMenuView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // 蓋を閉じた Mac で iPad のマイクを使うときに要る許可。iPad をつなぐまでは分からないので、分かったものだけ出す
+            GroupBox("iPad のマイク") {
+                VStack(alignment: .leading, spacing: 8) {
+                    PermissionRow(title: "PadBridge Host", detail: "システムオーディオの録音 (iPad の声を渡す)", granted: controller.canRelayMicrophone) {
+                        controller.openAudioCaptureSettings()
+                    }
+                    PermissionRow(title: "Typeless", detail: "「システムオーディオ録音のみ」に加える", granted: !controller.typelessCannotReadPadMicrophone) {
+                        controller.openAudioCaptureSettings()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Button("再起動") { controller.relaunch() }
                 Spacer()

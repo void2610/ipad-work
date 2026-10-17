@@ -15,6 +15,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let hostName: String
     private let onClientChange: @Sendable (String?) -> Void
     private let onListenerChange: @Sendable (String) -> Void
+    private let onStatusChange: @Sendable (HostStatus) -> Void
     private let injector: InputInjector
 
     private var listener: NWListener?
@@ -39,11 +40,13 @@ nonisolated final class HostServer: @unchecked Sendable {
         keyRepeatDelay: TimeInterval,
         keyRepeatInterval: TimeInterval,
         onClientChange: @escaping @Sendable (String?) -> Void,
-        onListenerChange: @escaping @Sendable (String) -> Void
+        onListenerChange: @escaping @Sendable (String) -> Void,
+        onStatusChange: @escaping @Sendable (HostStatus) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
         self.onListenerChange = onListenerChange
+        self.onStatusChange = onStatusChange
         injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
@@ -56,7 +59,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             self.microphone = MicrophoneRelay(queue: self.queue) { [weak self] in
                 guard let self else { return }
-                control?.send(.control(.hostStatus(currentStatus())))
+                publishStatus()
             }
         }
     }
@@ -141,7 +144,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func setTypelessCannotReadPadMicrophone(_ value: Bool) {
         guard typelessCannotReadPadMicrophone != value else { return }
         typelessCannotReadPadMicrophone = value
-        control?.send(.control(.hostStatus(currentStatus())))
+        publishStatus()
         guard value, !didOpenAudioCaptureSettings else { return }
         // Typeless に許可を足す画面を Mac で開いておき、iPad に映った画面で「＋」を押すだけにする。接続ごとに 1 回だけ
         didOpenAudioCaptureSettings = true
@@ -312,6 +315,13 @@ nonisolated final class HostServer: @unchecked Sendable {
         microphone?.stop()
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
+    }
+
+    /// 状態を iPad と Mac のメニューの両方に知らせる。
+    private func publishStatus() {
+        let status = currentStatus()
+        control?.send(.control(.hostStatus(status)))
+        onStatusChange(status)
     }
 
     private func currentStatus() -> HostStatus {
