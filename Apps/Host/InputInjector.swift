@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import PadBridgeKit
@@ -77,11 +78,35 @@ nonisolated final class InputInjector: @unchecked Sendable {
     /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、押し続けると使い方の案内が出るだけなので、短く 1 回押す。
     private func setVoiceInput(_ isActive: Bool) {
         guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
+        if isActive {
+            Self.launchTypelessIfNeeded()
+        }
         // Typeless 側でショートカットを変えても追従できるよう、押すたびに設定を読み直す
         let shortcut = Self.typelessPushToTalk()
         post(shortcut.events(isDown: true))
         Thread.sleep(forTimeInterval: 0.05)
         post(shortcut.events(isDown: false))
+    }
+
+    private static let typelessBundleIdentifier = "now.typeless.desktop"
+
+    /// Typeless が動いていなければ起動する。動いていないとショートカットを押しても何も起きないため。
+    /// 起動してからショートカットを受け付けるまで少しかかるので、立ち上がるのを待つ (入力のキューの上なので、待つ間ほかの操作は後回しになる)。
+    private static func launchTypelessIfNeeded() {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: typelessBundleIdentifier).isEmpty,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: typelessBundleIdentifier)
+        else { return }
+        let launched = DispatchSemaphore(value: 0)
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in launched.signal() }
+        _ = launched.wait(timeout: .now() + 10)
+        for _ in 0 ..< 50 {
+            if NSRunningApplication.runningApplications(withBundleIdentifier: typelessBundleIdentifier).first?.isFinishedLaunching == true { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        // 起動を終えてからショートカットを登録するまでの間に押すと届かない
+        Thread.sleep(forTimeInterval: 1.5)
     }
 
     private func post(_ events: [TypelessShortcut.KeyEvent]) {
