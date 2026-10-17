@@ -8,6 +8,43 @@ public enum KeyboardMapping {
         (0x36 ... 0x3E).contains(keyCode)
     }
 
+    /// 実際の Mac のキーボードと同じ CGEventFlags の生の値。Control+矢印の Mission Control などは、矢印に Fn とテンキーのビットがないと反応しない。
+    public static func eventFlags(modifiers: KeyModifiers, macVirtualKeyCode keyCode: UInt16) -> UInt64 {
+        // 下位ビットは左右どちらの修飾キーかを示す (IOLLEvent.h の NX_DEVICE*KEYMASK)。iPad からは左右が来ないので左として扱う
+        var flags: UInt64 = 0x100
+        if modifiers.contains(.shift) { flags |= 0x20000 | 0x2 }
+        if modifiers.contains(.control) { flags |= 0x40000 | 0x1 }
+        if modifiers.contains(.option) { flags |= 0x80000 | 0x20 }
+        if modifiers.contains(.command) { flags |= 0x100000 | 0x8 }
+        if arrowKeys.contains(keyCode) {
+            flags |= 0x200000 | 0x800000
+        } else if functionKeys.contains(keyCode) {
+            flags |= 0x800000
+        } else if keypadKeys.contains(keyCode) {
+            flags |= 0x200000
+        }
+        return flags
+    }
+
+    private static let arrowKeys: Set<UInt16> = [0x7B, 0x7C, 0x7D, 0x7E]
+    // F1〜F20、Help、Home、End、Page Up/Down、Forward Delete
+    private static let functionKeys: Set<UInt16> = [
+        0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F,
+        0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A,
+        0x72, 0x73, 0x77, 0x74, 0x79, 0x75,
+    ]
+    private static let keypadKeys: Set<UInt16> = [
+        0x41, 0x43, 0x45, 0x47, 0x4B, 0x4C, 0x4E, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5B, 0x5C,
+    ]
+
+    /// HID usage (矢印キー)。
+    public enum ArrowUsage {
+        public static let right = 0x4F
+        public static let left = 0x50
+        public static let down = 0x51
+        public static let up = 0x52
+    }
+
     private static let table: [Int: UInt16] = [
         // A〜Z
         0x04: 0x00, 0x05: 0x0B, 0x06: 0x08, 0x07: 0x02, 0x08: 0x0E, 0x09: 0x03, 0x0A: 0x05, 0x0B: 0x04,

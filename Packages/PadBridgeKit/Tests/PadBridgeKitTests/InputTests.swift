@@ -20,6 +20,13 @@ struct KeyboardMappingTests {
         #expect(KeyboardMapping.macVirtualKeyCode(forHIDUsage: 0xFF) == nil)
     }
 
+    /// Mission Control などのショートカットが反応するよう、矢印キーには Fn とテンキーのビットを付けること。
+    @Test func arrowKeysCarryFunctionAndKeypadFlags() {
+        #expect(KeyboardMapping.eventFlags(modifiers: [.control], macVirtualKeyCode: 0x7E) == 0x40101 | 0x200000 | 0x800000)
+        #expect(KeyboardMapping.eventFlags(modifiers: [], macVirtualKeyCode: 0x00) == 0x100)
+        #expect(KeyboardMapping.eventFlags(modifiers: [.command, .shift], macVirtualKeyCode: 0x73) == 0x100108 | 0x20002 | 0x800000)
+    }
+
     @Test func modifiersAreDetected() {
         #expect(KeyboardMapping.isModifier(macVirtualKeyCode: 0x37))
         #expect(!KeyboardMapping.isModifier(macVirtualKeyCode: 0x24))

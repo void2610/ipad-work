@@ -133,7 +133,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         } else {
             pressedKeys.remove(keyCode)
         }
-        postKey(keyCode, isDown: isDown, flags: Self.flags(for: modifiers))
+        postKey(keyCode, isDown: isDown, flags: CGEventFlags(rawValue: KeyboardMapping.eventFlags(modifiers: modifiers, macVirtualKeyCode: keyCode)))
     }
 
     private func postKey(_ keyCode: UInt16, isDown: Bool, flags: CGEventFlags) {
@@ -152,14 +152,5 @@ nonisolated final class InputInjector: @unchecked Sendable {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         }
         event.post(tap: .cghidEventTap)
-    }
-
-    private static func flags(for modifiers: KeyModifiers) -> CGEventFlags {
-        var flags: CGEventFlags = []
-        if modifiers.contains(.shift) { flags.insert(.maskShift) }
-        if modifiers.contains(.control) { flags.insert(.maskControl) }
-        if modifiers.contains(.option) { flags.insert(.maskAlternate) }
-        if modifiers.contains(.command) { flags.insert(.maskCommand) }
-        return flags
     }
 }
