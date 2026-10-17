@@ -178,12 +178,12 @@ struct ThreeFingerSwipeTests {
         #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.07) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
-    /// 左へ払うと右隣のデスクトップへ移る、トラックパッドと同じ向きにすること。
-    @Test func directionsMapToTrackpadShortcuts() {
-        #expect(TouchInterpreter.SwipeDirection.left.controlArrowUsage == KeyboardMapping.ArrowUsage.right)
-        #expect(TouchInterpreter.SwipeDirection.right.controlArrowUsage == KeyboardMapping.ArrowUsage.left)
-        #expect(TouchInterpreter.SwipeDirection.up.controlArrowUsage == KeyboardMapping.ArrowUsage.up)
-        #expect(TouchInterpreter.SwipeDirection.down.controlArrowUsage == KeyboardMapping.ArrowUsage.down)
+    /// 左へ払うと右隣のスペースへ移る、トラックパッドと同じ向きにすること。
+    @Test func directionsMapToTrackpadActions() {
+        #expect(DesktopAction(swipe: .left) == .switchSpace(toRight: true))
+        #expect(DesktopAction(swipe: .right) == .switchSpace(toRight: false))
+        #expect(DesktopAction(swipe: .up) == .controlArrow(usage: KeyboardMapping.ArrowUsage.up))
+        #expect(DesktopAction(swipe: .down) == .controlArrow(usage: KeyboardMapping.ArrowUsage.down))
     }
 }
 
