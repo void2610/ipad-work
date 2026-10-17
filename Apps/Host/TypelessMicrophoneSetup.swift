@@ -10,7 +10,6 @@ import PadBridgeKit
 /// Typeless の設定 (electron-store) は外からの書き換えを読み直さず上書きするので、Typeless を終了してから書き換え、起動し直す。
 nonisolated enum TypelessMicrophoneSetup {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "typeless")
-    private static let bundleIdentifier = "now.typeless.desktop"
     private static let settingsURL = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Typeless/app-settings.json")
 
     enum Result {
@@ -63,17 +62,17 @@ nonisolated enum TypelessMicrophoneSetup {
     }
 
     private static func terminateTypeless() -> Bool {
-        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: TypelessApp.bundleIdentifier)
         apps.forEach { $0.terminate() }
         for _ in 0 ..< 100 {
-            if NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty { return true }
+            if NSRunningApplication.runningApplications(withBundleIdentifier: TypelessApp.bundleIdentifier).isEmpty { return true }
             Thread.sleep(forTimeInterval: 0.1)
         }
         return false
     }
 
     private static func launchTypeless() {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TypelessApp.bundleIdentifier) else { return }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         let launched = DispatchSemaphore(value: 0)

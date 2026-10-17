@@ -88,25 +88,19 @@ nonisolated final class InputInjector: @unchecked Sendable {
         post(shortcut.events(isDown: false))
     }
 
-    private static let typelessBundleIdentifier = "now.typeless.desktop"
-
     /// Typeless が動いていなければ起動する。動いていないとショートカットを押しても何も起きないため。
-    /// 起動してからショートカットを受け付けるまで少しかかるので、立ち上がるのを待つ (入力のキューの上なので、待つ間ほかの操作は後回しになる)。
+    /// 起動してからショートカットを待ち受けるまで少しかかるので、待ち受け始めるのを待つ (入力のキューの上なので、待つ間ほかの操作は後回しになる)。
     private static func launchTypelessIfNeeded() {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: typelessBundleIdentifier).isEmpty,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: typelessBundleIdentifier)
-        else { return }
+        guard !TypelessApp.isRunning, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TypelessApp.bundleIdentifier) else { return }
         let launched = DispatchSemaphore(value: 0)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in launched.signal() }
         _ = launched.wait(timeout: .now() + 10)
-        for _ in 0 ..< 50 {
-            if NSRunningApplication.runningApplications(withBundleIdentifier: typelessBundleIdentifier).first?.isFinishedLaunching == true { break }
+        let deadline = Date.now + 10
+        while !TypelessApp.isListeningForShortcut(), Date.now < deadline {
             Thread.sleep(forTimeInterval: 0.1)
         }
-        // 起動を終えてからショートカットを登録するまでの間に押すと届かない
-        Thread.sleep(forTimeInterval: 1.5)
     }
 
     private func post(_ events: [TypelessShortcut.KeyEvent]) {

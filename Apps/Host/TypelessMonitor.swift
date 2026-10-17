@@ -5,7 +5,7 @@ import Foundation
 /// Typeless は聞き取りの状態を外へ公開しておらず、聞き取っている間だけマイクを使うので、それを実際の状態とする。
 nonisolated final class TypelessMonitor: @unchecked Sendable {
     // Typeless は Electron 製で、マイクは本体ではなく Typeless Helper のプロセスが使う
-    private static let bundleIDPrefix = "now.typeless.desktop"
+    private static let bundleIDPrefix = TypelessApp.bundleIdentifier
     // プロセスの入力状態は、変わっても AudioObjectAddPropertyListenerBlock の通知が来ないので読み直す
     private static let pollInterval: TimeInterval = 0.2
     // Typeless を起動し直したときに追えるよう、プロセスの一覧はときどき取り直す

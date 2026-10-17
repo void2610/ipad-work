@@ -276,11 +276,15 @@ nonisolated final class HostServer: @unchecked Sendable {
             voiceInputRequestCount += 1
             let requestCount = voiceInputRequestCount
             if isActive {
-                confirmVoiceInputStarted(message, requestCount: requestCount, retriesLeft: Self.voiceInputRetryCount)
                 // Typeless が録音を始める前に、iPad の声を流す準備をしておく
                 microphone?.beginListening { [weak self, inputQueue, injector] isUsingPadMicrophone in
-                    self?.isUsingPadMicrophone = isUsingPadMicrophone
-                    inputQueue.async { injector.handle(message) }
+                    guard let self else { return }
+                    self.isUsingPadMicrophone = isUsingPadMicrophone
+                    inputQueue.async {
+                        injector.handle(message)
+                        // Typeless を起動して待ち受けるのを待ったときも、押したときから数える
+                        self.queue.async { self.confirmVoiceInputStarted(message, requestCount: requestCount, retriesLeft: Self.voiceInputRetryCount) }
+                    }
                 }
             } else if isUsingPadMicrophone, let microphone {
                 // 止めたところまでの声を Typeless に聞かせ終えてから止め、話し終わりを切らない
