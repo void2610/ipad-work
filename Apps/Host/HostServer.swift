@@ -17,6 +17,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let onClientChange: @Sendable (String?) -> Void
     private let onListenerChange: @Sendable (String) -> Void
     private let onStatusChange: @Sendable (HostStatus) -> Void
+    private let onMacAudioChange: @Sendable (Bool) -> Void
     private let injector: InputInjector
 
     private var listener: NWListener?
@@ -56,12 +57,14 @@ nonisolated final class HostServer: @unchecked Sendable {
         keyRepeatInterval: TimeInterval,
         onClientChange: @escaping @Sendable (String?) -> Void,
         onListenerChange: @escaping @Sendable (String) -> Void,
-        onStatusChange: @escaping @Sendable (HostStatus) -> Void
+        onStatusChange: @escaping @Sendable (HostStatus) -> Void,
+        onMacAudioChange: @escaping @Sendable (Bool) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
         self.onListenerChange = onListenerChange
         self.onStatusChange = onStatusChange
+        self.onMacAudioChange = onMacAudioChange
         injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
@@ -325,10 +328,17 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             capture.start()
             macAudio = capture
+            onMacAudioChange(true)
         } else if !isEnabled {
-            macAudio?.stop()
-            macAudio = nil
+            stopMacAudio()
         }
+    }
+
+    private func stopMacAudio() {
+        guard let macAudio else { return }
+        macAudio.stop()
+        self.macAudio = nil
+        onMacAudioChange(false)
     }
 
     /// 完了のショートカットを押す。その間に iPad でまた始めていたら、Typeless は聞き取りを続けるので押さない。
@@ -458,8 +468,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         control.cancel()
         self.control = nil
         typeless?.stop()
-        macAudio?.stop()
-        macAudio = nil
+        stopMacAudio()
         microphone?.endListening()
         // つなぎ直すたびに補助アプリを起動し直すと、デバイスを作り直して点検し終えるまで iPad のマイクを使えない。しばらく残しておく
         scheduleMicrophoneStop(after: 60)

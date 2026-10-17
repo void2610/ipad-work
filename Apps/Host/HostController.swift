@@ -15,6 +15,8 @@ final class HostController {
     private(set) var canRelayMicrophone = true
     /// Typeless がシステムオーディオの録音を断られ、iPad のマイクを読めなかった。
     private(set) var typelessCannotReadPadMicrophone = false
+    /// Mac の音を iPad で鳴らしていて、Mac のスピーカーからは鳴らない。
+    private(set) var isPlayingMacAudioOnPad = false
     /// ログインしたときに Host を起動するか。蓋を閉じた Mac では、再起動のあと Host を手で開けないため。
     private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -111,6 +113,9 @@ final class HostController {
                     self?.canRelayMicrophone = status.canRelayMicrophone
                     self?.typelessCannotReadPadMicrophone = status.typelessCannotReadPadMicrophone
                 }
+            },
+            onMacAudioChange: { [weak self] isPlaying in
+                Task { @MainActor in self?.isPlayingMacAudioOnPad = isPlaying }
             }
         )
         server.start()

@@ -16,6 +16,12 @@ struct HostMenuView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            // Mac の前にいる人が、Mac から音が出ない理由を分かるようにする
+            if controller.isPlayingMacAudioOnPad {
+                Label("Mac の音は iPad で鳴らしています。Mac のスピーカーからは鳴りません。", systemImage: "speaker.wave.2")
+                    .font(.caption)
+            }
+
             GroupBox("権限") {
                 VStack(alignment: .leading, spacing: 8) {
                     PermissionRow(title: "画面収録", detail: "画面を iPad に映す", granted: controller.canCaptureScreen) {
