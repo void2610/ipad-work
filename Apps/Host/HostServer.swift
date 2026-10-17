@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import IOKit.pwr_mgt
 import Network
 import os
 import PadBridgeKit
@@ -23,6 +24,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var control: MessageChannel?
     private var video: MessageChannel?
     private var streamer: ScreenStreamer?
+    // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
+    private var displayAssertion: IOPMAssertionID?
     // iPad が見ている範囲。映像の接続を張り直しても引き継ぐ
     private var videoRegion = VideoRegion.full
     private var typeless: TypelessMonitor?
@@ -352,6 +355,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         guard status.canCaptureScreen else { return }
         let streamer = ScreenStreamer(channel: channel, maxWidth: maxWidth, maxHeight: maxHeight, region: videoRegion)
         self.streamer = streamer
+        keepDisplayAwake(true)
         Task {
             do {
                 try await streamer.start()
@@ -374,6 +378,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func stopVideo() {
+        keepDisplayAwake(false)
         streamer?.stop()
         streamer = nil
         video?.cancel()
@@ -392,6 +397,18 @@ nonisolated final class HostServer: @unchecked Sendable {
         scheduleMicrophoneStop(after: 60)
         inputQueue.async { [injector] in injector.releaseAll() }
         onClientChange(nil)
+    }
+
+    private func keepDisplayAwake(_ isAwake: Bool) {
+        if isAwake, displayAssertion == nil {
+            var id = IOPMAssertionID(0)
+            if IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "iPad に画面を映している" as CFString, &id) == kIOReturnSuccess {
+                displayAssertion = id
+            }
+        } else if !isAwake, let id = displayAssertion {
+            IOPMAssertionRelease(id)
+            displayAssertion = nil
+        }
     }
 
     /// 補助アプリを止める。Mac で直接 Typeless を使っている最中は、デバイスが消えて録音が途切れないよう、終わるまで待つ。
