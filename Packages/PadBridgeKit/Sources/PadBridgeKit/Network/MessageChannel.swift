@@ -1,9 +1,11 @@
 import Foundation
 import Network
+import os
 import Synchronization
 
 /// `NWConnection` の上で `WireMessage` を送受信する。送信はどのスレッドから呼んでもよい。
 public final class MessageChannel: Sendable {
+    private static let logger = Logger(subsystem: "dev.void2610.padbridge.kit", category: "channel")
     public let connection: NWConnection
     private let queue: DispatchQueue
     private let pendingSends = Mutex(0)
@@ -60,8 +62,10 @@ public final class MessageChannel: Sendable {
                 return
             }
             // 区切りは framer が切り出しているので、相手が新しいビルドで送ってきた知らないメッセージは飛ばして続けられる
-            if let message = try? WireMessage(type: framerMessage.padBridgeMessageType, payload: content ?? Data()) {
-                onMessage(message)
+            do {
+                try onMessage(WireMessage(type: framerMessage.padBridgeMessageType, payload: content ?? Data()))
+            } catch {
+                Self.logger.notice("解釈できないメッセージを飛ばした (種類 \(framerMessage.padBridgeMessageType)): \(error, privacy: .public)")
             }
             receiveNext(onMessage)
         }
