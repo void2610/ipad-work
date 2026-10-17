@@ -4,6 +4,10 @@ derived_data := "build/DerivedData"
 generate:
     nix develop --command xcodegen generate
 
+# アプリのアイコンを描き直す (Scripts/AppIcon.swift の絵を iPad と Mac のアセットカタログに書き出す)
+icon:
+    swift Scripts/AppIcon.swift Apps/Pad/Assets.xcassets/AppIcon.appiconset Apps/Host/Assets.xcassets/AppIcon.appiconset
+
 # 共通ライブラリ (通信・映像・入力) のテスト
 test:
     swift test --package-path Packages/PadBridgeKit

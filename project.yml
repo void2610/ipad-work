@@ -36,7 +36,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.void2610.padbridge.pad
         INFOPLIST_FILE: Apps/Pad/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   PadBridgeHost:
     type: application
     platform: macOS
@@ -58,6 +58,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.void2610.padbridge.host
         PRODUCT_NAME: PadBridge Host
         INFOPLIST_FILE: Apps/Host/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # 補助アプリのマイクの許可は Host の名前で求められ、そのとき Host にもこの権利が要る (hardened runtime)
         CODE_SIGN_ENTITLEMENTS: Apps/Host/Host.entitlements
         # CGEvent で他アプリへ入力を送るには App Sandbox の外で動かす必要がある
