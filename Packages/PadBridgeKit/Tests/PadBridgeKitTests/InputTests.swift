@@ -129,3 +129,44 @@ struct TypelessToggleTests {
         #expect(!toggle.isStartedByPad)
     }
 }
+
+struct KeyRepeatTests {
+    private func event(_ usage: Int, _ isDown: Bool, _ modifiers: KeyModifiers = []) -> MacKeyEvent {
+        MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers)!
+    }
+
+    @Test func heldKeyRepeatsUntilReleased() {
+        var keyRepeat = KeyRepeat()
+        let startedOnDown = keyRepeat.apply(event(0x2A, true), heldModifiers: [])
+        #expect(startedOnDown)
+        #expect(keyRepeat.key?.keyCode == 0x33)
+        let startedOnUp = keyRepeat.apply(event(0x2A, false), heldModifiers: [])
+        #expect(!startedOnUp)
+        #expect(keyRepeat.key == nil)
+    }
+
+    /// 2 つ目のキーを押したらそちらを繰り返し、先に押したキーを離しても止めない。
+    @Test func onlyLatestKeyRepeats() {
+        var keyRepeat = KeyRepeat()
+        _ = keyRepeat.apply(event(0x04, true), heldModifiers: [])
+        let startedSecond = keyRepeat.apply(event(0x05, true), heldModifiers: [])
+        #expect(startedSecond)
+        _ = keyRepeat.apply(event(0x04, false), heldModifiers: [])
+        #expect(keyRepeat.key?.keyCode == 0x0B)
+    }
+
+    @Test func modifiersAloneDoNotRepeat() {
+        var keyRepeat = KeyRepeat()
+        let started = keyRepeat.apply(event(0xE1, true, [.shift]), heldModifiers: [.shift])
+        #expect(!started)
+        #expect(keyRepeat.key == nil)
+    }
+
+    /// ⇧ を離したら、そのあとの繰り返しは ⇧ なしになる。
+    @Test func modifierChangeUpdatesRepeatedFlags() {
+        var keyRepeat = KeyRepeat()
+        _ = keyRepeat.apply(event(0x50, true, [.shift]), heldModifiers: [.shift])
+        _ = keyRepeat.apply(event(0xE1, false), heldModifiers: [])
+        #expect(keyRepeat.key?.flags == KeyboardMapping.eventFlags(modifiers: [], macVirtualKeyCode: 0x7B))
+    }
+}

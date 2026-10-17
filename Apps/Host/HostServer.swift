@@ -28,13 +28,15 @@ nonisolated final class HostServer: @unchecked Sendable {
     init(
         hostName: String,
         doubleClickInterval: TimeInterval,
+        keyRepeatDelay: TimeInterval,
+        keyRepeatInterval: TimeInterval,
         onClientChange: @escaping @Sendable (String?) -> Void,
         onListenerChange: @escaping @Sendable (String) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
         self.onListenerChange = onListenerChange
-        injector = InputInjector(doubleClickInterval: doubleClickInterval)
+        injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
     func start() {

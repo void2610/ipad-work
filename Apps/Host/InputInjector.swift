@@ -13,10 +13,19 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var location = CGPoint.zero
     private var typeless = TypelessToggle()
     private var heldModifiers = HeldModifiers()
+    private let queue: DispatchQueue
+    private let keyRepeatDelay: TimeInterval
+    private let keyRepeatInterval: TimeInterval
+    private var keyRepeat = KeyRepeat()
+    private var keyRepeatTimer: DispatchSourceTimer?
 
-    init(doubleClickInterval: TimeInterval) {
+    /// `queue` は HostServer の入力キュー。押したままのキーの繰り返しもこのキューで送る。
+    init(queue: DispatchQueue, doubleClickInterval: TimeInterval, keyRepeatDelay: TimeInterval, keyRepeatInterval: TimeInterval) {
+        self.queue = queue
         // iPad の指は狙った位置から数ポイントずれるので、Mac のマウスより判定を緩める
         clickCounter = ClickCounter(interval: doubleClickInterval, maxDistance: 16)
+        self.keyRepeatDelay = keyRepeatDelay
+        self.keyRepeatInterval = keyRepeatInterval
     }
 
     func handle(_ message: ControlMessage) {
@@ -48,6 +57,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         if typeless.isStartedByPad {
             setVoiceInput(false)
         }
+        stopKeyRepeat()
         for button in pressedButtons {
             press(button, isDown: false, at: location)
         }
@@ -152,6 +162,38 @@ nonisolated final class InputInjector: @unchecked Sendable {
             pressedKeys.remove(keyEvent.keyCode)
         }
         post(keyEvent)
+        if keyRepeat.apply(keyEvent, heldModifiers: heldModifiers.modifiers) {
+            startKeyRepeat()
+        } else if keyRepeat.key == nil {
+            stopKeyRepeat()
+        }
+    }
+
+    private func startKeyRepeat() {
+        keyRepeatTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        // Mac のキーボード設定の「リピート入力認識までの時間」と「キーのリピート」に合わせる
+        timer.schedule(deadline: .now() + keyRepeatDelay, repeating: keyRepeatInterval)
+        timer.setEventHandler { [weak self] in self?.postKeyRepeat() }
+        timer.resume()
+        keyRepeatTimer = timer
+    }
+
+    private func stopKeyRepeat() {
+        keyRepeatTimer?.cancel()
+        keyRepeatTimer = nil
+        keyRepeat.stop()
+    }
+
+    private func postKeyRepeat() {
+        guard let key = keyRepeat.key, let event = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true) else {
+            stopKeyRepeat()
+            return
+        }
+        event.flags = CGEventFlags(rawValue: key.flags)
+        // 実際のキーボードの繰り返しと同じ印を付け、アプリが押し続けによる入力として扱えるようにする
+        event.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        event.post(tap: .cghidEventTap)
     }
 
     private func perform(_ action: DesktopAction) {

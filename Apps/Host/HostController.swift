@@ -72,6 +72,8 @@ final class HostController {
         let server = HostServer(
             hostName: Host.current().localizedName ?? "Mac",
             doubleClickInterval: NSEvent.doubleClickInterval,
+            keyRepeatDelay: NSEvent.keyRepeatDelay,
+            keyRepeatInterval: NSEvent.keyRepeatInterval,
             onClientChange: { [weak self] name in
                 Task { @MainActor in self?.connectedDeviceName = name }
             },
