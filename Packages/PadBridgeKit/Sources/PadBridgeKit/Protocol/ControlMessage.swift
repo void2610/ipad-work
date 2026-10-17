@@ -39,11 +39,11 @@ public struct HostStatus: Codable, Sendable, Equatable {
     public var canControlInput: Bool
     /// iPad のマイクの音を Mac の入力デバイスとして渡せるか (システムオーディオの録音の許可)。確かめる前は true。
     public var canRelayMicrophone: Bool
-    /// iPad のマイクに切り替えたのに、Typeless が聞き取りを始められなかった。
-    /// タップを含む入力デバイスを読むには、読む側の Typeless にもシステムオーディオの録音の許可が要る。
+    /// Typeless が「PadBridge iPad マイク」を読もうとして、システムオーディオの録音の許可がないと断られた。
+    /// タップを含む入力デバイスを読むには、読む側の Typeless にもこの許可が要り、利用者がシステム設定で加えるしかない。
     public var typelessCannotReadPadMicrophone: Bool
     /// iPad から聞き取りを始めたのに、Typeless が「PadBridge iPad マイク」ではないマイクで録音していた。
-    /// このデバイスは Mac の既定の入力になれないので、Typeless のマイクの設定で選んでもらう必要がある。
+    /// このデバイスは Mac の既定の入力になれないので、Typeless のマイクが「自動検出」なら Host が選び直す。
     public var typelessUsesOtherMicrophone: Bool
 
     public init(
