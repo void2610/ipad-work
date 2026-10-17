@@ -31,6 +31,7 @@ final class HostSession {
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
+    private var appSwitcher = AppSwitcher()
     private var appSwitchCommit: Task<Void, Never>?
 
     init(host: DiscoveredHost) {
@@ -53,37 +54,28 @@ final class HostSession {
     }
 
     func tapKey(usage: Int, modifiers: KeyModifiers = []) {
-        send(.key(usage: usage, isDown: true, modifiers: modifiers))
-        send(.key(usage: usage, isDown: false, modifiers: modifiers))
+        RemoteKeys.tap(usage: usage, modifiers: modifiers).forEach(send)
     }
 
-    /// Control を押したまま矢印キーを押す。トラックパッドの 3 本指スワイプと同じく、デスクトップの切り替えや Mission Control になる。
-    func pressControlArrow(usage: Int) {
-        send(.key(usage: HIDUsage.leftControl, isDown: true, modifiers: [.control]))
-        tapKey(usage: usage, modifiers: [.control])
-        send(.key(usage: HIDUsage.leftControl, isDown: false, modifiers: []))
+    func swipeDesktop(_ direction: TouchInterpreter.SwipeDirection) {
+        send(.desktopSwipe(direction))
     }
 
-    /// Command+Tab のアプリ切り替え。押すたびに次のアプリへ進み、1 秒間が空いたら Command を離して確定する。
-    /// iPadOS がハードウェアキーボードの Command+Tab を先に受け取ってしまうため、ボタンで代わりにする。
+    /// Command+Tab のアプリ切り替え。タップのたびに次のアプリへ進み、1 秒タップがなければ確定する。
     func switchApp() {
-        if appSwitchCommit == nil {
-            send(.key(usage: HIDUsage.leftCommand, isDown: true, modifiers: [.command]))
-        }
+        appSwitcher.tap(at: ProcessInfo.processInfo.systemUptime).forEach(send)
         appSwitchCommit?.cancel()
-        tapKey(usage: HIDUsage.tab, modifiers: [.command])
         appSwitchCommit = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            self?.commitAppSwitch()
+            try? await Task.sleep(for: .seconds(AppSwitcher.commitDelay))
+            guard let self, !Task.isCancelled else { return }
+            appSwitcher.commitIfDue(at: ProcessInfo.processInfo.systemUptime).forEach(send)
         }
     }
 
     private func commitAppSwitch() {
-        guard let task = appSwitchCommit else { return }
-        task.cancel()
+        appSwitchCommit?.cancel()
         appSwitchCommit = nil
-        send(.key(usage: HIDUsage.leftCommand, isDown: false, modifiers: []))
+        appSwitcher.commit().forEach(send)
     }
 
     /// Mac の Typeless で音声入力を始める (true) か、終える (false)。
@@ -245,6 +237,4 @@ enum HIDUsage {
     static let escape = 0x29
     static let backspace = 0x2A
     static let tab = 0x2B
-    static let leftControl = 0xE0
-    static let leftCommand = 0xE3
 }

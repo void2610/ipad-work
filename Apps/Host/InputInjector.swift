@@ -30,6 +30,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
             key(usage: usage, isDown: isDown, modifiers: modifiers)
         case let .voiceInput(isActive):
             setVoiceInput(isActive)
+        case let .desktopSwipe(direction):
+            perform(DesktopAction(swipe: direction))
         default:
             break
         }
@@ -42,7 +44,12 @@ nonisolated final class InputInjector: @unchecked Sendable {
             press(button, isDown: false, at: location)
         }
         for keyCode in pressedKeys {
-            postKey(keyCode, isDown: false, flags: [])
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { continue }
+            if KeyboardMapping.isModifier(macVirtualKeyCode: keyCode) {
+                event.type = .flagsChanged
+            }
+            event.flags = CGEventFlags(rawValue: 0x100)
+            event.post(tap: .cghidEventTap)
         }
         pressedKeys.removeAll()
     }
@@ -127,22 +134,32 @@ nonisolated final class InputInjector: @unchecked Sendable {
     }
 
     private func key(usage: Int, isDown: Bool, modifiers: KeyModifiers) {
-        guard let keyCode = KeyboardMapping.macVirtualKeyCode(forHIDUsage: usage) else { return }
+        guard let keyEvent = MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers) else { return }
         if isDown {
-            pressedKeys.insert(keyCode)
+            pressedKeys.insert(keyEvent.keyCode)
         } else {
-            pressedKeys.remove(keyCode)
+            pressedKeys.remove(keyEvent.keyCode)
         }
-        postKey(keyCode, isDown: isDown, flags: CGEventFlags(rawValue: KeyboardMapping.eventFlags(modifiers: modifiers, macVirtualKeyCode: keyCode)))
+        post(keyEvent)
     }
 
-    private func postKey(_ keyCode: UInt16, isDown: Bool, flags: CGEventFlags) {
-        guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: isDown) else { return }
-        if KeyboardMapping.isModifier(macVirtualKeyCode: keyCode) {
-            // 修飾キー単体はキー押下ではなく修飾状態の変化として届けないと、アプリが Command などを認識しない
+    private func perform(_ action: DesktopAction) {
+        switch action {
+        case let .switchSpace(toRight):
+            SpaceSwitcher.switchSpace(toRight: toRight)
+        case let .controlArrow(usage):
+            for case let .key(usage, isDown, modifiers) in RemoteKeys.controlArrow(usage: usage) {
+                key(usage: usage, isDown: isDown, modifiers: modifiers)
+            }
+        }
+    }
+
+    private func post(_ keyEvent: MacKeyEvent) {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyEvent.keyCode, keyDown: keyEvent.isDown) else { return }
+        if keyEvent.isFlagsChanged {
             event.type = .flagsChanged
         }
-        event.flags = flags
+        event.flags = CGEventFlags(rawValue: keyEvent.flags)
         event.post(tap: .cghidEventTap)
     }
 

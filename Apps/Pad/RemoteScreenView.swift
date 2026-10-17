@@ -9,7 +9,7 @@ struct RemoteScreenView: UIViewRepresentable {
     func makeUIView(context _: Context) -> RemoteScreenUIView {
         let view = RemoteScreenUIView(displayLayer: session.renderer.displayLayer)
         view.send = { [weak session] message in session?.send(message) }
-        view.onThreeFingerSwipe = { [weak session] direction in session?.pressControlArrow(usage: direction.controlArrowUsage) }
+        view.onThreeFingerSwipe = { [weak session] direction in session?.swipeDesktop(direction) }
         return view
     }
 

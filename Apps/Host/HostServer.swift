@@ -117,6 +117,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         case let .voiceInput(isActive):
             Self.logger.info("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
+        case let .desktopSwipe(direction):
+            Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
+            inputQueue.async { [injector] in injector.handle(message) }
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }

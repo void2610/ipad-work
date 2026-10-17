@@ -57,5 +57,7 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case insertText(String)
     /// Mac の Typeless で音声入力を始める (true) か、終える (false) か。
     case voiceInput(isActive: Bool)
+    /// 3 本指で払った向き。Mac はトラックパッドの 3 本指スワイプと同じ操作をする。
+    case desktopSwipe(TouchInterpreter.SwipeDirection)
     case requestKeyFrame
 }

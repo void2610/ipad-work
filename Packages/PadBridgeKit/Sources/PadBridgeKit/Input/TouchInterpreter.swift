@@ -17,22 +17,11 @@ public struct TouchInterpreter {
         case threeFingerSwipe(SwipeDirection)
     }
 
-    public enum SwipeDirection: Equatable, Sendable {
+    public enum SwipeDirection: String, Codable, Equatable, Sendable {
         case left
         case right
         case up
         case down
-
-        /// トラックパッドと同じく、払った向きに応じて Control と組み合わせる矢印キー (HID usage)。
-        /// 左へ払うと右隣のデスクトップへ、上へ払うと Mission Control、下へ払うとアプリケーションウインドウ。
-        public var controlArrowUsage: Int {
-            switch self {
-            case .left: KeyboardMapping.ArrowUsage.right
-            case .right: KeyboardMapping.ArrowUsage.left
-            case .up: KeyboardMapping.ArrowUsage.up
-            case .down: KeyboardMapping.ArrowUsage.down
-            }
-        }
     }
 
     private enum State {
