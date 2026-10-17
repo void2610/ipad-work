@@ -5,6 +5,7 @@ import os
 /// Typeless に「PadBridge iPad マイク」を使わせる設定を、一度だけ自動で行う。
 /// このデバイスは Mac の既定の入力になれない (タップだけの集約デバイスは CanBeDefaultDevice が 0) ので、Typeless の「自動検出」のままでは使われない。
 /// Typeless は選んだマイクが今のマイクの一覧になければ自動検出に戻る作りなので、選んだままにしておいても、iPad がつながっていないときの使い方は変わらない。
+/// iPad がつながっていても iPad から話していない間は、補助アプリがこのデバイスに Mac の既定の入力の音を流すので、Mac で直接話しても聞き取れる。
 /// Typeless の設定 (electron-store) は外からの書き換えを読み直さず上書きするので、Typeless を終了してから書き換え、起動し直す。
 nonisolated enum TypelessMicrophoneSetup {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "typeless")

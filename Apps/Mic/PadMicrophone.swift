@@ -6,6 +6,7 @@ import PadBridgeKit
 /// iPad のマイクの音を、iPad がつながっている間だけ Mac の入力デバイス「PadBridge iPad マイク」として見せる。
 /// Mac は蓋を閉じると内蔵マイクをハードウェアで切り離すので、閉じたままでも Mac の Typeless で話せるようにするため。
 /// 届いた音を自分で鳴らし、その出力をプロセスタップで取り出して集約デバイスの入力にする。タップが出力をミュートするので、スピーカーからは鳴らない。
+/// Typeless にはこのデバイスを選ばせているので、iPad から話していない間に読まれたら Mac の既定の入力の音を流し、Mac で直接話しても聞き取れるようにする。
 nonisolated final class PadMicrophone: @unchecked Sendable {
     static let deviceName = "PadBridge iPad マイク"
     private static let deviceUID = "dev.void2610.padbridge.ipad-mic"
@@ -21,7 +22,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 8 / 100)
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
-    // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は無音を流し続ける。
+    // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は、Mac のマイクの音を流していなければ無音を流し続ける。
     // 止めるとタップだけの集約デバイスは入力を持たなくなり、Typeless (Chromium) がマイクとして数えない。
     // 許可がないとタップのミュートが効かないが、そのときは無音しか流さないので何も聞こえない
     private var isListening = false
@@ -37,6 +38,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var isAuthorized = false
     private let authorizationLock = NSLock()
     private var reportedAuthorization: Bool?
+    // iPad から話していない間に読まれているときだけ、Mac の既定の入力の音をこのデバイスに流す
+    private var isPassingThrough = false
+    private var passThroughEngine: AVAudioEngine?
+    private var passThroughGate = PassThroughGate()
+    private var readingListener: AudioObjectPropertyListenerBlock?
 
     /// `onAuthorizationChange` は、システムオーディオの録音の許可があるかが分かるたび (変わったときだけ) に呼ばれる。
     init(onAuthorizationChange: @escaping @Sendable (Bool) -> Void) {
@@ -54,7 +60,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                             phase += 2 * Double.pi * 20_000 / Double(PadAudio.sampleRate)
                         }
                         checkPhase = phase.truncatingRemainder(dividingBy: 2 * .pi)
-                    } else if isListening {
+                    } else if isListening || isPassingThrough {
                         buffer.read(into: output)
                         playedPeak = output.reduce(playedPeak) { max($0, abs($1)) }
                     } else {
@@ -110,6 +116,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             let isUsingPadMicrophone = isAuthorized && deviceID != kAudioObjectUnknown
             defer { ready(isUsingPadMicrophone) }
             guard isUsingPadMicrophone else { return }
+            stopPassThrough()
+            passThroughGate.padListeningBegan()
             renderLock.withLock {
                 buffer.removeAll()
                 isListening = true
@@ -120,7 +128,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// 聞き取りが終わったら、届いた音を鳴らすのをやめる。既定の入力は iPad のマイクのままにしておく。
+    /// 聞き取りが終わったら、届いた音を鳴らすのをやめる。
     func endListening() {
         queue.async { [self] in
             let (wasListening, received, played) = renderLock.withLock {
@@ -136,6 +144,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
                 let input = monitored.map { String(format: "%.4f", $0) } ?? "測れない (PadBridge Host にマイクの許可がない)"
                 Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、デバイスの入力の最大 \(input, privacy: .public)")
             }
+            updatePassThrough()
         }
     }
 
@@ -147,8 +156,6 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             }
         }
     }
-
-
 
     /// 前に Host が落ちて残ったデバイスとタップを消す。作ったプロセスが終わっても、HAL からは消えないため。
     static func removeLeftovers() {
@@ -282,9 +289,20 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         tapID = tap
         deviceID = device
         Self.logger.notice("\(Self.deviceName, privacy: .public) を作った")
+        var address = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.updatePassThrough() }
+        if AudioObjectAddPropertyListenerBlock(device, &address, queue, listener) == noErr {
+            readingListener = listener
+        }
     }
 
     private func destroyDevice() {
+        stopPassThrough()
+        if let readingListener, deviceID != kAudioObjectUnknown {
+            var address = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+            AudioObjectRemovePropertyListenerBlock(deviceID, &address, queue, readingListener)
+            self.readingListener = nil
+        }
         if deviceID != kAudioObjectUnknown {
             AudioHardwareDestroyAggregateDevice(deviceID)
             deviceID = kAudioObjectUnknown
@@ -293,6 +311,71 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = kAudioObjectUnknown
         }
+    }
+
+    // MARK: - Mac のマイクの音を流す
+
+    /// iPad から話していない間にほかのアプリがこのデバイスを読んでいれば、Mac の既定の入力の音を流す。読まれ始めた通知はすぐ届く。
+    /// 自分で読むのは点検 (キューを占めたまま終える) と iPad からの聞き取りの間だけなので、それ以外で読まれていればほかのアプリが読んでいる。
+    private func updatePassThrough() {
+        let isRead = deviceID != kAudioObjectUnknown && Self.isRunningSomewhere(deviceID)
+        let isListening = renderLock.withLock { self.isListening }
+        if passThroughGate.shouldPassThrough(isRead: isRead, isPadListening: isListening) {
+            startPassThrough()
+        } else {
+            stopPassThrough()
+        }
+    }
+
+    private func startPassThrough() {
+        guard passThroughEngine == nil else { return }
+        // 録音の許可がないとタップのミュートが効かず、Mac のマイクの音がそのままスピーカーから流れてしまう
+        guard isAuthorized, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            Self.logger.notice("\(Self.deviceName, privacy: .public) が読まれたが、許可がないので Mac のマイクの音を流さない")
+            return
+        }
+        // 鳴らしている方のエンジンで入力を使うと出力が組み直されて途切れるので、取り込みは別のエンジンで行う
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard let converter = PadAudioConverter(from: format) else {
+            Self.logger.notice("\(Self.deviceName, privacy: .public) が読まれたが、Mac に使えるマイクがない")
+            return
+        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let self, let (samples, _) = converter.convert(buffer) else { return }
+            renderLock.withLock {
+                if isPassingThrough {
+                    self.buffer.write(samples)
+                }
+            }
+        }
+        renderLock.withLock {
+            buffer.removeAll()
+            isPassingThrough = true
+        }
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            renderLock.withLock { isPassingThrough = false }
+            Self.logger.error("Mac のマイクを始められない: \(error, privacy: .public)")
+            return
+        }
+        passThroughEngine = engine
+        Self.logger.notice("iPad から話していない間に読まれたので、Mac のマイクの音を流す")
+    }
+
+    private func stopPassThrough() {
+        guard let engine = passThroughEngine else { return }
+        passThroughEngine = nil
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        renderLock.withLock {
+            isPassingThrough = false
+            buffer.removeAll()
+        }
+        Self.logger.notice("Mac のマイクの音を流すのをやめた")
     }
 
     /// 聞き取りの間、このデバイスの入力 (Typeless が読むもの) を自分でも読み、音が届いているかを測る。
@@ -380,6 +463,14 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private static func isRunningSomewhere(_ device: AudioObjectID) -> Bool {
+        var address = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &isRunning) == noErr else { return false }
+        return isRunning != 0
     }
 
     private static func ownProcessObject() -> AudioObjectID {
