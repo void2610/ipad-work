@@ -36,6 +36,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var videoRegion = VideoRegion.full
     private var typeless: TypelessMonitor?
     private var microphone: MicrophoneRelay?
+    // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
+    private var macAudio: MacAudioCapture?
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
     private var microphoneStop: DispatchWorkItem?
@@ -300,6 +302,9 @@ nonisolated final class HostServer: @unchecked Sendable {
             } else {
                 stopTypeless(message, requestCount: requestCount)
             }
+        case let .macAudio(isEnabled):
+            Self.logger.notice("Mac の音を iPad で鳴らす: \(isEnabled ? "始める" : "やめる", privacy: .public)")
+            setMacAudio(isEnabled, on: channel)
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
@@ -308,6 +313,21 @@ nonisolated final class HostServer: @unchecked Sendable {
             inputQueue.async { [injector] in injector.handle(message) }
         case .hello, .welcome, .hostStatus, .voiceInputState, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
+        }
+    }
+
+    private func setMacAudio(_ isEnabled: Bool, on channel: MessageChannel) {
+        if isEnabled, macAudio == nil {
+            let capture = MacAudioCapture { [weak channel] samples in
+                // 届かずにたまっている間は捨て、つながり直したときにまとめて鳴って遅れないようにする
+                guard let channel, channel.pendingSendCount < 25 else { return }
+                channel.send(.macAudio(samples))
+            }
+            capture.start()
+            macAudio = capture
+        } else if !isEnabled {
+            macAudio?.stop()
+            macAudio = nil
         }
     }
 
@@ -438,6 +458,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         control.cancel()
         self.control = nil
         typeless?.stop()
+        macAudio?.stop()
+        macAudio = nil
         microphone?.endListening()
         // つなぎ直すたびに補助アプリを起動し直すと、デバイスを作り直して点検し終えるまで iPad のマイクを使えない。しばらく残しておく
         scheduleMicrophoneStop(after: 60)

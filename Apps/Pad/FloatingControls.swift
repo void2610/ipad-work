@@ -63,6 +63,7 @@ struct FloatingControls: View {
             }
             PanelButton(title: "アプリ切替", systemImage: "rectangle.2.swap", isActive: false, action: session.switchApp)
             Menu {
+                Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {
                 Image(systemName: "ellipsis")

@@ -27,6 +27,9 @@ final class HostSession {
     private(set) var isVoiceInputActive = false
     /// iPad のマイクを使えないときの知らせ。
     private(set) var microphoneNotice: String?
+    /// Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らない。
+    /// 裏に回っている間は Mac で鳴らす。iPad をしまったまま Mac を開いたときに、Mac が無音のままにならないように。
+    private(set) var playsMacAudio = UserDefaults.standard.bool(forKey: HostSession.playsMacAudioKey)
 
     /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
     @ObservationIgnored var microphoneLevel: Float {
@@ -34,6 +37,7 @@ final class HostSession {
     }
 
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
+    private static let playsMacAudioKey = "playsMacAudio"
     // 映像の受信と復号を操作の通信から切り離し、映像が重くても操作が遅れないようにする
     private let videoQueue = DispatchQueue(label: "dev.void2610.padbridge.pad.video")
     private var control: MessageChannel?
@@ -107,6 +111,20 @@ final class HostSession {
         send(.videoRegion(region))
     }
 
+    func setPlaysMacAudio(_ isEnabled: Bool) {
+        playsMacAudio = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Self.playsMacAudioKey)
+        updateMacAudio()
+    }
+
+    private func updateMacAudio() {
+        let isEnabled = playsMacAudio && isForeground
+        send(.macAudio(isEnabled: isEnabled))
+        if !isEnabled {
+            BackgroundAudio.shared.macAudio.reset()
+        }
+    }
+
     func swipeDesktop(_ direction: TouchInterpreter.SwipeDirection) {
         send(.desktopSwipe(direction))
     }
@@ -147,7 +165,7 @@ final class HostSession {
             microphoneStopTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
-                self?.microphone.stop()
+                self?.stopMicrophone()
             }
         }
     }
@@ -162,6 +180,8 @@ final class HostSession {
                 microphoneNotice = nil
                 if !microphone.isRunning, let channel = control {
                     microphone.start { samples in channel.send(.audio(samples)) }
+                    // iPad のスピーカーで鳴らした Mac の音を、マイクから Typeless に入れない
+                    BackgroundAudio.shared.macAudio.setSuppressed(microphone.isRunning)
                 }
             case .denied:
                 microphoneNotice = "iPad のマイクが許可されていないので、Mac のマイクで聞き取ります。設定の「PadBridge」でマイクを許可してください。"
@@ -170,10 +190,15 @@ final class HostSession {
         }
     }
 
+    private func stopMicrophone() {
+        microphone.stop()
+        BackgroundAudio.shared.macAudio.setSuppressed(false)
+    }
+
     func close() {
         commitAppSwitch()
         stopVoiceInputStartedHere()
-        microphone.stop()
+        stopMicrophone()
         isClosed = true
         retryTask?.cancel()
         videoRetryTask?.cancel()
@@ -185,12 +210,15 @@ final class HostSession {
     /// 裏に回っている間は操作用の接続だけ保ち、映像は止めて電池と通信量を抑える。
     func setForeground(_ isForeground: Bool) {
         self.isForeground = isForeground
+        if playsMacAudio {
+            updateMacAudio()
+        }
         if isForeground {
             startVideoIfNeeded()
         } else {
             // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
             stopVoiceInputStartedHere()
-            microphone.stop()
+            stopMicrophone()
             commitAppSwitch()
             stopVideo()
         }
@@ -246,7 +274,7 @@ final class HostSession {
         // 接続が切れた時点で Mac 側は iPad が始めさせた聞き取りを止める。つなぎ直したら Mac から実際の状態が届く
         isVoiceInputActive = false
         isVoiceInputStartedHere = false
-        microphone.stop()
+        stopMicrophone()
         replaceControl(with: nil)
         stopVideo()
         phase = .reconnecting
@@ -261,6 +289,10 @@ final class HostSession {
     }
 
     private func handleControl(_ message: WireMessage) {
+        if case let .macAudio(samples) = message {
+            BackgroundAudio.shared.macAudio.feed(samples)
+            return
+        }
         guard case let .control(message) = message else { return }
         switch message {
         case let .welcome(_, status):
@@ -270,6 +302,9 @@ final class HostSession {
             if !requestedRegion.isFull {
                 send(.videoRegion(requestedRegion))
             }
+            if playsMacAudio, isForeground {
+                send(.macAudio(isEnabled: true))
+            }
             startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status
@@ -277,7 +312,7 @@ final class HostSession {
             isVoiceInputActive = isActive
             if !isActive {
                 isVoiceInputStartedHere = false
-                microphone.stop()
+                stopMicrophone()
             }
         default:
             break

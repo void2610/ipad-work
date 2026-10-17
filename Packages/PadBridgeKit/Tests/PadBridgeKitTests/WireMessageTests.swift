@@ -16,6 +16,7 @@ struct WireMessageTests {
         .desktopSwipe(.left),
         .requestKeyFrame,
         .videoRegion(VideoRegion(x: 0.25, y: 0.125, width: 0.5, height: 0.5)),
+        .macAudio(isEnabled: true),
         .microphoneRelayHello(token: "abc"),
         .microphoneRelay(isListening: true),
         .microphoneRelayReady(isUsingPadMicrophone: true),

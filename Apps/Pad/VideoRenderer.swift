@@ -31,7 +31,7 @@ nonisolated final class VideoRenderer: @unchecked Sendable {
             onVideoSizeChange?(CGSize(width: format.width, height: format.height))
         case let .videoFrame(frame):
             enqueue(frame)
-        case .control, .audio:
+        case .control, .audio, .macAudio:
             break
         }
     }

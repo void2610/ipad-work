@@ -1,9 +1,12 @@
 @preconcurrency import AVFoundation
 import os
+import PadBridgeKit
 
 /// 裏に回っても iPadOS にアプリを止めさせないよう、接続中は他のアプリの音と混ぜて無音を流し続ける。
+/// 頼まれていれば、同じエンジンで Mac の音も鳴らす。
 final class BackgroundAudio {
     static let shared = BackgroundAudio()
+    let macAudio = MacAudioPlayer()
 
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "audio")
     private let engine = AVAudioEngine()
@@ -21,6 +24,8 @@ final class BackgroundAudio {
         }
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.attach(macAudio.node)
+        engine.connect(macAudio.node, to: engine.mainMixerNode, format: macAudio.format)
         observeSystemEvents()
     }
 

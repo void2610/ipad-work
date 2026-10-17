@@ -36,12 +36,15 @@ public enum WireMessage: Sendable, Equatable {
     case videoFrame(VideoFrame)
     /// iPad のマイクの音。形式は `PadAudio` (48kHz・モノラル・16 ビットのリトルエンディアン)。
     case audio(Data)
+    /// Mac で鳴っている音。形式は `MacAudio` (48kHz・ステレオ・16 ビットのリトルエンディアン)。
+    case macAudio(Data)
 
     enum Kind: UInt32 {
         case control = 1
         case videoFormat = 2
         case videoFrame = 3
         case audio = 4
+        case macAudio = 5
     }
 
     public func encoded() throws -> (type: UInt32, payload: Data) {
@@ -66,6 +69,8 @@ public enum WireMessage: Sendable, Equatable {
             return (Kind.videoFrame.rawValue, writer.data)
         case let .audio(samples):
             return (Kind.audio.rawValue, samples)
+        case let .macAudio(samples):
+            return (Kind.macAudio.rawValue, samples)
         }
     }
 
@@ -89,6 +94,8 @@ public enum WireMessage: Sendable, Equatable {
             self = .videoFrame(VideoFrame(isKeyFrame: isKeyFrame, presentationTimeMicros: presentationTime, region: region, data: reader.readRemaining()))
         case .audio:
             self = .audio(payload)
+        case .macAudio:
+            self = .macAudio(payload)
         case nil:
             throw WireError.unknownMessageType(type)
         }

@@ -24,10 +24,12 @@ public enum PadAudio {
     }
 }
 
-/// iPad から届いた音を、Mac で鳴らすまでためておく。
+/// 届いた音を、鳴らすまでためておく。
 /// ネットワークの揺れで途切れないよう少したまってから出し始め、ためすぎて遅れないよう、あふれたら古い音から捨てる。
+/// ステレオは左右を交互に並べてためる。数はどれも、フレームではなく音の数で数える。
 public struct PCMJitterBuffer: Sendable {
     public let startThreshold: Int
+    public let channelCount: Int
     private var storage: [Int16]
     private var readIndex = 0
     public private(set) var count = 0
@@ -39,14 +41,19 @@ public struct PCMJitterBuffer: Sendable {
     public private(set) var underruns = 0
     private var isPlaying = false
 
-    public init(capacity: Int, startThreshold: Int) {
-        storage = [Int16](repeating: 0, count: capacity)
-        self.startThreshold = min(startThreshold, capacity)
+    /// `capacity` と `startThreshold` はフレームの数で渡す。
+    public init(capacity: Int, startThreshold: Int, channelCount: Int = 1) {
+        storage = [Int16](repeating: 0, count: capacity * channelCount)
+        self.startThreshold = min(startThreshold, capacity) * channelCount
+        self.channelCount = channelCount
     }
 
     public mutating func write(_ data: Data) {
+        // フレームの途中で切れた分は捨て、左右がずれないようにする
+        let frameBytes = 2 * channelCount
+        let usable = data.count / frameBytes * frameBytes
         data.withUnsafeBytes { raw in
-            for offset in stride(from: 0, to: raw.count - 1, by: 2) {
+            for offset in stride(from: 0, to: usable, by: 2) {
                 append(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: Int16.self)))
             }
         }
@@ -72,9 +79,7 @@ public struct PCMJitterBuffer: Sendable {
 
     /// `output` を埋める。まだたまっていないときや足りない分は無音にする。
     public mutating func read(into output: UnsafeMutableBufferPointer<Float>) {
-        if !isPlaying, count >= startThreshold {
-            isPlaying = true
-        }
+        beginIfFilled()
         var ranOut = false
         for index in output.indices {
             guard isPlaying, count > 0 else {
@@ -82,16 +87,48 @@ public struct PCMJitterBuffer: Sendable {
                 output[index] = 0
                 continue
             }
-            output[index] = Float(storage[readIndex]) / Float(Int16.max)
-            readIndex = (readIndex + 1) % storage.count
-            count -= 1
-            consumed += 1
+            output[index] = pop()
         }
+        endRead(ranOut: ranOut)
+    }
+
+    /// ステレオでためた音を、左右に分けて埋める。
+    public mutating func read(left: UnsafeMutableBufferPointer<Float>, right: UnsafeMutableBufferPointer<Float>) {
+        beginIfFilled()
+        var ranOut = false
+        for index in 0 ..< min(left.count, right.count) {
+            guard isPlaying, count >= 2 else {
+                ranOut = ranOut || isPlaying
+                left[index] = 0
+                right[index] = 0
+                continue
+            }
+            left[index] = pop()
+            right[index] = pop()
+        }
+        endRead(ranOut: ranOut)
+    }
+
+    private mutating func beginIfFilled() {
+        if !isPlaying, count >= startThreshold {
+            isPlaying = true
+        }
+    }
+
+    private mutating func pop() -> Float {
+        let sample = Float(storage[readIndex]) / Float(Int16.max)
+        readIndex = (readIndex + 1) % storage.count
+        count -= 1
+        consumed += 1
+        return sample
+    }
+
+    private mutating func endRead(ranOut: Bool) {
         if ranOut {
             underruns += 1
         }
         // 途切れたら、またたまるまで待つ
-        if count == 0 {
+        if count < channelCount {
             isPlaying = false
         }
     }

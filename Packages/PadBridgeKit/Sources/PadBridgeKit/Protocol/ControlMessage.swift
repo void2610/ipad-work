@@ -81,6 +81,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case requestKeyFrame
     /// iPad から Mac へ。映像として送ってほしい画面の範囲。拡大している間は見えている範囲だけを高い解像度で送ってもらう。
     case videoRegion(VideoRegion)
+    /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。
+    case macAudio(isEnabled: Bool)
     // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする
     /// 補助アプリが Host につないだら最初に送る。Host が起動時に渡した合言葉で、他のプロセスからの接続と見分ける。
     case microphoneRelayHello(token: String)
