@@ -4,17 +4,17 @@ import Network
 import os
 import PadBridgeKit
 
+/// 補助アプリが作る入力デバイス。
+nonisolated enum PadMicrophoneDevice {
+    static let uid = "dev.void2610.padbridge.ipad-mic"
+    static let name = "PadBridge iPad マイク"
+}
+
 /// 補助アプリ「PadBridge マイク」を起動し、iPad のマイクの音を渡す。補助アプリがそれを Mac の入力デバイスとして見せる。
 /// 音を取り出すプロセスタップにはシステムオーディオの録音の許可が要るが、ターミナルから動かした Host では Ghostty の許可として求められて断られる。
 /// Host のバンドルの中の補助アプリを LaunchServices で起動すると、許可は PadBridge Host のものとして求められる。
 /// Host 自身をアプリとして起動し直す必要がないので、画面収録などの許可を取り直す間に画面が映らなくなることもない。
 /// HostServer のキューの上でだけ使う。
-/// 補助アプリが作る入力デバイス。
-enum PadMicrophoneDevice {
-    static let uid = "dev.void2610.padbridge.ipad-mic"
-    static let name = "PadBridge iPad マイク"
-}
-
 nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "microphone")
     // 補助アプリが応えないときに、Typeless の起動や完了を待たせ続けない

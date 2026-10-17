@@ -49,7 +49,8 @@ nonisolated final class RelayClient: @unchecked Sendable {
                         channel.send(.control(.microphoneRelayHello(token: token)))
                         microphone.start()
                     case .failed, .cancelled:
-                        self?.queue.async { self?.finish() }
+                        guard let self else { return }
+                        queue.async { self.finish() }
                     default:
                         break
                     }

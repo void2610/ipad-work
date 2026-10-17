@@ -19,7 +19,8 @@ public final class PadAudioConverter: @unchecked Sendable {
         let ratio = converter.outputFormat.sampleRate / converter.inputFormat.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else { return nil }
-        var consumed = false
+        // 入力のブロックは convert の中で同じスレッドから呼ばれる
+        nonisolated(unsafe) var consumed = false
         var error: NSError?
         converter.convert(to: output, error: &error) { _, status in
             if consumed {
