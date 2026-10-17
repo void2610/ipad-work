@@ -25,6 +25,23 @@ struct RemoteKeysTests {
         #expect(events[3].flags == 0x100)
     }
 
+    /// キーボード上の列の英数・かなが、Mac の JIS キーボードの英数キー・かなキーになること。
+    @Test func eisuAndKanaBecomeJISKeys() {
+        let eisu = MacKeyEvent(usage: 0x91, isDown: true, modifiers: [])
+        let kana = MacKeyEvent(usage: 0x90, isDown: true, modifiers: [])
+        #expect(eisu?.keyCode == 0x66)
+        #expect(kana?.keyCode == 0x68)
+        #expect(eisu?.isFlagsChanged == false)
+        #expect(kana?.flags == 0x100)
+    }
+
+    /// キーボード上の列の esc・Tab が、修飾キーなしでそのまま届くこと。
+    @Test func escapeAndTabAreSentAsPlainKeys() {
+        #expect(MacKeyEvent(usage: 0x29, isDown: true, modifiers: [])?.keyCode == 0x35)
+        #expect(MacKeyEvent(usage: 0x2B, isDown: true, modifiers: [])?.keyCode == 0x30)
+        #expect(RemoteKeys.withModifiers([], RemoteKeys.tap(usage: 0x29)) == RemoteKeys.tap(usage: 0x29))
+    }
+
     @Test func plainArrowCarriesFunctionAndKeypadFlags() {
         let event = MacKeyEvent(usage: KeyboardMapping.ArrowUsage.left, isDown: true, modifiers: [])
         #expect(event?.keyCode == 0x7B)
