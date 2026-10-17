@@ -42,6 +42,19 @@ struct RemoteKeysTests {
         #expect(RemoteKeys.withModifiers([], RemoteKeys.tap(usage: 0x29)) == RemoteKeys.tap(usage: 0x29))
     }
 
+    /// Dock を出すのは Control を押したままの F3。F3 には実際のキーボードと同じく Fn のビットが付く。
+    @Test func focusDockIsControlF3() {
+        #expect(RemoteKeys.focusDock() == [
+            .key(usage: 0xE0, isDown: true, modifiers: [.control]),
+            .key(usage: 0x3C, isDown: true, modifiers: [.control]),
+            .key(usage: 0x3C, isDown: false, modifiers: [.control]),
+            .key(usage: 0xE0, isDown: false, modifiers: []),
+        ])
+        let f3 = MacKeyEvent(usage: 0x3C, isDown: true, modifiers: [.control])
+        #expect(f3?.keyCode == 0x63)
+        #expect(f3?.flags == 0x40101 | 0x800000)
+    }
+
     @Test func plainArrowCarriesFunctionAndKeypadFlags() {
         let event = MacKeyEvent(usage: KeyboardMapping.ArrowUsage.left, isDown: true, modifiers: [])
         #expect(event?.keyCode == 0x7B)

@@ -48,6 +48,37 @@ struct TouchInterpreterTests {
         #expect(actions == [.threeFingerSwipe(.left)])
     }
 
+    /// 画面の下端から上へ払うと、スクロールではなく Dock を出す操作になること。
+    @Test func swipeUpFromBottomEdgeShowsDock() {
+        var interpreter = TouchInterpreter()
+        interpreter.bottomEdge = 800
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 400, y: 790), time: 0)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 402, y: 775), time: 0.03).isEmpty)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 405, y: 750), time: 0.06) == [.bottomEdgeSwipe])
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 405, y: 600), time: 0.1).isEmpty)
+        #expect(interpreter.ended(touch: 1, at: CGPoint(x: 405, y: 600), time: 0.12).isEmpty)
+    }
+
+    /// 下端の近くでも、タップと横への払いはいつもどおりクリックとスクロールになること。
+    @Test func tapAndSideSwipeNearBottomEdgeStayNormal() {
+        var interpreter = TouchInterpreter()
+        interpreter.bottomEdge = 800
+        let point = CGPoint(x: 400, y: 790)
+        _ = interpreter.began(touch: 1, at: point, time: 0)
+        #expect(interpreter.ended(touch: 1, at: point, time: 0.1) == click(.left, at: point))
+        _ = interpreter.began(touch: 2, at: point, time: 1)
+        #expect(interpreter.moved(touch: 2, to: CGPoint(x: 440, y: 785), time: 1.1) == [.move(point), .scroll(dx: 40, dy: -5)])
+    }
+
+    /// 下端から離れたところで上へ払ったら、いつもどおりスクロールになること。
+    @Test func swipeUpAwayFromBottomEdgeScrolls() {
+        var interpreter = TouchInterpreter()
+        interpreter.bottomEdge = 800
+        let start = CGPoint(x: 400, y: 600)
+        _ = interpreter.began(touch: 1, at: start, time: 0)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 400, y: 560), time: 0.1) == [.move(start), .scroll(dx: 0, dy: -40)])
+    }
+
     @Test func movementDuringGraceIsKeptInFirstScroll() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)

@@ -15,6 +15,8 @@ public struct TouchInterpreter {
         case longPressRecognized
         /// 3 本指で払った。指が動いた向き。
         case threeFingerSwipe(SwipeDirection)
+        /// 画面の下端から上へ払った。iPad で Dock を出すのと同じ操作で、Mac の Dock を出す。
+        case bottomEdgeSwipe
     }
 
     public enum SwipeDirection: String, Codable, Equatable, Sendable {
@@ -26,7 +28,7 @@ public struct TouchInterpreter {
 
     private enum State {
         case idle
-        case pending(touch: Int, start: CGPoint, startTime: TimeInterval)
+        case pending(touch: Int, start: CGPoint, startTime: TimeInterval, fromBottomEdge: Bool)
         case longPressed(touch: Int, start: CGPoint)
         case dragging(touch: Int)
         case twoFingerPending(start: CGPoint, startTime: TimeInterval)
@@ -42,6 +44,10 @@ public struct TouchInterpreter {
     // 指を止めてから離したときに、慣性で流れないようにするための猶予
     public var flickTimeout: TimeInterval = 0.08
     public var threeFingerSwipeDistance: CGFloat = 50
+    /// 画面の下端の位置 (ビューの座標系)。ここから `bottomEdgeZone` 以内で触れ始めて上へ払うと `bottomEdgeSwipe` になる。
+    public var bottomEdge: CGFloat = .infinity
+    public var bottomEdgeZone: CGFloat = 24
+    public var bottomEdgeSwipeDistance: CGFloat = 30
     // 複数の指は同時には着地しないので、1 本目が動いてもしばらくは 1 本指のスクロールと決めずに他の指を待つ
     public var multiFingerGrace: TimeInterval = 0.08
 
@@ -64,7 +70,7 @@ public struct TouchInterpreter {
         }
         switch state {
         case .idle:
-            state = .pending(touch: id, start: point, startTime: time)
+            state = .pending(touch: id, start: point, startTime: time, fromBottomEdge: point.y >= bottomEdge - bottomEdgeZone)
         case .pending, .longPressed:
             guard touches.count == 2 else { return [] }
             state = .twoFingerPending(start: centroid, startTime: time)
@@ -81,8 +87,15 @@ public struct TouchInterpreter {
         guard touches[id] != nil else { return [] }
         touches[id] = point
         switch state {
-        case let .pending(touch, start, startTime):
-            guard touch == id, distance(start, point) > slop, time - startTime >= multiFingerGrace else { return [] }
+        case let .pending(touch, start, startTime, fromBottomEdge):
+            guard touch == id, distance(start, point) > slop else { return [] }
+            // 下端から上へ向かう間は、スクロールと決めずに払いきるのを待つ
+            if fromBottomEdge, start.y - point.y > abs(point.x - start.x) {
+                guard start.y - point.y >= bottomEdgeSwipeDistance else { return [] }
+                state = .ignoring
+                return [.bottomEdgeSwipe]
+            }
+            guard time - startTime >= multiFingerGrace else { return [] }
             velocity = .zero
             state = .scrolling(last: point, lastTime: time)
             // スクロールはカーソルの下にあるものに効くので、先に指の位置へカーソルを移す
@@ -126,7 +139,7 @@ public struct TouchInterpreter {
     public mutating func ended(touch id: Int, at point: CGPoint, time: TimeInterval) -> [Action] {
         guard touches.removeValue(forKey: id) != nil else { return [] }
         switch state {
-        case let .pending(touch, start, _) where touch == id:
+        case let .pending(touch, start, _, _) where touch == id:
             state = .ignoring
             // 待っている間に払いきって離した場合は、タップではなくスクロールとして送る
             guard distance(start, point) <= slop else {
@@ -173,7 +186,7 @@ public struct TouchInterpreter {
     }
 
     public mutating func longPressTimerFired() -> [Action] {
-        guard case let .pending(touch, start, _) = state else { return [] }
+        guard case let .pending(touch, start, _, _) = state else { return [] }
         state = .longPressed(touch: touch, start: start)
         return [.longPressRecognized]
     }

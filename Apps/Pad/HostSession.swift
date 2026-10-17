@@ -88,6 +88,10 @@ final class HostSession {
         send(.desktopSwipe(direction))
     }
 
+    func showDock() {
+        RemoteKeys.focusDock().forEach(send)
+    }
+
     /// Command+Tab のアプリ切り替え。タップのたびに次のアプリへ進み、1 秒タップがなければ確定する。
     func switchApp() {
         appSwitcher.tap(at: ProcessInfo.processInfo.systemUptime).forEach(send)

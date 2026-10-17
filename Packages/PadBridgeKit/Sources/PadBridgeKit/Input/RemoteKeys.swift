@@ -23,6 +23,7 @@ public enum RemoteKeys {
     public static let leftControl = 0xE0
     public static let leftCommand = 0xE3
     public static let tab = 0x2B
+    public static let f3 = 0x3C
 
     public static func tap(usage: Int, modifiers: KeyModifiers = []) -> [ControlMessage] {
         [.key(usage: usage, isDown: true, modifiers: modifiers), .key(usage: usage, isDown: false, modifiers: modifiers)]
@@ -30,8 +31,18 @@ public enum RemoteKeys {
 
     /// Control を押したまま矢印キーを押す。トラックパッドの 3 本指スワイプと同じく、デスクトップの切り替えや Mission Control になる。
     public static func controlArrow(usage: Int) -> [ControlMessage] {
+        withControl(tap(usage: usage, modifiers: [.control]))
+    }
+
+    /// macOS の「Dock にフォーカスを移動」(既定は Control+F3)。Dock を自動的に隠していても出てくる。
+    /// iPad の指ではカーソルを画面の下端に置いたままにできず、Dock を出せないため、こちらで出す。
+    public static func focusDock() -> [ControlMessage] {
+        withControl(tap(usage: f3, modifiers: [.control]))
+    }
+
+    private static func withControl(_ messages: [ControlMessage]) -> [ControlMessage] {
         [.key(usage: leftControl, isDown: true, modifiers: [.control])]
-            + tap(usage: usage, modifiers: [.control])
+            + messages
             + [.key(usage: leftControl, isDown: false, modifiers: [])]
     }
 }

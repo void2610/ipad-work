@@ -11,6 +11,7 @@ struct RemoteScreenView: UIViewRepresentable {
         view.send = { [weak session] message in session?.send(message) }
         view.sendPointer = { [weak session] messages in session?.sendPointer(messages) }
         view.onThreeFingerSwipe = { [weak session] direction in session?.swipeDesktop(direction) }
+        view.onBottomEdgeSwipe = { [weak session] in session?.showDock() }
         return view
     }
 
@@ -24,6 +25,7 @@ final class RemoteScreenUIView: UIView {
     var send: ((ControlMessage) -> Void)?
     var sendPointer: (([ControlMessage]) -> Void)?
     var onThreeFingerSwipe: ((TouchInterpreter.SwipeDirection) -> Void)?
+    var onBottomEdgeSwipe: (() -> Void)?
     var videoSize = CGSize.zero
 
     private let displayLayer: AVSampleBufferDisplayLayer
@@ -72,6 +74,12 @@ final class RemoteScreenUIView: UIView {
         CATransaction.setDisableActions(true)
         displayLayer.frame = bounds
         CATransaction.commit()
+        // キーボードの上に縮んでいる間は、ビューの下端は画面の下端ではないので、下端からの払いを受けない
+        if let window, convert(bounds, to: window).maxY >= window.bounds.maxY - 1 {
+            interpreter.bottomEdge = bounds.maxY
+        } else {
+            interpreter.bottomEdge = .infinity
+        }
     }
 
     // MARK: - 座標
@@ -183,6 +191,8 @@ final class RemoteScreenUIView: UIView {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             case let .threeFingerSwipe(direction):
                 onThreeFingerSwipe?(direction)
+            case .bottomEdgeSwipe:
+                onBottomEdgeSwipe?()
             }
         }
     }
