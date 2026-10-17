@@ -11,6 +11,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var pressedKeys: Set<UInt16> = []
     private var scrollRemainder = CGPoint.zero
     private var location = CGPoint.zero
+    private var isVoiceInputActive = false
 
     init(doubleClickInterval: TimeInterval) {
         // iPad の指は狙った位置から数ポイントずれるので、Mac のマウスより判定を緩める
@@ -27,6 +28,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
             scroll(dx: dx, dy: dy)
         case let .key(usage, isDown, modifiers):
             key(usage: usage, isDown: isDown, modifiers: modifiers)
+        case let .voiceInput(isActive):
+            setVoiceInput(isActive)
         default:
             break
         }
@@ -34,6 +37,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
 
     /// 接続が切れたときに、押しっぱなしのボタンやキーが残らないよう全部離す。
     func releaseAll() {
+        setVoiceInput(false)
         for button in pressedButtons {
             press(button, isDown: false, at: location)
         }
@@ -41,6 +45,41 @@ nonisolated final class InputInjector: @unchecked Sendable {
             postKey(keyCode, isDown: false, flags: [])
         }
         pressedKeys.removeAll()
+    }
+
+    /// Typeless の音声入力を始める (true) / 終える (false)。
+    /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、押し続けると使い方の案内が出るだけなので、短く 1 回押す。
+    private func setVoiceInput(_ isActive: Bool) {
+        guard isVoiceInputActive != isActive else { return }
+        isVoiceInputActive = isActive
+        // Typeless 側でショートカットを変えても追従できるよう、押すたびに設定を読み直す
+        let shortcut = Self.typelessPushToTalk()
+        post(shortcut.events(isDown: true))
+        Thread.sleep(forTimeInterval: 0.05)
+        post(shortcut.events(isDown: false))
+    }
+
+    private func post(_ events: [TypelessShortcut.KeyEvent]) {
+        for keyEvent in events {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyEvent.keyCode, keyDown: keyEvent.isDown) else { continue }
+            if keyEvent.isModifier {
+                event.type = .flagsChanged
+            }
+            event.flags = CGEventFlags(rawValue: keyEvent.flags)
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// Typeless の設定ファイルを読むだけで、書き換えはしない。読めなければ Typeless の既定 (LeftCtrl+Fn) を使う。
+    private static func typelessPushToTalk() -> TypelessShortcut {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Typeless/app-settings.json")
+        guard let data = try? Data(contentsOf: url),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let shortcuts = settings["keyboardShortcut"] as? [String: Any],
+              let text = shortcuts["pushToTalk"] as? String,
+              let shortcut = TypelessShortcut(text)
+        else { return .typelessDefault }
+        return shortcut
     }
 
     private func screenPoint(_ point: NormalizedPoint) -> CGPoint {

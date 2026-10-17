@@ -11,6 +11,7 @@ struct WireMessageTests {
         .scroll(dx: -0.01, dy: 0.02),
         .key(usage: 0x28, isDown: true, modifiers: [.command, .shift]),
         .insertText("こんにちは、世界 👋"),
+        .voiceInput(isActive: true),
         .requestKeyFrame,
     ])
     func controlMessageRoundTrips(message: ControlMessage) throws {

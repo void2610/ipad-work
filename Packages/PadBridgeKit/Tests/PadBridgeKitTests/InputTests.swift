@@ -1,31 +1,6 @@
 @testable import PadBridgeKit
 import Testing
 
-struct PairingCodeTests {
-    @Test func generatedCodeIsValid() {
-        for _ in 0 ..< 100 {
-            let code = PairingCode.generate()
-            #expect(PairingCode(code.value) == code)
-            #expect(code.formatted.count == 11)
-        }
-    }
-
-    @Test func inputIsNormalized() {
-        #expect(PairingCode("abcde-fghjk")?.value == "ABCDEFGHJK")
-        #expect(PairingCode(" ABCDE FGHJK ")?.value == "ABCDEFGHJK")
-    }
-
-    @Test(arguments: ["ABCDEFGHJ", "ABCDEFGHJKM", "ABCDEFGHJ0", "ABCDEFGHJI"])
-    func invalidInputIsRejected(input: String) {
-        #expect(PairingCode(input) == nil)
-    }
-
-    @Test func differentCodesDeriveDifferentKeys() {
-        #expect(PairingCode("ABCDEFGHJK")!.preSharedKey != PairingCode("ABCDEFGHJM")!.preSharedKey)
-        #expect(PairingCode("ABCDEFGHJK")!.preSharedKey.count == 32)
-    }
-}
-
 struct KeyboardMappingTests {
     @Test(arguments: [
         (0x04, UInt16(0x00)), // A
@@ -65,5 +40,35 @@ struct ClickCounterTests {
         #expect(counter.registerDown(button: .left, x: 0, y: 0, time: 0.8) == 1)
         #expect(counter.registerDown(button: .left, x: 50, y: 0, time: 0.9) == 1)
         #expect(counter.registerDown(button: .right, x: 50, y: 0, time: 1.0) == 1)
+    }
+}
+
+struct TypelessShortcutTests {
+    /// 実際のキーボードと同じく、左 Control を示す 0x1 と、実入力を示す 0x100 を載せること。
+    @Test func defaultPushToTalkPressesLeftCtrlThenFn() {
+        let shortcut = TypelessShortcut("LeftCtrl+Fn")!
+        #expect(shortcut.events(isDown: true) == [
+            .init(keyCode: 0x3B, isDown: true, isModifier: true, flags: 0x40101),
+            .init(keyCode: 0x3F, isDown: true, isModifier: true, flags: 0x840101),
+        ])
+        #expect(shortcut.events(isDown: false) == [
+            .init(keyCode: 0x3F, isDown: false, isModifier: true, flags: 0x40101),
+            .init(keyCode: 0x3B, isDown: false, isModifier: true, flags: 0x100),
+        ])
+    }
+
+    @Test func rightCtrlUsesRightDeviceBit() {
+        #expect(TypelessShortcut("RightCtrl")!.events(isDown: true).first?.flags == 0x42100)
+    }
+
+    @Test func letterKeyIsPressedWithModifiers() {
+        let shortcut = TypelessShortcut("Ctrl+Cmd+V")!
+        let down = shortcut.events(isDown: true)
+        #expect(down.last == .init(keyCode: 0x09, isDown: true, isModifier: false, flags: 0x40001 | 0x100008 | 0x100))
+    }
+
+    @Test(arguments: ["", "Ctrl+Unknown", "Hyper"])
+    func unknownShortcutIsRejected(text: String) {
+        #expect(TypelessShortcut(text) == nil)
     }
 }

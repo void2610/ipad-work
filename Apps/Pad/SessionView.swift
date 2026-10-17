@@ -10,22 +10,25 @@ struct SessionView: View {
         VStack(spacing: 0) {
             ZStack {
                 RemoteScreenView(session: session)
-                if session.phase == .connecting {
+                switch session.phase {
+                case .connecting:
                     ProgressView("\(session.host.name) に接続中…")
                         .tint(.white)
                         .foregroundStyle(.white)
+                case .reconnecting:
+                    ProgressView("\(session.host.name) に再接続中…")
+                        .tint(.white)
+                        .foregroundStyle(.white)
+                        .padding()
+                        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+                case .connected:
+                    EmptyView()
                 }
                 VStack {
                     if let notice = permissionNotice {
                         Banner(text: notice, systemImage: "exclamationmark.triangle.fill")
                     }
-                    if let error = model.dictation.errorMessage {
-                        Banner(text: error, systemImage: "mic.slash.fill")
-                    }
                     Spacer()
-                    if model.dictation.state != .idle {
-                        DictationPreview(dictation: model.dictation)
-                    }
                 }
                 .padding()
             }
@@ -52,9 +55,7 @@ struct SessionView: View {
                 .onSubmit(sendDraft)
             Button("送信", action: sendDraft)
                 .disabled(draft.isEmpty)
-            DictationButton(dictation: model.dictation) { text in
-                session.send(.insertText(text))
-            }
+            TypelessButton(session: session)
         }
         .buttonStyle(.bordered)
         .padding(.horizontal, 12)
@@ -101,27 +102,5 @@ private struct Banner: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(.regularMaterial, in: Capsule())
-    }
-}
-
-private struct DictationPreview: View {
-    let dictation: DictationController
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "waveform")
-                .symbolEffect(.variableColor.iterative, isActive: dictation.state == .listening)
-            Text(previewText)
-                .lineLimit(3)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var previewText: String {
-        if let status = dictation.statusMessage { return status }
-        if dictation.transcript.isEmpty { return dictation.state == .listening ? "話してください…" : "準備中…" }
-        return dictation.transcript
     }
 }

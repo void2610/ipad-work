@@ -55,5 +55,7 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     /// `usage` は USB HID の Keyboard/Keypad ページの usage。
     case key(usage: Int, isDown: Bool, modifiers: KeyModifiers)
     case insertText(String)
+    /// Mac の Typeless で音声入力を始める (true) か、終える (false) か。
+    case voiceInput(isActive: Bool)
     case requestKeyFrame
 }
