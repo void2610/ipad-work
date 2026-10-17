@@ -26,7 +26,7 @@ public struct TouchInterpreter {
 
     private enum State {
         case idle
-        case pending(touch: Int, start: CGPoint)
+        case pending(touch: Int, start: CGPoint, startTime: TimeInterval)
         case longPressed(touch: Int, start: CGPoint)
         case dragging(touch: Int)
         case twoFingerPending(start: CGPoint, startTime: TimeInterval)
@@ -42,6 +42,8 @@ public struct TouchInterpreter {
     // 指を止めてから離したときに、慣性で流れないようにするための猶予
     public var flickTimeout: TimeInterval = 0.08
     public var threeFingerSwipeDistance: CGFloat = 50
+    // 複数の指は同時には着地しないので、1 本目が動いてもしばらくは 1 本指のスクロールと決めずに他の指を待つ
+    public var multiFingerGrace: TimeInterval = 0.08
 
     private var state = State.idle
     private var touches: [Int: CGPoint] = [:]
@@ -62,7 +64,7 @@ public struct TouchInterpreter {
         }
         switch state {
         case .idle:
-            state = .pending(touch: id, start: point)
+            state = .pending(touch: id, start: point, startTime: time)
         case .pending, .longPressed:
             guard touches.count == 2 else { return [] }
             state = .twoFingerPending(start: centroid, startTime: time)
@@ -79,8 +81,8 @@ public struct TouchInterpreter {
         guard touches[id] != nil else { return [] }
         touches[id] = point
         switch state {
-        case let .pending(touch, start):
-            guard touch == id, distance(start, point) > slop else { return [] }
+        case let .pending(touch, start, startTime):
+            guard touch == id, distance(start, point) > slop, time - startTime >= multiFingerGrace else { return [] }
             velocity = .zero
             state = .scrolling(last: point, lastTime: time)
             // スクロールはカーソルの下にあるものに効くので、先に指の位置へカーソルを移す
@@ -124,8 +126,13 @@ public struct TouchInterpreter {
     public mutating func ended(touch id: Int, at point: CGPoint, time: TimeInterval) -> [Action] {
         guard touches.removeValue(forKey: id) != nil else { return [] }
         switch state {
-        case let .pending(touch, start) where touch == id:
+        case let .pending(touch, start, _) where touch == id:
             state = .ignoring
+            // 待っている間に払いきって離した場合は、タップではなくスクロールとして送る
+            guard distance(start, point) <= slop else {
+                state = .idle
+                return [.move(start), .scroll(dx: point.x - start.x, dy: point.y - start.y), .scrollEnded(velocityX: 0, velocityY: 0)]
+            }
             return click(.left, at: start) + finishIfAllLifted()
         case let .longPressed(touch, start) where touch == id:
             state = .ignoring
@@ -166,7 +173,7 @@ public struct TouchInterpreter {
     }
 
     public mutating func longPressTimerFired() -> [Action] {
-        guard case let .pending(touch, start) = state else { return [] }
+        guard case let .pending(touch, start, _) = state else { return [] }
         state = .longPressed(touch: touch, start: start)
         return [.longPressRecognized]
     }

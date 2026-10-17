@@ -25,9 +25,9 @@ struct TouchInterpreterTests {
     @Test func swipeWithoutLongPressScrolls() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)
-        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 130), time: 0.05) == [.move(a), .scroll(dx: 0, dy: 30)])
-        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.1) == [.scroll(dx: 0, dy: 20)])
-        let end = interpreter.ended(touch: 1, at: CGPoint(x: 100, y: 150), time: 0.12)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 130), time: 0.1) == [.move(a), .scroll(dx: 0, dy: 30)])
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.15) == [.scroll(dx: 0, dy: 20)])
+        let end = interpreter.ended(touch: 1, at: CGPoint(x: 100, y: 150), time: 0.17)
         guard case let .scrollEnded(_, velocityY) = end.first else {
             Issue.record("慣性の速さが出ない: \(end)")
             return
@@ -35,10 +35,37 @@ struct TouchInterpreterTests {
         #expect(velocityY > 0)
     }
 
+    /// 3 本指で払うとき、1 本目が先に動いても、他の指を待つ間はスクロールを送らないこと。
+    @Test func firstFingerMovingBeforeOthersLandDoesNotScroll() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 80, y: 300), time: 0.03).isEmpty)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.04)
+        _ = interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.05)
+        let actions = [(1, CGFloat(20)), (2, 70), (3, 120)].flatMap { id, x in
+            interpreter.moved(touch: id, to: CGPoint(x: x, y: 300), time: 0.12)
+        }
+        #expect(actions == [.threeFingerSwipe(.left)])
+    }
+
+    @Test func movementDuringGraceIsKeptInFirstScroll() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: a, time: 0)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 130), time: 0.03).isEmpty)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.1) == [.move(a), .scroll(dx: 0, dy: 50)])
+    }
+
+    @Test func quickFlickWithinGraceStillScrolls() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: a, time: 0)
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 160), time: 0.04)
+        #expect(interpreter.ended(touch: 1, at: CGPoint(x: 100, y: 160), time: 0.05) == [.move(a), .scroll(dx: 0, dy: 60), .scrollEnded(velocityX: 0, velocityY: 0)])
+    }
+
     @Test func swipeEndedAfterPauseHasNoMomentum() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)
-        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.05)
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.1)
         #expect(interpreter.ended(touch: 1, at: CGPoint(x: 100, y: 150), time: 0.6) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
@@ -78,9 +105,9 @@ struct TouchInterpreterTests {
     @Test func addingFingerDuringScrollDoesNotJump() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)
-        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 130), time: 0.05)
-        #expect(interpreter.began(touch: 2, at: CGPoint(x: 300, y: 300), time: 0.06).isEmpty)
-        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 140), time: 0.07) == [.scroll(dx: 0, dy: 5)])
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 130), time: 0.1)
+        #expect(interpreter.began(touch: 2, at: CGPoint(x: 300, y: 300), time: 0.11).isEmpty)
+        #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 140), time: 0.12) == [.scroll(dx: 0, dy: 5)])
     }
 
     @Test func quickTwoFingerTapIsRightClickAtCentroid() {
@@ -173,9 +200,9 @@ struct ThreeFingerSwipeTests {
     @Test func thirdFingerDuringScrollEndsScrollAndWaitsForSwipe() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
-        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 340), time: 0.05)
-        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.06)
-        #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.07) == [.scrollEnded(velocityX: 0, velocityY: 0)])
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 340), time: 0.1)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.11)
+        #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.12) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
     /// 左へ払うと右隣のスペースへ移る、トラックパッドと同じ向きにすること。
