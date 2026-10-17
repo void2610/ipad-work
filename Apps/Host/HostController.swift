@@ -15,6 +15,13 @@ final class HostController {
 
     init() {
         refreshPermissions()
+        // 初回起動で許可が足りなければ、メニューを開かなくても macOS の許可ダイアログを出す
+        if !canCaptureScreen {
+            requestScreenCapture()
+        }
+        if !canControlInput {
+            requestAccessibility()
+        }
         startServer()
         // システム設定で許可が変わっても通知が来ないので、表示用に定期的に読み直す
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
