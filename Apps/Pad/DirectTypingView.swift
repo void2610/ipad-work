@@ -2,7 +2,7 @@ import PadBridgeKit
 import SwiftUI
 import UIKit
 
-/// ソフトウェアキーボードで打った文字を、入力欄を通さずに 1 文字ずつ Mac へ送る見えない入力先。
+/// ソフトウェアキーボードで打ったキーを、そのまま Mac へ送る見えない入力先。日本語は Mac 側の日本語入力で変換する。
 struct DirectTypingField: UIViewRepresentable {
     let session: HostSession
     @Binding var isActive: Bool
@@ -12,6 +12,7 @@ struct DirectTypingField: UIViewRepresentable {
         view.onText = { [weak session] text in session?.typeText(text) }
         view.onDeleteBackward = { [weak session] in session?.tapKey(usage: HIDUsage.backspace) }
         view.send = { [weak session] message in session?.send(message) }
+        view.accessoryBar = KeyAccessoryBar(session: session)
         return view
     }
 
@@ -34,6 +35,7 @@ final class DirectTypingUIView: UIView, UIKeyInput {
     var onDeleteBackward: (() -> Void)?
     var onResign: (() -> Void)?
     var send: ((ControlMessage) -> Void)?
+    var accessoryBar: UIView?
 
     // 打った内容を手元に持たないので、削除キーをいつでも受け付けるよう常に「文字あり」とする
     var hasText: Bool { true }
@@ -43,6 +45,12 @@ final class DirectTypingUIView: UIView, UIKeyInput {
     var smartQuotesType = UITextSmartQuotesType.no
     var smartDashesType = UITextSmartDashesType.no
     var smartInsertDeleteType = UITextSmartInsertDeleteType.no
+    // 打ったキーを Mac の日本語入力に渡すので、iPad 側では変換しない英字配列にする
+    var keyboardType = UIKeyboardType.asciiCapable
+
+    override var inputAccessoryView: UIView? {
+        accessoryBar
+    }
 
     override var canBecomeFirstResponder: Bool {
         true

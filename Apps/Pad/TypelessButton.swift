@@ -15,8 +15,8 @@ struct TypelessButton: UIViewRepresentable {
         button.isVoiceInputActive = session.isVoiceInputActive
     }
 
-    func sizeThatFits(_: ProposedViewSize, uiView button: PushToTalkButton, context _: Context) -> CGSize? {
-        button.intrinsicContentSize
+    func sizeThatFits(_: ProposedViewSize, uiView _: PushToTalkButton, context _: Context) -> CGSize? {
+        CGSize(width: 44, height: 44)
     }
 }
 
@@ -88,11 +88,11 @@ final class PushToTalkButton: UIButton {
     private func updateAppearance() {
         var configuration = UIButton.Configuration.filled()
         configuration.cornerStyle = .capsule
-        configuration.title = "Typeless"
-        configuration.image = UIImage(systemName: isVoiceInputActive ? "waveform" : "mic")
-        configuration.imagePadding = 6
+        configuration.image = UIImage(systemName: isVoiceInputActive ? "waveform" : "mic.fill")
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(weight: .semibold)
         configuration.baseBackgroundColor = isVoiceInputActive ? .systemRed : .tintColor
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
+        configuration.contentInsets = .zero
         self.configuration = configuration
+        accessibilityValue = isVoiceInputActive ? "聞き取り中" : nil
     }
 }
