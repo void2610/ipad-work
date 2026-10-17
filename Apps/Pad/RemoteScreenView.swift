@@ -23,12 +23,18 @@ final class RemoteScreenUIView: UIView {
     var videoSize = CGSize.zero
 
     private let displayLayer: AVSampleBufferDisplayLayer
+    private var interpreter = TouchInterpreter()
+    private var longPressTimer: DispatchWorkItem?
+    // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
+    private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
     private var lastScrollTranslation = CGPoint.zero
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
         super.init(frame: .zero)
         backgroundColor = .black
+        // 既定の false のままだと 2 本目の指が届かず、2 本指のスクロールが成立しない
+        isMultipleTouchEnabled = true
         displayLayer.videoGravity = .resizeAspect
         layer.addSublayer(displayLayer)
         installGestureRecognizers()
@@ -71,82 +77,116 @@ final class RemoteScreenUIView: UIView {
         return NormalizedPoint(x: (location.x - rect.minX) / rect.width, y: (location.y - rect.minY) / rect.height)
     }
 
-    // MARK: - ジェスチャー
+    // MARK: - タッチ
 
-    private func installGestureRecognizers() {
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-
-        let secondaryClick = UITapGestureRecognizer(target: self, action: #selector(handleSecondaryClick))
-        secondaryClick.buttonMaskRequired = .secondary
-
-        let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleSecondaryClick))
-        twoFingerTap.numberOfTouchesRequired = 2
-
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
-        longPress.minimumPressDuration = 0.5
-
-        let drag = UIPanGestureRecognizer(target: self, action: #selector(handleDrag))
-        drag.maximumNumberOfTouches = 1
-
-        let twoFingerScroll = UIPanGestureRecognizer(target: self, action: #selector(handleScroll))
-        twoFingerScroll.minimumNumberOfTouches = 2
-        twoFingerScroll.maximumNumberOfTouches = 2
-
-        // トラックパッドやマウスホイールのスクロールだけを受け、指のタッチは受けない
-        let pointerScroll = UIPanGestureRecognizer(target: self, action: #selector(handleScroll))
-        pointerScroll.allowedScrollTypesMask = .all
-        pointerScroll.allowedTouchTypes = []
-
-        let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
-
-        for recognizer in [tap, secondaryClick, twoFingerTap, longPress, drag, twoFingerScroll, pointerScroll, hover] {
-            addGestureRecognizer(recognizer)
-        }
-    }
-
-    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
-        // 入力欄を触ったあとでも、画面をタップすればハードウェアキーボードの入力を Mac に戻す
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // 入力欄を触ったあとでも、画面に触れればハードウェアキーボードの入力を Mac に戻す
         if !isFirstResponder {
             becomeFirstResponder()
         }
-        click(.left, at: normalized(recognizer.location(in: self)))
+        for touch in touches {
+            let location = touch.location(in: self)
+            if touch.type == .indirectPointer {
+                let button: MouseButton = event?.buttonMask.contains(.secondary) == true ? .right : .left
+                pointerButtons[ObjectIdentifier(touch)] = button
+                send?(.mouseMove(normalized(location)))
+                send?(.mouseButton(button, isDown: true, at: normalized(location)))
+            } else {
+                perform(interpreter.began(touch: Self.id(of: touch), at: location, time: touch.timestamp))
+            }
+        }
+        scheduleLongPressIfNeeded()
     }
 
-    @objc private func handleSecondaryClick(_ recognizer: UITapGestureRecognizer) {
-        click(.right, at: normalized(recognizer.location(in: self)))
+    override func touchesMoved(_ touches: Set<UITouch>, with _: UIEvent?) {
+        for touch in touches {
+            let location = touch.location(in: self)
+            if pointerButtons[ObjectIdentifier(touch)] != nil {
+                send?(.mouseMove(normalized(location)))
+            } else {
+                perform(interpreter.moved(touch: Self.id(of: touch), to: location))
+            }
+        }
+        scheduleLongPressIfNeeded()
     }
 
-    @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
-        guard recognizer.state == .began else { return }
-        click(.right, at: normalized(recognizer.location(in: self)))
+    override func touchesEnded(_ touches: Set<UITouch>, with _: UIEvent?) {
+        for touch in touches {
+            let location = touch.location(in: self)
+            if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
+                send?(.mouseButton(button, isDown: false, at: normalized(location)))
+            } else {
+                perform(interpreter.ended(touch: Self.id(of: touch), at: location, time: touch.timestamp))
+            }
+        }
+        scheduleLongPressIfNeeded()
     }
 
-    @objc private func handleDrag(_ recognizer: UIPanGestureRecognizer) {
-        let location = recognizer.location(in: self)
-        switch recognizer.state {
-        case .began:
-            // 認識されるまでに指は少し動いているので、触れた位置から押し始める
-            let translation = recognizer.translation(in: self)
-            let start = normalized(CGPoint(x: location.x - translation.x, y: location.y - translation.y))
-            send?(.mouseMove(start))
-            send?(.mouseButton(.left, isDown: true, at: start))
-            send?(.mouseMove(normalized(location)))
-        case .changed:
-            send?(.mouseMove(normalized(location)))
-        case .ended, .cancelled, .failed:
-            send?(.mouseButton(.left, isDown: false, at: normalized(location)))
-        default:
-            break
+    override func touchesCancelled(_ touches: Set<UITouch>, with _: UIEvent?) {
+        for touch in touches {
+            if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
+                send?(.mouseButton(button, isDown: false, at: normalized(touch.location(in: self))))
+            } else {
+                perform(interpreter.cancelled(touch: Self.id(of: touch)))
+            }
+        }
+        scheduleLongPressIfNeeded()
+    }
+
+    private func scheduleLongPressIfNeeded() {
+        guard interpreter.isWaitingForLongPress else {
+            longPressTimer?.cancel()
+            longPressTimer = nil
+            return
+        }
+        guard longPressTimer == nil else { return }
+        let timer = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            longPressTimer = nil
+            perform(interpreter.longPressTimerFired())
+        }
+        longPressTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + TouchInterpreter.longPressDuration, execute: timer)
+    }
+
+    private func perform(_ actions: [TouchInterpreter.Action]) {
+        let rect = videoRect
+        for action in actions {
+            switch action {
+            case let .move(point):
+                send?(.mouseMove(normalized(point)))
+            case let .press(button, isDown, point):
+                send?(.mouseButton(button, isDown: isDown, at: normalized(point)))
+            case let .scroll(dx, dy):
+                guard rect.width > 0, rect.height > 0 else { continue }
+                send?(.scroll(dx: dx / rect.width, dy: dy / rect.height))
+            case .longPressRecognized:
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            }
         }
     }
 
-    @objc private func handleScroll(_ recognizer: UIPanGestureRecognizer) {
+    private static func id(of touch: UITouch) -> Int {
+        ObjectIdentifier(touch).hashValue
+    }
+
+    // MARK: - ポインタのホバーとスクロール
+
+    private func installGestureRecognizers() {
+        // トラックパッドやマウスホイールのスクロールだけを受け、指のタッチは受けない
+        let pointerScroll = UIPanGestureRecognizer(target: self, action: #selector(handlePointerScroll))
+        pointerScroll.allowedScrollTypesMask = .all
+        pointerScroll.allowedTouchTypes = []
+        addGestureRecognizer(pointerScroll)
+        addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(handleHover)))
+    }
+
+    @objc private func handlePointerScroll(_ recognizer: UIPanGestureRecognizer) {
         let rect = videoRect
         guard rect.width > 0, rect.height > 0 else { return }
         switch recognizer.state {
         case .began:
             lastScrollTranslation = .zero
-            // スクロールはカーソルの下にあるものに効くので、先に指の位置へカーソルを移す
             send?(.mouseMove(normalized(recognizer.location(in: self))))
         case .changed:
             let translation = recognizer.translation(in: self)
@@ -162,12 +202,6 @@ final class RemoteScreenUIView: UIView {
     @objc private func handleHover(_ recognizer: UIHoverGestureRecognizer) {
         guard recognizer.state == .began || recognizer.state == .changed else { return }
         send?(.mouseMove(normalized(recognizer.location(in: self))))
-    }
-
-    private func click(_ button: MouseButton, at point: NormalizedPoint) {
-        send?(.mouseMove(point))
-        send?(.mouseButton(button, isDown: true, at: point))
-        send?(.mouseButton(button, isDown: false, at: point))
     }
 
     // MARK: - ハードウェアキーボード
