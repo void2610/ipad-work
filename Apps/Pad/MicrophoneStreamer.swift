@@ -114,10 +114,8 @@ private nonisolated final class LevelMeter: @unchecked Sendable {
         lock.withLock { level }
     }
 
-    /// 振れ幅を、話し声で見て分かるよう -50dB〜-10dB を 0〜1 に割り当てる。
     func update(peak: Float) {
-        let decibels = 20 * log10(max(peak, 1e-6))
-        let value = min(max((decibels + 50) / 40, 0), 1)
+        let value = PadAudio.level(peak: peak)
         lock.withLock { level = value }
     }
 

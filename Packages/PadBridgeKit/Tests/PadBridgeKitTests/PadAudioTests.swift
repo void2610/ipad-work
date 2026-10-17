@@ -19,6 +19,12 @@ struct PadAudioTests {
         #expect(values == [0, Int16.max, -Int16.max, Int16.max])
     }
 
+    /// -50dB 以下は 0、-10dB 以上は 1、その間はまっすぐ割り当てること。
+    @Test(arguments: [(Float(0), Float(0)), (0.00316, 0), (0.0316, 0.5), (0.316, 1), (1, 1)])
+    func levelMapsDecibelsToZeroOne(peak: Float, expected: Float) {
+        #expect(abs(PadAudio.level(peak: peak) - expected) < 0.01)
+    }
+
     @Test func audioRoundTripsOnTheWire() throws {
         let message = WireMessage.audio(encode([0.5, -0.25]))
         let encoded = try message.encoded()

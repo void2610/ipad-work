@@ -4,6 +4,12 @@ import Foundation
 public enum PadAudio {
     public static let sampleRate = 48_000
 
+    /// 振れ幅を、画面に出す声の大きさ (0...1) にする。話し声で見て分かるよう、-50dB〜-10dB を 0〜1 に割り当てる。
+    public static func level(peak: Float) -> Float {
+        let decibels = 20 * log10(max(peak, 1e-6))
+        return min(max((decibels + 50) / 40, 0), 1)
+    }
+
     /// -1...1 の浮動小数の音を、送るときの形 (16 ビットのリトルエンディアン) にする。範囲外は切り詰める。
     public static func encode(_ samples: UnsafeBufferPointer<Float>) -> Data {
         var data = Data(count: samples.count * 2)
