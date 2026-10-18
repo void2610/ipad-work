@@ -56,7 +56,6 @@ final class RemoteScreenUIView: UIView {
         didSet {
             guard oldValue != nil, displayID != oldValue else { return }
             regionRequestTimer?.invalidate()
-            stopMomentum()
             zoom = ScreenZoom()
             setNeedsLayout()
             // 替える前に待っていた拡大の範囲の頼みが先に送られていても、全体に戻させる
@@ -77,8 +76,6 @@ final class RemoteScreenUIView: UIView {
     // ペンやマウスのボタンを押している間に触れた指や手のひら。押したままのボタンに、指の位置への移動やクリックが割り込まないよう、離すまで無視する
     private var ignoredTouches: Set<ObjectIdentifier> = []
     private var lastScrollTranslation = CGPoint.zero
-    private var momentum: ScrollMomentum?
-    private var momentumLink: CADisplayLink?
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
@@ -209,8 +206,6 @@ final class RemoteScreenUIView: UIView {
         if !isFirstResponder, !DirectTypingUIView.isTyping {
             becomeFirstResponder()
         }
-        // 慣性で流れている途中に触れたら、iPad と同じくその場で止める
-        stopMomentum()
         for touch in touches {
             let location = touch.location(in: self)
             // Apple Pencil は Sidecar と同じく、触れたところを押してそのまま動かすとドラッグにする (指で払うのはスクロールのまま)
@@ -295,8 +290,9 @@ final class RemoteScreenUIView: UIView {
             case let .scroll(dx, dy):
                 guard rect.width > 0, rect.height > 0 else { continue }
                 pointerMessages.append(.scroll(dx: dx / rect.width, dy: dy / rect.height))
-            case let .scrollEnded(velocityX, velocityY):
-                startMomentum(velocityX: velocityX, velocityY: velocityY)
+            case .scrollEnded:
+                // 指を離したら止める。慣性で流すと、映像の遅れの分だけ見えている位置より先まで流れ、思った位置で止められない
+                break
             case .longPressRecognized:
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             case let .threeFingerSwipe(direction):
@@ -321,35 +317,6 @@ final class RemoteScreenUIView: UIView {
                 self.onRegionRequest?(region)
             }
         }
-    }
-
-    private func startMomentum(velocityX: CGFloat, velocityY: CGFloat) {
-        let momentum = ScrollMomentum(velocityX: velocityX, velocityY: velocityY)
-        guard !momentum.isFinished else { return }
-        self.momentum = momentum
-        let link = CADisplayLink(target: self, selector: #selector(stepMomentum))
-        link.add(to: .main, forMode: .common)
-        momentumLink = link
-    }
-
-    @objc private func stepMomentum(_ link: CADisplayLink) {
-        let rect = videoRect
-        guard var momentum, rect.width > 0, rect.height > 0 else {
-            stopMomentum()
-            return
-        }
-        let delta = momentum.step(interval: link.targetTimestamp - link.timestamp)
-        self.momentum = momentum
-        sendPointer?([.scroll(dx: delta.dx / rect.width, dy: delta.dy / rect.height)])
-        if momentum.isFinished {
-            stopMomentum()
-        }
-    }
-
-    private func stopMomentum() {
-        momentumLink?.invalidate()
-        momentumLink = nil
-        momentum = nil
     }
 
     private static func id(of touch: UITouch) -> Int {

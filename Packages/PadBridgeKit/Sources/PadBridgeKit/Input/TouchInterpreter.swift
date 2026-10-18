@@ -264,28 +264,3 @@ public struct TouchInterpreter {
         [.move(point), .press(button, isDown: true, at: point), .press(button, isDown: false, at: point)]
     }
 }
-
-/// 指を離したあとの慣性スクロール。指で弾いたときの速さから、毎フレーム減速しながら移動量を出す。
-public struct ScrollMomentum: Sendable {
-    // 1 秒あたりに残る速さの割合。iPad の標準のスクロールに近い減速にしている
-    public var decayPerSecond: CGFloat = 0.04
-    public var minimumSpeed: CGFloat = 30
-    private(set) public var velocity: CGVector
-
-    public init(velocityX: CGFloat, velocityY: CGFloat) {
-        velocity = CGVector(dx: velocityX, dy: velocityY)
-    }
-
-    public var isFinished: Bool {
-        hypot(velocity.dx, velocity.dy) < minimumSpeed
-    }
-
-    /// 経過時間ぶんの移動量を返し、そのぶん減速する。
-    public mutating func step(interval: TimeInterval) -> CGVector {
-        guard !isFinished, interval > 0 else { return .zero }
-        let delta = CGVector(dx: velocity.dx * interval, dy: velocity.dy * interval)
-        let factor = pow(decayPerSecond, CGFloat(interval))
-        velocity = CGVector(dx: velocity.dx * factor, dy: velocity.dy * factor)
-        return delta
-    }
-}

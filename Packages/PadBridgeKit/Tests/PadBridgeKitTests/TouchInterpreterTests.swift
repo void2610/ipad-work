@@ -275,32 +275,6 @@ struct ThreeFingerSwipeTests {
     }
 }
 
-struct ScrollMomentumTests {
-    @Test func momentumDeceleratesAndStops() {
-        var momentum = ScrollMomentum(velocityX: 0, velocityY: 2000)
-        var total: CGFloat = 0
-        var previous = CGFloat.infinity
-        var frames = 0
-        while !momentum.isFinished, frames < 600 {
-            let step = momentum.step(interval: 1.0 / 60).dy
-            #expect(step > 0 && step < previous)
-            previous = step
-            total += step
-            frames += 1
-        }
-        #expect(momentum.isFinished)
-        // 2000 pt/秒で弾いたら、数百 pt 流れて 2 秒以内に止まる
-        #expect(total > 300 && total < 1000)
-        #expect(frames < 120)
-    }
-
-    @Test func slowFlickDoesNotMove() {
-        var momentum = ScrollMomentum(velocityX: 10, velocityY: 10)
-        #expect(momentum.isFinished)
-        #expect(momentum.step(interval: 1.0 / 60) == .zero)
-    }
-}
-
 struct PinchTests {
     /// 2 本指を広げると拡大になり、スクロールは送らないこと。
     @Test func spreadingTwoFingersZooms() {

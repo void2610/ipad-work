@@ -13,7 +13,7 @@ struct GestureGuideView: View {
     private static let sections: [(title: String, items: [Item])] = [
         ("指", [
             Item(gesture: "1 本指でタップ", action: "クリック (続けてタップするとダブルクリック)"),
-            Item(gesture: "1 本指で払う・2 本指で動かす", action: "スクロール (離したあとは慣性で流れる)"),
+            Item(gesture: "1 本指で払う・2 本指で動かす", action: "スクロール (指を離すと止まる)"),
             Item(gesture: "長押ししてから動かす", action: "ドラッグ"),
             Item(gesture: "長押しして離す・2 本指で短くタップ", action: "右クリック"),
             Item(gesture: "2 本指で広げる・縮める", action: "iPad の上で拡大・縮小 (5 倍まで。縮めきると等倍)"),
