@@ -38,6 +38,8 @@ final class HostSession {
     /// Mac が 2 秒ごとに送る映像の状態と、その間に iPad に届いた映像の枚数と量。「接続の状態」に出す。
     private(set) var videoStats: VideoStats?
     private(set) var receivedRate: (framesPerSecond: Double, megabitsPerSecond: Double)?
+    /// Mac とつながっている経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信か)。状態が届くたびに読み直す。
+    private(set) var route: String?
     private let receiveMeter = ReceiveRateMeter()
     // Mac に頼んだ毎秒の枚数。Mac はつながるたびに 60 から始める
     private var requestedFrameRate = PreferredFrameRate.normal
@@ -231,6 +233,7 @@ final class HostSession {
     private func clearVideoStats() {
         videoStats = nil
         receivedRate = nil
+        route = nil
         receiveMeter.reset()
     }
 
@@ -503,6 +506,7 @@ final class HostSession {
             guard video != nil else { break }
             videoStats = stats
             receivedRate = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
+            route = control?.connection.currentPath?.availableInterfaces.first.map { ConnectionRoute.label(interfaceName: $0.name, type: $0.type) }
         case let .videoQuality(isReduced):
             // 映像がぼやけたり戻ったりした理由が分かるように
             let notice = isReduced
