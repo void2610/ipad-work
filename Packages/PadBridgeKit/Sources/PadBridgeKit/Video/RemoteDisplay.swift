@@ -79,6 +79,16 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         return (displays.first { $0.placement == .main } ?? displays.first)?.id
     }
 
+    /// ウィンドウが載っている画面。画面をまたいでいるときは、重なりの一番大きい画面にする。どの画面にも重ならなければ nil。
+    public static func showing(window: CGRect, displays: [UInt32: CGRect]) -> UInt32? {
+        let overlaps = displays.compactMap { id, bounds -> (id: UInt32, area: CGFloat)? in
+            let shared = window.intersection(bounds)
+            guard !shared.isNull, shared.width > 0, shared.height > 0 else { return nil }
+            return (id, shared.width * shared.height)
+        }
+        return overlaps.max { ($0.area, $1.id) < ($1.area, $0.id) }?.id
+    }
+
     /// 中心どうしのずれが大きい向きで、上下か左右かを決める。
     static func placement(of bounds: CGRect, from main: CGRect) -> Placement {
         let dx = bounds.midX - main.midX

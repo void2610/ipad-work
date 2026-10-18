@@ -32,6 +32,16 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.placement(of: bounds, from: main.bounds) == placement)
     }
 
+    /// 前に出たウィンドウの画面を映す。またいでいれば重なりの大きい方、どこにも重ならなければ追わない。
+    @Test func findsDisplayShowingWindow() {
+        let displays: [UInt32: CGRect] = [15: CGRect(x: -1920, y: 0, width: 1920, height: 1080), 16: main.bounds]
+        #expect(RemoteDisplay.showing(window: CGRect(x: -1500, y: 100, width: 800, height: 600), displays: displays) == 15)
+        #expect(RemoteDisplay.showing(window: CGRect(x: -300, y: 100, width: 1200, height: 600), displays: displays) == 16)
+        #expect(RemoteDisplay.showing(window: CGRect(x: -700, y: 0, width: 1200, height: 600), displays: displays) == 15)
+        #expect(RemoteDisplay.showing(window: CGRect(x: 2000, y: 0, width: 100, height: 100), displays: displays) == nil)
+        #expect(RemoteDisplay.showing(window: CGRect(x: -100, y: 0, width: 200, height: 100), displays: displays) == 15)
+    }
+
     /// 選んだ画面が外れたらメインを映し、つなぎ直されたらまた選んだ画面を映す。
     @Test func showsPreferredDisplayWhileConnectedElseMain() {
         let both = [RemoteDisplay(id: 15, name: "A", placement: .left), RemoteDisplay(id: 16, name: "B", placement: .main)]
