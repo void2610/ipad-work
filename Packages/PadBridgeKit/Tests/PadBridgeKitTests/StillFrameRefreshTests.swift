@@ -1,0 +1,127 @@
+@testable import PadBridgeKit
+import Testing
+
+struct StillFrameRefreshTests {
+    /// 画面が動いている間 (取り込むたびに) は送り直さず、止まってから少し待って送り直す。
+    @Test func waitsUntilScreenStops() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        #expect(refresh.deadline == StillFrameRefresh.delay)
+        let fired1 = refresh.fire(at: 0.1, canSend: true, presentationTimeMicros: 1)
+        #expect(!fired1)
+        refresh.captured(isSent: true, at: 0.1)
+        #expect(refresh.deadline == 0.1 + StillFrameRefresh.delay)
+        let fired2 = refresh.fire(at: 0.1 + StillFrameRefresh.delay, canSend: true, presentationTimeMicros: 2)
+        #expect(fired2)
+    }
+
+    /// 絵が仕上がらなくても、決めた回数でやめる (止まった画面で送り続けない)。
+    @Test func stopsAfterLimit() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        var count = 0
+        var micros: Int64 = 0
+        while let deadline = refresh.deadline, count < 100 {
+            micros += 1
+            if refresh.fire(at: deadline, canSend: true, presentationTimeMicros: micros) {
+                count += 1
+                refresh.encoded(presentationTimeMicros: micros, bytes: 50000)
+            }
+        }
+        #expect(count == StillFrameRefresh.maxRefreshes)
+        #expect(refresh.deadline == nil)
+    }
+
+    /// レート制御に落とされて出てこなかった送り直しは数えず、頼む回数の上限までは続ける。
+    @Test func countsOnlyRefreshesThatCameOut() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        var attempts = 0
+        var micros: Int64 = 0
+        while let deadline = refresh.deadline, attempts < 100 {
+            micros += 1
+            if refresh.fire(at: deadline, canSend: true, presentationTimeMicros: micros) {
+                attempts += 1
+                // 1 回おきに出てくる
+                if attempts.isMultiple(of: 2) {
+                    refresh.encoded(presentationTimeMicros: micros, bytes: 50000)
+                }
+            }
+        }
+        #expect(attempts == StillFrameRefresh.maxAttempts)
+
+        refresh.captured(isSent: true, at: 100)
+        var withoutOutput = 0
+        while let deadline = refresh.deadline, withoutOutput < 100 {
+            micros += 1
+            if refresh.fire(at: deadline, canSend: true, presentationTimeMicros: micros) {
+                withoutOutput += 1
+            }
+        }
+        #expect(withoutOutput == StillFrameRefresh.maxAttempts)
+    }
+
+    /// 送り直したフレームが小さければ、もう仕上がっているのでやめる (上限のビットレートでは 1 回目で止まる)。
+    @Test func stopsWhenRefreshIsSmall() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        let fired3 = refresh.fire(at: 0.25, canSend: true, presentationTimeMicros: 7)
+        #expect(fired3)
+        // 送り直したものではないフレームの大きさでは決めない
+        refresh.encoded(presentationTimeMicros: 6, bytes: 10)
+        let fired4 = refresh.fire(at: 0.35, canSend: true, presentationTimeMicros: 8)
+        #expect(fired4)
+        refresh.encoded(presentationTimeMicros: 8, bytes: StillFrameRefresh.settledBytes - 1)
+        let deadline = refresh.deadline ?? 0
+        let fired5 = refresh.fire(at: deadline, canSend: true, presentationTimeMicros: 9)
+        #expect(!fired5)
+        #expect(refresh.deadline == nil)
+    }
+
+    /// 回線が詰まっている間は回数を使わずに待ち、空いたら送る (捨てた最後の絵を必ず届ける)。
+    @Test func waitsWhileLinkIsFull() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: false, at: 0)
+        var time = StillFrameRefresh.delay
+        for _ in 0 ..< 30 {
+            let fired6 = refresh.fire(at: time, canSend: false, presentationTimeMicros: 1)
+            #expect(!fired6)
+            time += StillFrameRefresh.interval
+            #expect(refresh.deadline == time)
+        }
+        let fired7 = refresh.fire(at: time, canSend: true, presentationTimeMicros: 2)
+        #expect(fired7)
+    }
+
+    /// 仕上がって止めたあとでも、キーフレームや範囲を頼まれたら 1 回送る。
+    @Test func requestRefreshesSettledFrame() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        let fired8 = refresh.fire(at: 0.25, canSend: true, presentationTimeMicros: 1)
+        #expect(fired8)
+        refresh.encoded(presentationTimeMicros: 1, bytes: 100)
+        let fired9 = refresh.fire(at: 0.35, canSend: true, presentationTimeMicros: 2)
+        #expect(!fired9)
+        #expect(refresh.deadline == nil)
+
+        refresh.requested(at: 5)
+        #expect(refresh.deadline == 5 + StillFrameRefresh.interval)
+        let fired10 = refresh.fire(at: 5 + StillFrameRefresh.interval, canSend: true, presentationTimeMicros: 3)
+        #expect(fired10)
+        refresh.encoded(presentationTimeMicros: 3, bytes: 30000)
+        // キーフレームは大きいが、絵はもう仕上がっているので続けない
+        let deadline = refresh.deadline ?? 0
+        let fired11 = refresh.fire(at: deadline, canSend: true, presentationTimeMicros: 4)
+        #expect(!fired11)
+    }
+
+    /// 頼まれたときにもう送り直しを待っていれば、早い方で送る。
+    @Test func requestDoesNotDelayPendingRefresh() {
+        var refresh = StillFrameRefresh()
+        refresh.captured(isSent: true, at: 0)
+        refresh.requested(at: 0.2)
+        #expect(refresh.deadline == StillFrameRefresh.delay)
+        refresh.requested(at: 0)
+        #expect(refresh.deadline == StillFrameRefresh.interval)
+    }
+}

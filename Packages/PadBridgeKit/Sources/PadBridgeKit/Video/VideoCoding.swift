@@ -96,8 +96,12 @@ extension VideoFrame {
         guard status == kCMBlockBufferNoErr else { throw VideoCodingError.status(status) }
 
         let notSync = sampleBuffer.sampleAttachments.first?[.notSync] as? Bool ?? false
-        let time = sampleBuffer.presentationTimeStamp
-        self.init(isKeyFrame: !notSync, presentationTimeMicros: time.isNumeric ? Int64(time.seconds * 1_000_000) : 0, data: data)
+        self.init(isKeyFrame: !notSync, presentationTimeMicros: Self.presentationTimeMicros(of: sampleBuffer.presentationTimeStamp), data: data)
+    }
+
+    /// 符号化に渡した時刻を、送るフレームの時刻 (マイクロ秒) にする。
+    public static func presentationTimeMicros(of time: CMTime) -> Int64 {
+        time.isNumeric ? Int64(time.seconds * 1_000_000) : 0
     }
 
     /// iPad 側でデコーダに渡すためのサンプルバッファを作る。到着したらすぐ表示させる。

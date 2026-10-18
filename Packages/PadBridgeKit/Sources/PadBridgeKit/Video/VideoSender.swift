@@ -5,22 +5,28 @@ import os
 import Synchronization
 import VideoToolbox
 
-/// 取り込んだ画面のフレームを HEVC (作れなければ H.264) にして送る。回線に合わせた間引きとビットレートと、拡大している間の切り出しを受け持つ。
-/// `send` は同じスレッドから順に呼ぶ (エンコーダは同じスレッドから順に使う)。
+/// 取り込んだ画面のフレームを HEVC (作れなければ H.264) にして送る。回線に合わせた間引きとビットレート、拡大している間の切り出し、画面が止まったあとの送り直しを受け持つ。
+/// `send` は `queue` の上で呼ぶ。送り直しも同じキューで行う (エンコーダは同じスレッドから順に使う)。
 public final class VideoSender: @unchecked Sendable {
     public let width: Int
     public let height: Int
     public let frameRate: Int
     public private(set) var codec = VideoCodec.hevc
 
+    private let queue: DispatchQueue
     private let transmit: @Sendable (WireMessage) -> Void
     private let pendingSendCount: @Sendable () -> Int
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
-    // VideoEncoder は Sendable でないため、Mutex ではなく NSLock で守る
+    // VideoEncoder と CVPixelBuffer は Sendable でないため、Mutex ではなく NSLock で守る
     private let lock = NSLock()
     private var encoder: VideoEncoder?
     private var isStopped = false
     private var region: VideoRegion
+    // 画面が止まったあとに送り直すため、最後に取り込んだフレームを 1 枚だけ持つ
+    private var lastSource: CVPixelBuffer?
+    private var lastPresentationTime = CMTime.invalid
+    private let refresh = Mutex(StillFrameRefresh())
+    private let refreshTimer: any DispatchSourceTimer
     private let transferSession: VTPixelTransferSession?
     private let outputPool: CVPixelBufferPool?
     private let keyFrameRequested = Atomic(true)
@@ -31,17 +37,18 @@ public final class VideoSender: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.kit", category: "video")
 
     /// `isAcknowledged`・`initialBitRate`・`initialRoundTrip` は、同じ映像の接続で作り直す前の取り込みから引き継ぐ。
-    /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。`send` を呼んだスレッドから呼ばれる。
+    /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。`queue` から呼ばれる。
     public init(
         width: Int, height: Int, maximumBitRate: Int, frameRate: Int, region: VideoRegion = .full,
         isAcknowledged: Bool = false, initialBitRate: Int? = nil, initialRoundTrip: TimeInterval? = nil,
-        transmit: @escaping @Sendable (WireMessage) -> Void, pendingSendCount: @escaping @Sendable () -> Int = { 0 },
+        queue: DispatchQueue, transmit: @escaping @Sendable (WireMessage) -> Void, pendingSendCount: @escaping @Sendable () -> Int = { 0 },
         onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)? = nil
     ) throws {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.region = region
+        self.queue = queue
         self.transmit = transmit
         self.pendingSendCount = pendingSendCount
         self.onQualityChange = onQualityChange
@@ -49,6 +56,10 @@ public final class VideoSender: @unchecked Sendable {
         let controller = BitRateController(maximum: maximumBitRate, initial: initialBitRate)
         bitRateController = Mutex(controller)
         roundTrip = Mutex(initialRoundTrip)
+        // 動かす前のタイマーを放すと libdispatch が止めるので、先に動かしておく
+        refreshTimer = DispatchSource.makeTimerSource(queue: queue)
+        refreshTimer.schedule(deadline: .distantFuture)
+        refreshTimer.activate()
 
         var transferSession: VTPixelTransferSession?
         VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &transferSession)
@@ -79,6 +90,13 @@ public final class VideoSender: @unchecked Sendable {
             encoder = try VideoEncoder(codec: .h264, width: width, height: height, averageBitRate: controller.current, frameRate: frameRate, output: output)
             codec = .h264
         }
+        refreshTimer.setEventHandler { [weak self] in
+            self?.refreshIfStill()
+        }
+    }
+
+    deinit {
+        refreshTimer.cancel()
     }
 
     /// iPad が受け取りの返事を返すと分かったか。
@@ -110,12 +128,20 @@ public final class VideoSender: @unchecked Sendable {
         lock.withLock {
             isStopped = true
             encoder = nil
+            lastSource = nil
         }
+        refreshTimer.cancel()
     }
 
-    /// 次のフレームをキーフレームにする。
+    /// 次のフレームをキーフレームにする。画面が止まっていても、最後に取り込んだ絵で送る。
     public func requestKeyFrame() {
         keyFrameRequested.store(true, ordering: .relaxed)
+        // タイマーの予定は、送り直しと同じキューで入れ直す (ほかのスレッドから入れると、古い予定が後から上書きして送り直しが止まりうる)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            refreshTimer.schedule(deadline: deadline(for: refresh.withLock { $0.requested(at: now); return $0.deadline }))
+        }
     }
 
     /// iPad が見ている範囲を変える。範囲を切り出してから送る大きさに縮める。
@@ -140,9 +166,14 @@ public final class VideoSender: @unchecked Sendable {
         }
     }
 
-    /// 取り込んだフレームを送る。
+    /// 取り込んだフレームを送る。`queue` の上で呼ぶ。
     public func send(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
-        guard !lock.withLock({ isStopped }) else { return }
+        let isRunning = lock.withLock {
+            guard !isStopped else { return false }
+            lastSource = pixelBuffer
+            return true
+        }
+        guard isRunning else { return }
         let now = ProcessInfo.processInfo.systemUptime
         // 回線に入りきらない間は符号化する前に捨て、遅延が積み上がらないようにする
         let (canSend, isWaitingForKeyFrame) = canSend(at: now)
@@ -155,9 +186,8 @@ public final class VideoSender: @unchecked Sendable {
             Self.logger.notice("回線に合わせて映像のビットレートを \(String(format: "%.1f", Double(change.rate) / 1_000_000), privacy: .public) Mbps にした")
             onQualityChange?(change.isReduced)
         }
-        if canSend {
-            encode(pixelBuffer, presentationTime: presentationTime)
-        }
+        let isSent = canSend && encode(pixelBuffer, presentationTime: presentationTime)
+        refreshTimer.schedule(deadline: deadline(for: refresh.withLock { $0.captured(isSent: isSent, at: now); return $0.deadline }))
     }
 
     private func canSend(at time: TimeInterval) -> (canSend: Bool, isWaitingForKeyFrame: Bool) {
@@ -165,19 +195,47 @@ public final class VideoSender: @unchecked Sendable {
         return (pendingSendCount() < 4 && isAllowed, isWaitingForKeyFrame)
     }
 
-    private func encode(_ source: CVPixelBuffer, presentationTime: CMTime) {
+    private func encode(_ source: CVPixelBuffer, presentationTime: CMTime) -> Bool {
         guard let (encoder, region) = lock.withLock({ () -> (VideoEncoder, VideoRegion)? in
             guard !isStopped, let encoder else { return nil }
             return (encoder, region)
-        }) else { return }
+        }) else { return false }
         var pixelBuffer = source
         if !region.isFull || CVPixelBufferGetWidth(source) != width || CVPixelBufferGetHeight(source) != height {
             // 範囲を切り出し、送る大きさに縮める。取り込みの設定を変えている途中の古い大きさのフレームも、その大きさに合わせて切り出す
-            guard let transferSession, let outputPool, let output = Self.crop(source, region: region, session: transferSession, pool: outputPool) else { return }
+            guard let transferSession, let outputPool, let output = Self.crop(source, region: region, session: transferSession, pool: outputPool) else { return false }
             pixelBuffer = output
         }
         let forceKeyFrame = keyFrameRequested.exchange(false, ordering: .relaxed)
         encoder.encode(pixelBuffer, presentationTime: presentationTime, forceKeyFrame: forceKeyFrame, region: region)
+        lock.withLock { lastPresentationTime = presentationTime }
+        return true
+    }
+
+    private func refreshIfStill() {
+        guard let source = lock.withLock({ isStopped ? nil : lastSource }) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let presentationTime = refreshPresentationTime()
+        let (canSend, _) = canSend(at: now)
+        let shouldRefresh = refresh.withLock { $0.fire(at: now, canSend: canSend, presentationTimeMicros: VideoFrame.presentationTimeMicros(of: presentationTime)) }
+        if shouldRefresh {
+            _ = encode(source, presentationTime: presentationTime)
+        }
+        refreshTimer.schedule(deadline: deadline(for: refresh.withLock { $0.deadline }))
+    }
+
+    /// 送り直すフレームの時刻。取り込んだフレームと同じホストの時計で、前に符号化したフレームより後にする (受け取りの返事は時刻で突き合わせる)。
+    /// 実際に経った時間を空けると、低遅延のレート制御が送り直しに予算を回す。1/60 秒ずつ詰めると、下げたビットレートでは絵が良くならなかった。
+    private func refreshPresentationTime() -> CMTime {
+        let now = VideoFrame.presentationTimeMicros(of: CMClockGetTime(CMClockGetHostTimeClock()))
+        let last = lock.withLock { lastPresentationTime }
+        let micros = last.isNumeric ? max(now, VideoFrame.presentationTimeMicros(of: last) + 1000) : now
+        return CMTime(value: micros, timescale: 1_000_000)
+    }
+
+    private func deadline(for time: TimeInterval?) -> DispatchTime {
+        guard let time else { return .distantFuture }
+        return .now() + max(0, time - ProcessInfo.processInfo.systemUptime)
     }
 
     private func encoded(_ format: VideoFormat?, _ frame: VideoFrame) {
@@ -187,6 +245,7 @@ public final class VideoSender: @unchecked Sendable {
             transmit(.videoFormat(format))
         }
         flow.withLock { $0.sent(presentationTimeMicros: frame.presentationTimeMicros, isKeyFrame: frame.isKeyFrame, bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime) }
+        refresh.withLock { $0.encoded(presentationTimeMicros: frame.presentationTimeMicros, bytes: frame.data.count) }
         transmit(.videoFrame(frame))
         let count = sentFrames.add(1, ordering: .relaxed).newValue
         if count == 1 || count.isMultiple(of: 600) {

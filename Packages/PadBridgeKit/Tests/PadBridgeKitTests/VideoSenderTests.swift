@@ -7,7 +7,7 @@ import Synchronization
 import Testing
 import VideoToolbox
 
-/// 本物のエンコーダで、取り込んだフレームを送る流れを確かめる。画面の取り込みの代わりに、文字のような模様を作って渡す。
+/// 本物のエンコーダで、画面が止まったあとの送り直しを確かめる。画面の取り込みの代わりに、文字のような模様を作って渡す。
 @Suite(.serialized)
 struct VideoSenderTests {
     private final class Recorder: Sendable {
@@ -26,19 +26,61 @@ struct VideoSenderTests {
         }
     }
 
-    /// 止めたあとも、返事の有無・ビットレート・往復の遅れを読める (Host は止めてから読み、作り直す取り込みに引き継ぐ)。
-    @Test func keepsStateForHandOverAfterStop() async throws {
+    private let queue = DispatchQueue(label: "test.video-sender")
+
+    /// 回線が詰まって最後のフレームを捨てても、画面が止まったら最後の絵を届ける (iPad に途中の絵が残らない)。
+    @Test func deliversLastFrameDroppedByFullLink() async throws {
+        let (width, height) = (640, 400)
         let recorder = Recorder()
-        let maximum = CaptureSize.bitRate(width: 640, height: 400)
-        let sender = try makeSender(width: 640, height: 400, initialBitRate: maximum / 2, recorder: recorder)
+        let sender = try makeSender(width: width, height: height, isAcknowledged: true, recorder: recorder)
+        defer { sender.stop() }
+        let images = try makeTexts(width: width, height: height, offsets: (0 ..< 4).map { $0 * 30 })
+        for image in images {
+            queue.sync { sender.send(image, presentationTime: Self.now()) }
+        }
+        // 返事を待つのは 3 枚までなので、4 枚目は捨てる
+        try await waitUntil { recorder.frames.count >= 3 }
+        #expect(recorder.frames.count == 3)
+        for frame in recorder.frames {
+            sender.frameReceived(presentationTimeMicros: frame.presentationTimeMicros)
+        }
+        try await waitUntil { recorder.frames.count >= 4 }
+        let decoded = try decodeAll(recorder.all)
+        let last = try #require(decoded.last)
+        let toFourth = psnr(images[3], last)
+        let toThird = psnr(images[2], last)
+        #expect(toFourth > 30 && toFourth > toThird + 10, "4 枚目と \(toFourth)dB、3 枚目と \(toThird)dB")
+    }
+
+    /// 画面が止まっている間に iPad がキーフレームを頼んでも、次に画面が変わるのを待たずに届ける。
+    @Test func answersKeyFrameRequestWhileStill() async throws {
+        let recorder = Recorder()
+        let sender = try makeSender(width: 640, height: 400, recorder: recorder)
+        defer { sender.stop() }
         let image = try makeText(width: 640, height: 400, offset: 0)
-        sender.send(image, presentationTime: Self.now())
-        try await waitUntil { recorder.frames.count >= 1 }
-        sender.frameReceived(presentationTimeMicros: try #require(recorder.frames.first).presentationTimeMicros)
-        sender.stop()
-        #expect(sender.isAcknowledged)
-        #expect(sender.currentBitRate == maximum / 2)
-        #expect(sender.currentRoundTrip != nil)
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
+        try await waitUntilSettled(recorder)
+        let before = recorder.frames.count
+
+        sender.requestKeyFrame()
+        try await waitUntil { recorder.frames.count > before }
+        #expect(recorder.frames.last?.isKeyFrame == true)
+    }
+
+    /// 画面が止まっている間に拡大の範囲が変わっても、その範囲を切り出した絵を届ける。
+    @Test func sendsNewRegionWhileStill() async throws {
+        let recorder = Recorder()
+        let sender = try makeSender(width: 640, height: 400, recorder: recorder)
+        defer { sender.stop() }
+        let image = try makeText(width: 1280, height: 800, offset: 0)
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
+        try await waitUntilSettled(recorder)
+        #expect(recorder.frames.allSatisfy { $0.region == .full })
+
+        let region = VideoRegion(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        sender.setRegion(region)
+        try await waitUntil { recorder.frames.last?.region == region }
+        #expect(recorder.frames.last?.isKeyFrame == true)
     }
 
     /// 拡大している範囲を、切り出して送る大きさに縮め、範囲を付けたキーフレームから送る。
@@ -47,16 +89,84 @@ struct VideoSenderTests {
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
         defer { sender.stop() }
         let image = try makeText(width: 1280, height: 800, offset: 0)
-        sender.send(image, presentationTime: Self.now())
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
         try await waitUntil { recorder.frames.count >= 1 }
         #expect(recorder.frames.first?.region == .full)
 
         let region = VideoRegion(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         sender.setRegion(region)
-        sender.send(image, presentationTime: Self.now())
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
         try await waitUntil { recorder.frames.count >= 2 }
-        #expect(recorder.frames.last?.region == region)
-        #expect(recorder.frames.last?.isKeyFrame == true)
+        #expect(recorder.frames[1].region == region)
+        #expect(recorder.frames[1].isKeyFrame)
+    }
+
+    /// 画面が丸ごと替わってすぐ止まると (アプリの切り替えやページの読み込み)、1 枚分の予算で描いた絵のままになる。送り直してくっきりさせる。
+    /// 測ったときは、上限のビットレートで 47.1dB から 53.1dB、上限の 0.4 倍で 29.2dB から 45.5dB に上がった。
+    @Test(arguments: [(10, 3.0), (4, 10.0)])
+    func sharpensStillFrameAfterSceneChange(tenthsOfMaximum: Int, expectedGain: Double) async throws {
+        let (width, height) = (1920, 1080)
+        let recorder = Recorder()
+        let maximum = CaptureSize.bitRate(width: width, height: height)
+        let sender = try makeSender(width: width, height: height, initialBitRate: maximum * tenthsOfMaximum / 10, recorder: recorder)
+        defer { sender.stop() }
+        // 前の絵を送り終え、レート制御が最初のキーフレームの借りを返し終えてから替える (その間は絵を絞るので、比べられない)
+        let images = try makeTexts(width: width, height: height, offsets: [0, 600])
+        queue.sync { sender.send(images[0], presentationTime: Self.now()) }
+        try await waitUntilSettled(recorder)
+        try await Task.sleep(for: .milliseconds(300))
+        let changedAt = Self.now()
+        queue.sync { sender.send(images[1], presentationTime: changedAt) }
+        try await waitUntilSettled(recorder)
+
+        let frames = recorder.frames
+        let decoded = try decodeAll(recorder.all)
+        let changedIndex = try #require(frames.firstIndex { $0.presentationTimeMicros == VideoFrame.presentationTimeMicros(of: changedAt) })
+        let atStop = psnr(images[1], decoded[changedIndex])
+        let refreshed = psnr(images[1], try #require(decoded.last))
+        #expect(refreshed > atStop + expectedGain, "替えた時点 \(atStop)dB、送り直したあと \(refreshed)dB")
+    }
+
+    /// 絵が仕上がったら送り直しをやめ、止まった画面ではそれ以上送らない (電池と通信量を使わない)。
+    @Test func stopsRefreshingWhenSettled() async throws {
+        let recorder = Recorder()
+        let sender = try makeSender(width: 640, height: 400, recorder: recorder)
+        defer { sender.stop() }
+        let image = try makeText(width: 640, height: 400, offset: 0)
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
+        try await waitUntilSettled(recorder)
+        let count = recorder.frames.count
+        #expect(count >= 2 && count <= 1 + StillFrameRefresh.maxRefreshes)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(recorder.frames.count == count)
+    }
+
+    /// 止めたあとは、送り直しの時刻が来ても送らない (作り直した取り込みの映像に混ぜない)。
+    @Test func stopEndsRefreshes() async throws {
+        let recorder = Recorder()
+        let sender = try makeSender(width: 640, height: 400, recorder: recorder)
+        let image = try makeText(width: 640, height: 400, offset: 0)
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
+        try await waitUntil { recorder.frames.count >= 1 }
+        sender.stop()
+        let count = recorder.frames.count
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(recorder.frames.count == count)
+    }
+
+    /// 止めたあとも、返事の有無・ビットレート・往復の遅れを読める (Host は止めてから読み、作り直す取り込みに引き継ぐ)。
+    @Test func keepsStateForHandOverAfterStop() async throws {
+        let recorder = Recorder()
+        let maximum = CaptureSize.bitRate(width: 640, height: 400)
+        let sender = try makeSender(width: 640, height: 400, initialBitRate: maximum / 2, recorder: recorder)
+        let image = try makeText(width: 640, height: 400, offset: 0)
+        queue.sync { sender.send(image, presentationTime: Self.now()) }
+        try await waitUntil { recorder.frames.count >= 1 }
+        sender.frameReceived(presentationTimeMicros: try #require(recorder.frames.first).presentationTimeMicros)
+        sender.stop()
+        #expect(sender.isAcknowledged)
+        #expect(sender.currentBitRate == maximum / 2)
+        #expect(sender.currentRoundTrip != nil)
     }
 
     /// 作り直したエンコーダは、引き継いだビットレートから始める (上限から始めると、遅い回線では次に見直すまでの 2 秒を詰まらせる)。
@@ -70,7 +180,7 @@ struct VideoSenderTests {
             defer { sender.stop() }
             let start = CMTimeSubtract(Self.now(), CMTime(value: 40, timescale: 60))
             for (index, image) in images.enumerated() {
-                sender.send(image, presentationTime: CMTimeAdd(start, CMTime(value: CMTimeValue(index), timescale: 60)))
+                queue.sync { sender.send(image, presentationTime: CMTimeAdd(start, CMTime(value: CMTimeValue(index), timescale: 60))) }
             }
             try await waitUntilSettled(recorder)
             // 最初のキーフレームは除く
@@ -86,7 +196,7 @@ struct VideoSenderTests {
     private func makeSender(width: Int, height: Int, isAcknowledged: Bool = false, initialBitRate: Int? = nil, recorder: Recorder) throws -> VideoSender {
         try VideoSender(
             width: width, height: height, maximumBitRate: CaptureSize.bitRate(width: width, height: height), frameRate: 60,
-            isAcknowledged: isAcknowledged, initialBitRate: initialBitRate, transmit: { recorder.append($0) }
+            isAcknowledged: isAcknowledged, initialBitRate: initialBitRate, queue: queue, transmit: { recorder.append($0) }
         )
     }
 
@@ -181,6 +291,82 @@ struct VideoSenderTests {
             let chroma = try #require(CVPixelBufferGetBaseAddressOfPlane(buffer, 1))
             memset(chroma, 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * CVPixelBufferGetHeightOfPlane(buffer, 1))
             return buffer
+        }
+    }
+
+    /// 送られた順に復号し、フレームごとの絵を返す。
+    private func decodeAll(_ messages: [WireMessage]) throws -> [CVPixelBuffer] {
+        var decoder: Decoder?
+        var description: CMVideoFormatDescription?
+        var decoded: [CVPixelBuffer] = []
+        for message in messages {
+            switch message {
+            case let .videoFormat(format):
+                let made = try format.makeFormatDescription()
+                description = made
+                decoder = try Decoder(formatDescription: made)
+            case let .videoFrame(frame):
+                let description = try #require(description)
+                decoded.append(try #require(try decoder?.decode(frame.makeSampleBuffer(formatDescription: description))))
+            default:
+                break
+            }
+        }
+        return decoded
+    }
+
+    /// 輝度の PSNR (dB)。
+    private func psnr(_ original: CVPixelBuffer, _ decoded: CVPixelBuffer) -> Double {
+        CVPixelBufferLockBaseAddress(original, .readOnly)
+        CVPixelBufferLockBaseAddress(decoded, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(original, .readOnly)
+            CVPixelBufferUnlockBaseAddress(decoded, .readOnly)
+        }
+        let width = CVPixelBufferGetWidth(original)
+        let height = CVPixelBufferGetHeight(original)
+        guard CVPixelBufferGetWidth(decoded) == width, CVPixelBufferGetHeight(decoded) == height,
+              let a = CVPixelBufferGetBaseAddressOfPlane(original, 0)?.assumingMemoryBound(to: UInt8.self),
+              let b = CVPixelBufferGetBaseAddressOfPlane(decoded, 0)?.assumingMemoryBound(to: UInt8.self)
+        else { return 0 }
+        let (rowA, rowB) = (CVPixelBufferGetBytesPerRowOfPlane(original, 0), CVPixelBufferGetBytesPerRowOfPlane(decoded, 0))
+        var sum = 0
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                let difference = Int(a[y * rowA + x]) - Int(b[y * rowB + x])
+                sum += difference * difference
+            }
+        }
+        let mse = max(Double(sum) / Double(width * height), 1e-9)
+        return 10 * log10(255 * 255 / mse)
+    }
+
+    private final class Decoder {
+        private let session: VTDecompressionSession
+
+        init(formatDescription: CMVideoFormatDescription) throws {
+            var session: VTDecompressionSession?
+            let attributes = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] as CFDictionary
+            let status = VTDecompressionSessionCreate(
+                allocator: kCFAllocatorDefault, formatDescription: formatDescription, decoderSpecification: nil,
+                imageBufferAttributes: attributes, outputCallback: nil, decompressionSessionOut: &session
+            )
+            self.session = try #require(session, "VTDecompressionSessionCreate: \(status)")
+        }
+
+        func decode(_ sampleBuffer: CMSampleBuffer) throws -> CVPixelBuffer? {
+            final class Box: @unchecked Sendable {
+                var image: CVPixelBuffer?
+            }
+            let box = Box()
+            let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil) { status, _, imageBuffer, _, _ in
+                if status == noErr {
+                    box.image = imageBuffer
+                }
+            }
+            #expect(status == noErr)
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
+            return box.image
         }
     }
 }

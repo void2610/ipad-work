@@ -94,7 +94,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         let sender = try VideoSender(
             width: size.width, height: size.height, maximumBitRate: bitRate, frameRate: frameRate, region: initialRegion,
             isAcknowledged: initialAcknowledged, initialBitRate: initialBitRate, initialRoundTrip: initialRoundTrip,
-            transmit: { [channel] in channel.send($0) }, pendingSendCount: { [channel] in channel.pendingSendCount },
+            queue: sampleQueue, transmit: { [channel] in channel.send($0) }, pendingSendCount: { [channel] in channel.pendingSendCount },
             onQualityChange: onQualityChange
         )
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
