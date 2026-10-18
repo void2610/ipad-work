@@ -130,6 +130,11 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         }
         guard shouldStart else { return }
         try await stream.startCapture()
+        // 始めている途中で止められたときは、止める処理がまだ始まっていない取り込みに効かず、取り込みが動き続ける。始め終えたところで止め直す
+        if lock.withLock({ isStopped }) {
+            try? await stream.stopCapture()
+            return
+        }
         Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(encoder.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
     }
 
@@ -208,6 +213,8 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     }
 
     func stream(_: SCStream, didStopWithError _: any Error) {
+        // 作り直したあとの古い取り込みの知らせで、新しい取り込みが使っている映像の接続を閉じない
+        guard !lock.withLock({ isStopped }) else { return }
         channel.cancel()
     }
 
