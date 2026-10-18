@@ -89,10 +89,11 @@ nonisolated final class InputInjector: @unchecked Sendable {
     /// Typeless の音声入力を始める (true) / 終える (false)。
     /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、押し続けると使い方の案内が出るだけなので、短く 1 回押す。
     private func setVoiceInput(_ isActive: Bool) {
-        guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
+        // 起動を待つのは押すと決める前にする。押すと決めた時刻から待つと、待つ間に離したときの完了が「まだ始まっていない」とみなされて押されない
         if isActive {
             Self.launchTypelessIfNeeded()
         }
+        guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
         // Typeless 側でショートカットを変えても追従できるよう、押すたびに設定を読み直す
         let shortcut = Self.typelessPushToTalk()
         post(shortcut.events(isDown: true))
