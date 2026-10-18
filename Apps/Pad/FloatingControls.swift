@@ -71,6 +71,12 @@ struct FloatingControls: View {
                             }
                         }
                         .pickerStyle(.inline)
+                        // 画面をまたいでドラッグできない代わりに、手前のウィンドウを選んだ画面へ移す
+                        Menu("手前のウィンドウを移す", systemImage: "macwindow") {
+                            ForEach(session.displays) { display in
+                                Button(display.label) { session.moveFrontWindow(to: display.id) }
+                            }
+                        }
                     }
                 }
                 Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))

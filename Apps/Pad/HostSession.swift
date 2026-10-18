@@ -124,6 +124,11 @@ final class HostSession {
         send(.selectDisplay(id: id))
     }
 
+    /// 手前のウィンドウをこの画面へ移す。移せたら Mac がその画面を映す。
+    func moveFrontWindow(to id: UInt32) {
+        send(.moveFrontWindow(toDisplay: id))
+    }
+
     private func showDisplay(_ id: UInt32) {
         guard id != shownDisplayID else { return }
         let isSwitching = shownDisplayID != nil
