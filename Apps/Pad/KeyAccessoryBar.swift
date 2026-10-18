@@ -8,6 +8,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         case tap(String, usage: Int, repeats: Bool)
         case modifier(String, KeyModifiers)
         case gap
+        case paste
     }
 
     private static let keys: [Key] = [
@@ -29,10 +30,28 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         .tap("かな", usage: 0x90, repeats: false),
         // 英字配列のキーボードでは - が記号の面にしかないので、かなモードで「ー」になる - のキーを置く
         .tap("ー", usage: 0x2D, repeats: true),
+        .gap,
+        .paste,
     ]
 
     private weak var session: HostSession?
     private var modifierButtons: [(KeyModifiers, KeyCapButton)] = []
+    // iPad でコピーした文字を Mac に入れる。システムのペーストボタンなら、iOS がペーストの許可を尋ねない
+    private let pasteControl: UIPasteControl = {
+        var configuration = UIPasteControl.Configuration()
+        configuration.displayMode = .iconOnly
+        configuration.cornerStyle = .medium
+        // iOS が別に描くので列のダークの見た目に従わない。ほかのキー (ダークの灰色のボタン、実測 #262629) と同じ色を直接渡す
+        configuration.baseBackgroundColor = UIColor(red: 0x26 / 255, green: 0x26 / 255, blue: 0x29 / 255, alpha: 1)
+        configuration.baseForegroundColor = .white
+        return UIPasteControl(configuration: configuration)
+    }()
+
+    /// ペーストボタンが押されたときに、コピーした文字を受け取る入力先。
+    weak var pasteTarget: UIPasteConfigurationSupporting? {
+        get { pasteControl.target }
+        set { pasteControl.target = newValue }
+    }
 
     init(session: HostSession) {
         self.session = session
@@ -79,6 +98,10 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
                 let spacer = UIView()
                 spacer.widthAnchor.constraint(equalToConstant: 10).isActive = true
                 stack.addArrangedSubview(spacer)
+            case .paste:
+                pasteControl.widthAnchor.constraint(equalToConstant: 52).isActive = true
+                pasteControl.heightAnchor.constraint(equalToConstant: 40).isActive = true
+                stack.addArrangedSubview(pasteControl)
             }
         }
 

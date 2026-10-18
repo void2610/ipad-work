@@ -11,8 +11,11 @@ struct DirectTypingField: UIViewRepresentable {
         let view = DirectTypingUIView()
         view.onText = { [weak session] text in session?.typeText(text) }
         view.onDeleteBackward = { [weak session] in session?.tapKey(usage: HIDUsage.backspace) }
+        view.onPaste = { [weak session] text in session?.send(.insertText(text)) }
         view.send = { [weak session] message in session?.send(message) }
-        view.accessoryBar = KeyAccessoryBar(session: session)
+        let bar = KeyAccessoryBar(session: session)
+        bar.pasteTarget = view
+        view.accessoryBar = bar
         return view
     }
 
@@ -40,6 +43,7 @@ final class DirectTypingUIView: UIView, UITextInput {
 
     var onText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
+    var onPaste: ((String) -> Void)?
     var onResign: (() -> Void)?
     var send: ((ControlMessage) -> Void)?
     var accessoryBar: UIView?
@@ -78,6 +82,9 @@ final class DirectTypingUIView: UIView, UITextInput {
     }
 
     override func becomeFirstResponder() -> Bool {
+        // キーボードの上の取り消し・やり直し・ペーストは使わない。手元の文書は飾りで、そのペーストは iOS がペーストの許可を尋ねる
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         let didBecome = super.becomeFirstResponder()
         if didBecome {
             Self.isTyping = true
@@ -92,6 +99,20 @@ final class DirectTypingUIView: UIView, UITextInput {
 
     func deleteBackward() {
         onDeleteBackward?()
+    }
+
+    // 特殊キーの列のペーストボタンで、iPad でコピーした文字をキーを 1 つずつ打たずに文字のまま Mac の入力欄へ入れる (日本語や記号もそのまま入る)
+    override var pasteConfiguration: UIPasteConfiguration? {
+        get { UIPasteConfiguration(forAccepting: NSString.self) }
+        set {}
+    }
+
+    override func paste(itemProviders: [NSItemProvider]) {
+        guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return }
+        _ = provider.loadObject(ofClass: NSString.self) { [weak self] object, _ in
+            guard let text = object as? String, !text.isEmpty else { return }
+            DispatchQueue.main.async { self?.onPaste?(text) }
+        }
     }
 
     override func resignFirstResponder() -> Bool {
