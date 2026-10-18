@@ -229,14 +229,16 @@ nonisolated final class HostServer: @unchecked Sendable {
         do {
             let listener = try NWListener(using: .padBridge())
             listener.service = NWListener.Service(name: hostName, type: PadBridgeService.type)
-            listener.stateUpdateHandler = { [weak self] state in
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
                 Self.logger.info("listener: \(String(describing: state), privacy: .public)")
+                // 作り直す前の待ち受けから遅れて届いた知らせで、新しい待ち受けを止めない
+                guard let self, let listener, listener === self.listener else { return }
                 switch state {
-                case .ready: self?.onListenerChange("待機中")
+                case .ready: onListenerChange("待機中")
                 case let .failed(error):
-                    self?.onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
-                    self?.restartListener()
-                case let .waiting(error): self?.onListenerChange("待機準備中: \(error.localizedDescription)")
+                    onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+                    restartListener()
+                case let .waiting(error): onListenerChange("待機準備中: \(error.localizedDescription)")
                 default: break
                 }
             }
