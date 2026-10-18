@@ -62,6 +62,9 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
 
     private let queue: DispatchQueue
     private let onAuthorizationChange: @Sendable () -> Void
+    private let onLateReady: @Sendable (_ isUsingPadMicrophone: Bool) -> Void
+    // iPad から聞き取りを始めていて、まだ終えていないか。待ち時間を過ぎて届いた返事を、今の聞き取りに反映するかを決める
+    private var isListeningRequested = false
     private let token = UUID().uuidString
     private var listener: NWListener?
     private var channel: MessageChannel?
@@ -79,9 +82,11 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private var finishCount = 0
     private(set) var isKnownUnauthorized = false
 
-    init(queue: DispatchQueue, onAuthorizationChange: @escaping @Sendable () -> Void) {
+    /// `onLateReady` は、聞き取りの準備の返事が待ち時間 (`readyTimeout`) を過ぎてから届いたときに、このキューの上で呼ばれる。
+    init(queue: DispatchQueue, onAuthorizationChange: @escaping @Sendable () -> Void, onLateReady: @escaping @Sendable (_ isUsingPadMicrophone: Bool) -> Void) {
         self.queue = queue
         self.onAuthorizationChange = onAuthorizationChange
+        self.onLateReady = onLateReady
     }
 
     /// iPad がつながったときに呼ぶ。補助アプリがまだ動いていなければ起動する。
@@ -99,6 +104,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     /// iPad の接続が切れてしばらくたったときに呼ぶ。接続を閉じると、補助アプリはデバイスを消して終わる。
     func stop() {
         isRunning = false
+        isListeningRequested = false
         finishPendingReady()
         completeFinish()
         channel?.cancel()
@@ -113,6 +119,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         }
         finishPendingReady()
         pendingReady = ready
+        isListeningRequested = true
         readyCount += 1
         let id = readyCount
         channel.send(.control(.microphoneRelay(isListening: true)))
@@ -123,6 +130,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     }
 
     func endListening() {
+        isListeningRequested = false
         channel?.send(.control(.microphoneRelay(isListening: false)))
     }
 
@@ -258,6 +266,10 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     Self.logger.notice("補助アプリとつながった")
                 // 合言葉を確かめた接続からのものだけを受ける
                 case let .microphoneRelayReady(isUsingPadMicrophone) where channel === self.channel:
+                    // 補助アプリが起動直後の点検などで遅れると、待ち時間を過ぎてから届く。Typeless はもう聞き取りを始めているので、そのことを伝える
+                    if pendingReady == nil, isListeningRequested {
+                        onLateReady(isUsingPadMicrophone)
+                    }
                     finishPendingReady(isUsingPadMicrophone: isUsingPadMicrophone)
                 case .microphoneRelayFinished where channel === self.channel:
                     completeFinish()

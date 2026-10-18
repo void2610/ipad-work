@@ -64,6 +64,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var macAudioCodec = MacAudio.Codec.pcm
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
+    // iPad から始めた聞き取りの要求の番号。補助アプリの返事が遅れて届いたときに、まだその聞き取りの途中かを見る
+    private var listeningRequest: Int?
     private var microphoneStop: DispatchWorkItem?
     // Typeless は前の聞き取りを文字にして貼り付け終えるまで (止めてから数秒)、ショートカットを受け付けない。その間は押し直す
     private static let voiceInputRetryCount = 4
@@ -107,10 +109,11 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             // 前の補助アプリが後始末をできずに終わって残ったデバイスを消す。この時点では、この Host の補助アプリはまだ動いていない
             PadMicrophoneDevice.removeLeftovers()
-            self.microphone = MicrophoneRelay(queue: self.queue) { [weak self] in
-                guard let self else { return }
-                publishStatus()
-            }
+            self.microphone = MicrophoneRelay(
+                queue: self.queue,
+                onAuthorizationChange: { [weak self] in self?.publishStatus() },
+                onLateReady: { [weak self] isUsingPadMicrophone in self?.microphoneReadyLate(isUsingPadMicrophone) }
+            )
             self.screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: nil) { [weak self] _ in
                 guard let self else { return }
                 queue.async { self.screenParametersChanged() }
@@ -322,6 +325,13 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
+    /// 補助アプリの返事が待ち時間を過ぎてから届いた。Typeless はもう「PadBridge iPad マイク」で聞き取り始めているので、止めるときに話し終わりを流し終えるのを待つ。
+    private func microphoneReadyLate(_ isUsingPadMicrophone: Bool) {
+        guard isUsingPadMicrophone, let listeningRequest, voiceInputRequests.isCurrent(listeningRequest) else { return }
+        Self.logger.notice("補助アプリの返事が遅れて届いた。iPad の声を流しているものとして扱う")
+        self.isUsingPadMicrophone = true
+    }
+
     private func setTypelessCannotReadPadMicrophone(_ value: Bool) {
         guard typelessCannotReadPadMicrophone != value else { return }
         typelessCannotReadPadMicrophone = value
@@ -400,6 +410,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case let .voiceInput(isActive):
             Self.logger.notice("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
             let requestCount = voiceInputRequests.receive(isActive: isActive)
+            listeningRequest = isActive ? requestCount : nil
             if isActive {
                 // Typeless が録音を始める前に、iPad の声を流す準備をしておく
                 microphone?.beginListening { [weak self, inputQueue, injector] isUsingPadMicrophone in
@@ -519,6 +530,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
+        isUsingPadMicrophone = false
+        listeningRequest = nil
         videoFrameRate = PreferredFrameRate.normal
         macAudioCodec = .pcm
         isVideoQualityReduced = false
