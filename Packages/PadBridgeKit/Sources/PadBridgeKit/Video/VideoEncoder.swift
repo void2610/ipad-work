@@ -11,7 +11,7 @@ public final class VideoEncoder: @unchecked Sendable {
     private let session: VTCompressionSession
     private let output: OutputHandler
 
-    public init(codec: VideoCodec, width: Int, height: Int, averageBitRate: Int, frameRate: Int, output: @escaping OutputHandler) throws {
+    public init(codec: VideoCodec, width: Int, height: Int, averageBitRate: Int, frameRate: Int, keyFrameInterval: TimeInterval = 30, output: @escaping OutputHandler) throws {
         var session: VTCompressionSession?
         // 低遅延レート制御は、フレームの並べ替えをせず 1 フレームずつ即座に出力させるために使う
         let specification = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
@@ -33,8 +33,8 @@ public final class VideoEncoder: @unchecked Sendable {
             kVTCompressionPropertyKey_AllowFrameReordering: false,
             kVTCompressionPropertyKey_AverageBitRate: averageBitRate,
             kVTCompressionPropertyKey_ExpectedFrameRate: frameRate,
-            // 画面が止まっている間はフレームが来ないので、時間で区切って定期的に回復点を作る
-            kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration: 5,
+            // 回復点は iPad が頼んだときに作る (受け取りの返事付きの TCP で、途中で失われるフレームはない)。大きなキーフレームは遅い回線で遅れの山になるので、定期のものは念のため 30 秒ごとにとどめる
+            kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration: keyFrameInterval,
         ]
         VTSessionSetProperties(session, propertyDictionary: properties as CFDictionary)
         VTCompressionSessionPrepareToEncodeFrames(session)
