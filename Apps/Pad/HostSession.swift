@@ -65,6 +65,8 @@ final class HostSession {
     private(set) var isMacScreenLocked = false
     /// Mac の Host の組み立てが、この iPad アプリと違うときの Mac 側のコミット。片方だけ古いと、古い側の動きを見て取り違える。
     private(set) var mismatchedHostCommit: String?
+    /// Mac の Host の組み立てたコミット。「接続の状態」に出す。古い Host からは届かない。
+    private(set) var hostCommit: String?
     /// 映す画面が替わったときや、回線に合わせて画質を変えたときに、少しの間だけ出す知らせ。Mac が自分で替えたときも、何が起きたか分かるように。
     /// 種類ごとに持ち、画面を替えた知らせで画質を下げた知らせが消えないようにする。
     private(set) var notices: [TransientNotice] = []
@@ -507,6 +509,7 @@ final class HostSession {
         case let .macScreenLocked(isLocked):
             isMacScreenLocked = isLocked
         case let .buildCommit(hostCommit):
+            self.hostCommit = hostCommit
             mismatchedHostCommit = BuildCommit.isMismatch(BuildCommit.current(), hostCommit) ? hostCommit : nil
         case let .videoStats(stats):
             // 映像を止めた直後に届いた分で、止めた前の状態を出し直さない

@@ -29,10 +29,13 @@ struct ConnectionStatsView: View {
                 } footer: {
                     Text("2 秒ごとに更新します。画面が止まっている間は、Mac は映像を送らないので枚数は 0 になります。往復の遅れは、Mac がフレームを送ってから iPad の受け取りの返事が届くまでの時間です。")
                 }
-                if let route = session.route {
-                    Section("接続") {
+                Section("接続") {
+                    if let route = session.route {
                         row("経路", route)
                     }
+                    // 片方だけ古い組み立てのまま動いていないかを見られるように
+                    row("組み立て (iPad)", BuildCommit.current() ?? "不明")
+                    row("組み立て (Mac)", session.hostCommit ?? "不明")
                 }
                 Section("音") {
                     row("Mac の音", session.playsMacAudio ? (BackgroundAudio.shared.macAudio.canDecodeOpus ? "Opus で鳴らしています" : "無圧縮で鳴らしています") : "鳴らしていません")

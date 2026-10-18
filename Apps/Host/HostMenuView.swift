@@ -71,6 +71,11 @@ struct HostMenuView: View {
                 }
             }
 
+            // どの組み立てが動いているかを、iPad の「接続の状態」と見比べられるように
+            Text("組み立て: \(BuildCommit.current() ?? "不明")")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             HStack {
                 Button("再起動") { controller.relaunch() }
                 Spacer()
