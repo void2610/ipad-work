@@ -137,6 +137,7 @@ Wi-Fi が遅いときは、iPad に届ききらないフレームを送らずに
 | 見たいものが映っていない | Mac に画面が 2 台以上あれば、「…」の「映す画面」で選びます。Mac のメニューバーの PadBridge Host のメニューに、今 iPad に映している画面が出ます。 |
 | 映像が遅れる・カクつく | 「…」の「接続の状態」で、Mac が送っている映像の画質、iPad に届いている枚数と量、往復の遅れを見られます (2 秒ごとに更新)。Mac のメニューバーの PadBridge Host のメニューにも、iPad へ送っている映像の状態が出ます。回線が遅いと画質を下げ、届かないフレームは捨てるので、Wi-Fi の電波が弱いところでは枚数が減ります。 |
 | Mac の音が iPad で鳴らない | 「…」の「Mac の音を iPad で鳴らす」が入っているか。iPad のマイクで話している間は鳴りません。 |
+| 「Mac の PadBridge Host と iPad アプリの組み立てが違います」と出る | 片方だけを新しくした状態です。`just deploy-host` と `just deploy-pad <ID>` で両方を同じコミットから入れ替えます。どちらの組み立てが動いているかは、iPad の「接続の状態」と Mac の Host のメニューの下に出ます。 |
 
 Mac 側の記録は、`log show --predicate 'subsystem BEGINSWITH "dev.void2610.padbridge"'` で読めます。
 
