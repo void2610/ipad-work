@@ -35,6 +35,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var shownDisplayID: CGDirectDisplayID?
     private static let preferredDisplayKey = "preferredDisplayUUID"
     private var screenObserver: (any NSObjectProtocol)?
+    private var activationObserver: (any NSObjectProtocol)?
     private var displayChange: DispatchWorkItem?
     // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
     private var displayAssertion: IOPMAssertionID?
@@ -88,6 +89,11 @@ nonisolated final class HostServer: @unchecked Sendable {
                 guard let self else { return }
                 queue.async { self.screenParametersChanged() }
             }
+            self.activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil) { [weak self] notification in
+                guard let self, let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+                let pid = app.processIdentifier
+                queue.async { self.applicationActivated(pid) }
+            }
             self.refreshDisplays()
         }
     }
@@ -105,6 +111,10 @@ nonisolated final class HostServer: @unchecked Sendable {
             if let screenObserver = self.screenObserver {
                 NotificationCenter.default.removeObserver(screenObserver)
                 self.screenObserver = nil
+            }
+            if let activationObserver = self.activationObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+                self.activationObserver = nil
             }
         }
     }
@@ -483,16 +493,39 @@ nonisolated final class HostServer: @unchecked Sendable {
         startStreamer(on: video)
     }
 
-    /// iPad で選ばれた画面を覚えて映す。
     private func selectDisplay(_ id: CGDirectDisplayID) {
+        switchDisplay(to: id, reason: "映す画面を選んだ", movesPointer: true)
+    }
+
+    /// 前に出たアプリのウィンドウが別の画面にあれば、その画面を映す。iPad のアプリ切替で選んだアプリが、映していない画面にあって見えないままにならないように。
+    private func applicationActivated(_ pid: pid_t) {
+        guard video != nil, displays.count > 1, pid != ProcessInfo.processInfo.processIdentifier else { return }
+        // 前に出てからウィンドウが手前に来るまで少しかかる。アクセシビリティの問い合わせは相手の応答を待つので、サーバーのキューの外で行う
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let frame = DisplayCatalog.focusedWindowFrame(of: pid), let self else { return }
+            queue.async { self.followWindow(at: frame) }
+        }
+    }
+
+    private func followWindow(at frame: CGRect) {
+        let bounds = Dictionary(uniqueKeysWithValues: displays.map { ($0.id, CGDisplayBounds($0.id)) })
+        guard let id = RemoteDisplay.showing(window: frame, displays: bounds), id != shownDisplayID else { return }
+        // Mac を直接使っている人のマウスを奪わないよう、ポインタは動かさない
+        switchDisplay(to: id, reason: "前に出たウィンドウのある画面を映す", movesPointer: false)
+    }
+
+    /// 画面を覚えて映す。外したあとでつなぎ直しても、その画面を映す。
+    private func switchDisplay(to id: CGDirectDisplayID, reason: String, movesPointer: Bool) {
         guard let display = displays.first(where: { $0.id == id }) else { return }
-        Self.logger.notice("映す画面を選んだ: \(display.label, privacy: .public)")
+        Self.logger.notice("\(reason, privacy: .public): \(display.label, privacy: .public)")
         if let uuid = DisplayCatalog.uuid(of: id) {
             UserDefaults.standard.set(uuid, forKey: Self.preferredDisplayKey)
         }
         guard id != shownDisplayID else { return }
         show(id)
-        inputQueue.async { [injector] in injector.moveToDisplayCenter() }
+        if movesPointer {
+            inputQueue.async { [injector] in injector.moveToDisplayCenter() }
+        }
         sendDisplays()
         if let video, streamer != nil {
             startStreamer(on: video)
