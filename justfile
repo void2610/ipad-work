@@ -14,6 +14,11 @@ icon:
 test:
     swift test --package-path Packages/PadBridgeKit
 
+# 変更のあとにまとめて確かめる: 共通ライブラリのテスト (macOS・Thread Sanitizer・iOS のシミュレータ) と、Mac 側と iPad アプリの組み立て (コードの警告があれば失敗。前の組み立てが残っていると直していないファイルの警告が出ないので、毎回作り直す)
+check: generate test test-tsan test-ios
+    Scripts/check-warnings.sh xcodebuild -project PadBridge.xcodeproj -scheme PadBridgeHost -configuration Debug -derivedDataPath build/CheckDerivedData PADBRIDGE_COMMIT={{commit}} clean build
+    Scripts/check-warnings.sh xcodebuild -project PadBridge.xcodeproj -scheme PadBridge -configuration Debug -destination generic/platform=iOS -derivedDataPath build/CheckDerivedData PADBRIDGE_COMMIT={{commit}} clean build
+
 # 共通ライブラリのテストを Thread Sanitizer 付きで走らせる (送受信や音の再生など、複数のスレッドから触る部品のデータ競合を見つける)
 test-tsan:
     swift test --package-path Packages/PadBridgeKit --scratch-path build/KitTestsTSan --sanitize=thread
