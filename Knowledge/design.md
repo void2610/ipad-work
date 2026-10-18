@@ -142,7 +142,9 @@
 
 - iPad のキーボードで日本語を打つときに、Mac の日本語入力が英数とかなのどちらかを、特殊キーの列の英数・かなのキーの色で示す。Host が今の入力ソースを読み、変わるたびに `macInputMode` で知らせる。
 - 入力ソースの分け方 (`MacInputMode`): キー配列そのもの (ABC など) と日本語入力の英字 (`com.apple.inputmethod.Roman`) は英数、日本語入力のひらがな・カタカナ・半角カナ (`com.apple.inputmethod.Japanese`・`.Katakana`・`.HalfWidthKana`) はかな、全角英字や他の言語の入力はどちらでもない。ID は、この Mac に入っている日本語入力 (ローマ字入力・かな入力) の入力ソースから読んだ (2026-10-18)。有効な入力ソースは ABC とローマ字入力のひらがなで、Host と同じ読み方でそれぞれ英数・かなになった。
-- 入力ソースが変わった知らせ (`kTISNotifySelectedKeyboardInputSourceChanged`) は分散通知で届く。AppKit はアプリが前面にない間、分散通知を止める ([suspended](https://developer.apple.com/documentation/foundation/distributednotificationcenter/suspended))。既定の登録では、止まっている間の知らせは前面に来るまでまとめて持ち越される (SDK のヘッダーの `NSNotificationSuspensionBehaviorCoalesce`)。Host はメニューバーの常駐アプリで、メニューを開いたあと前面から外れると止まるので、`deliverImmediately` で登録する。一度も前面に来ていない試験用のアプリでは止まっておらず (`suspended` が false)、既定の登録でも届いたので、違いはこの組み立てでは再現できなかった。
+- 入力ソースが変わった知らせ (`kTISNotifySelectedKeyboardInputSourceChanged`) は分散通知で届く。AppKit はアプリが前面にない間、分散通知を止める ([suspended](https://developer.apple.com/documentation/foundation/distributednotificationcenter/suspended))。既定の登録では、止まっている間の知らせは前面に来るまでまとめて持ち越される (SDK のヘッダーの `NSNotificationSuspensionBehaviorCoalesce`)。Host はメニューバーの常駐アプリで、メニューを開いたあと前面から外れると止まるので、`deliverImmediately` で登録する。
+  - 試験用のアプリで確かめた (2026-10-18)。一度も前面に来ていないアプリは止まっていない (`suspended` が false) ので、AppKit が前面から外したときと同じく `suspended` を true にした (前面に出して外すと、利用者のアプリから入力を奪うため)。別のプロセスから知らせを送ると、既定の登録には 3 秒待っても届かず、止めるのをやめたときに届いた。`deliverImmediately` の登録にはすぐ届いた。
+  - 同じプロセスに両方の登録があると、`deliverImmediately` の側に届いた時点で持ち越していた知らせもまとめて届く (SDK のヘッダーのとおり)。比べるときは 1 回に 1 通りだけ登録する。
 - シミュレータで、代わりの Host から「かな」、12 秒後に「英数」を知らせると、かなのキー、英数のキーの順に青くなった (VoiceOver の値も「入力中」が移る)。
 
 ## 特殊キーの列の見た目
