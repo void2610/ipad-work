@@ -59,6 +59,30 @@ struct VideoSenderTests {
         #expect(recorder.frames.last?.isKeyFrame == true)
     }
 
+    /// 作り直したエンコーダは、引き継いだビットレートから始める (上限から始めると、遅い回線では次に見直すまでの 2 秒を詰まらせる)。
+    @Test func startsAtHandedOverBitRate() async throws {
+        let (width, height) = (640, 360)
+        let maximum = CaptureSize.bitRate(width: width, height: height)
+        let images = try (0 ..< 40).map { try makeBlocks(width: width, height: height, seed: $0) }
+        func averageBytes(initialBitRate: Int?) async throws -> Int {
+            let recorder = Recorder()
+            let sender = try makeSender(width: width, height: height, initialBitRate: initialBitRate, recorder: recorder)
+            defer { sender.stop() }
+            let start = CMTimeSubtract(Self.now(), CMTime(value: 40, timescale: 60))
+            for (index, image) in images.enumerated() {
+                sender.send(image, presentationTime: CMTimeAdd(start, CMTime(value: CMTimeValue(index), timescale: 60)))
+            }
+            try await waitUntilSettled(recorder)
+            // 最初のキーフレームは除く
+            let frames = recorder.frames.dropFirst()
+            return frames.map(\.data.count).reduce(0, +) / max(frames.count, 1)
+        }
+        let atMaximum = try await averageBytes(initialBitRate: nil)
+        let handedOver = try await averageBytes(initialBitRate: maximum / 5)
+        // 直す前は、どちらも同じ大きさ (12941 バイト) だった。直したあとは 4688 バイト
+        #expect(handedOver * 2 < atMaximum, "上限から \(atMaximum) バイト、引き継いだ 1/5 から \(handedOver) バイト")
+    }
+
     private func makeSender(width: Int, height: Int, isAcknowledged: Bool = false, initialBitRate: Int? = nil, recorder: Recorder) throws -> VideoSender {
         try VideoSender(
             width: width, height: height, maximumBitRate: CaptureSize.bitRate(width: width, height: height), frameRate: 60,
@@ -76,6 +100,45 @@ struct VideoSenderTests {
             try #require(ContinuousClock.now < deadline, "時間内に届かない")
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    /// 送り直しが終わるまで (0.4 秒増えなくなるまで) 待つ。
+    private func waitUntilSettled(_ recorder: Recorder) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        var count = recorder.frames.count
+        var stableSince = ContinuousClock.now
+        while ContinuousClock.now - stableSince < .milliseconds(400) {
+            try #require(ContinuousClock.now < deadline, "送り直しが終わらない")
+            try await Task.sleep(for: .milliseconds(20))
+            let current = recorder.frames.count
+            if current != count {
+                count = current
+                stableSince = ContinuousClock.now
+            }
+        }
+    }
+
+    /// 8x8 の濃淡のブロックを `seed` ごとに替えた模様。毎フレーム全体が変わり、上限のビットレートでは収まるが 1/5 では収まらない量にする。
+    private func makeBlocks(width: Int, height: Int, seed: Int) throws -> CVPixelBuffer {
+        var pixelBuffer: CVPixelBuffer?
+        let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, attributes, &pixelBuffer)
+        let buffer = try #require(pixelBuffer, "CVPixelBufferCreate: \(status)")
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let luma = try #require(CVPixelBufferGetBaseAddressOfPlane(buffer, 0)).assumingMemoryBound(to: UInt8.self)
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                var hash = UInt32(x / 8) &* 73_856_093 ^ UInt32(y / 8) &* 19_349_663 ^ UInt32(seed) &* 83_492_791
+                hash ^= hash >> 13
+                hash = hash &* 1_274_126_177
+                luma[y * bytesPerRow + x] = UInt8(truncatingIfNeeded: hash >> 24)
+            }
+        }
+        let chroma = try #require(CVPixelBufferGetBaseAddressOfPlane(buffer, 1))
+        memset(chroma, 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * CVPixelBufferGetHeightOfPlane(buffer, 1))
+        return buffer
     }
 
     /// 9x18 の升に文字のような線を並べた模様。`offset` だけ下へずらす (スクロール)。

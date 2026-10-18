@@ -70,12 +70,13 @@ public final class VideoSender: @unchecked Sendable {
         let output: VideoEncoder.OutputHandler = { [weak self] format, frame in
             self?.encoded(format, frame)
         }
+        // 作り直す前のビットレートから始める (上限から始めると、遅い回線では次に見直すまでの 2 秒を詰まらせる)
         do {
-            encoder = try VideoEncoder(codec: .hevc, width: width, height: height, averageBitRate: maximumBitRate, frameRate: frameRate, output: output)
+            encoder = try VideoEncoder(codec: .hevc, width: width, height: height, averageBitRate: controller.current, frameRate: frameRate, output: output)
         } catch {
             // HEVC は同じビットレートで文字がにじみにくい (流れる文字の輝度の PSNR で H.264 の 27dB に対し 40dB)。作れない Mac では H.264 にする
             Self.logger.notice("HEVC のエンコーダを作れないので H.264 にする: \(error, privacy: .public)")
-            encoder = try VideoEncoder(codec: .h264, width: width, height: height, averageBitRate: maximumBitRate, frameRate: frameRate, output: output)
+            encoder = try VideoEncoder(codec: .h264, width: width, height: height, averageBitRate: controller.current, frameRate: frameRate, output: output)
             codec = .h264
         }
     }
