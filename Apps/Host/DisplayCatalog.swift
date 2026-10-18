@@ -72,15 +72,30 @@ enum DisplayCatalog {
         }
         let moved = RemoteDisplay.moved(window: frame, from: sourceArea, to: target)
         // 先に縮めてから動かす。大きいまま動かすと、移す先に収まらない分を macOS が押し戻す
+        var size = frame.size
         if moved.size != frame.size {
-            var size = moved.size
-            if let value = AXValueCreate(.cgSize, &size) {
-                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
-            }
+            setSize(moved.size, of: window)
+            size = self.frame(of: window)?.size ?? frame.size
         }
-        var origin = moved.origin
-        guard let value = AXValueCreate(.cgPoint, &origin), AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success else { return false }
+        // 大きさを変えられないウィンドウもあるので、実際の大きさで移す先に収める
+        var origin = CGPoint(
+            x: max(target.minX, min(moved.minX, target.maxX - size.width)),
+            y: max(target.minY, min(moved.minY, target.maxY - size.height))
+        )
+        guard let value = AXValueCreate(.cgPoint, &origin), AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success else {
+            if size != frame.size {
+                setSize(frame.size, of: window)
+            }
+            return false
+        }
         return self.frame(of: window).flatMap { RemoteDisplay.showing(window: $0, displays: usableAreas) } == destination
+    }
+
+    private nonisolated static func setSize(_ size: CGSize, of window: AXUIElement) {
+        var size = size
+        if let value = AXValueCreate(.cgSize, &size) {
+            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        }
     }
 
     nonisolated static func frame(of window: AXUIElement) -> CGRect? {
