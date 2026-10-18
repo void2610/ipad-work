@@ -198,10 +198,18 @@ final class HostSession {
 
     private func updateMacAudio() {
         let isEnabled = playsMacAudio && isForeground
+        if isEnabled {
+            sendMacAudioCodec()
+        }
         send(.macAudio(isEnabled: isEnabled))
         if !isEnabled {
             BackgroundAudio.shared.macAudio.reset()
         }
+    }
+
+    /// Mac の音を Opus で送ってもらう。無圧縮だと約 1.5 Mbps になり、遅い回線では映像の取り分を削る。
+    private func sendMacAudioCodec() {
+        send(.macAudioCodec(BackgroundAudio.shared.macAudio.canDecodeOpus ? .opus : .pcm))
     }
 
     func swipeDesktop(_ direction: TouchInterpreter.SwipeDirection) {
@@ -378,12 +386,20 @@ final class HostSession {
     }
 
     private func handleControl(_ message: WireMessage) {
-        if case let .macAudio(samples) = message {
+        switch message {
+        case let .macAudio(samples):
             // 切ったあと (裏に回ったあと) も、送られている途中の音が少し届く。鳴らすと止めたはずの音がまた鳴るので捨てる
             if playsMacAudio, isForeground {
                 BackgroundAudio.shared.macAudio.feed(samples)
             }
             return
+        case let .macAudioOpus(packet):
+            if playsMacAudio, isForeground {
+                BackgroundAudio.shared.macAudio.feedOpus(packet)
+            }
+            return
+        default:
+            break
         }
         guard case let .control(message) = message else { return }
         switch message {
@@ -397,6 +413,7 @@ final class HostSession {
                 send(.videoRegion(requestedRegion))
             }
             if playsMacAudio, isForeground {
+                sendMacAudioCodec()
                 send(.macAudio(isEnabled: true))
             }
             startVideoIfNeeded()

@@ -17,6 +17,9 @@ struct WireMessageTests {
         .requestKeyFrame,
         .videoRegion(VideoRegion(x: 0.25, y: 0.125, width: 0.5, height: 0.5)),
         .macAudio(isEnabled: true),
+        .macAudioCodec(.opus),
+        .acknowledgeVideoFrames,
+        .videoFrameReceived(presentationTimeMicros: 123_456_789),
         .displays([RemoteDisplay(id: 15, name: "名前のない画面", placement: .left), RemoteDisplay(id: 16, name: "VG258", placement: .main)], shownID: 15),
         .selectDisplay(id: 16),
         .moveFrontWindow(toDisplay: 15),
@@ -42,6 +45,15 @@ struct WireMessageTests {
             let encoded = try message.encoded()
             #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
         }
+    }
+
+    /// Mac の音は、無圧縮も Opus も中身をそのまま運ぶ。
+    @Test func macAudioMessagesRoundTrip() throws {
+        for message in [WireMessage.macAudio(Data([1, 0, 2, 0])), .macAudioOpus(Data([0xFC, 0xFF, 0xFE]))] {
+            let encoded = try message.encoded()
+            #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
+        }
+        #expect(try WireMessage.macAudioOpus(Data()).encoded().type != WireMessage.macAudio(Data()).encoded().type)
     }
 
     @Test func truncatedVideoFormatIsRejected() throws {

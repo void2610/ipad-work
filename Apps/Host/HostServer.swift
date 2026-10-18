@@ -53,6 +53,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
     private var macAudio: MacAudioCapture?
+    // iPad が求めた Mac の音の形式。求めない古い iPad アプリには無圧縮で送る
+    private var macAudioCodec = MacAudio.Codec.pcm
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
     private var isUsingPadMicrophone = false
     private var microphoneStop: DispatchWorkItem?
@@ -410,6 +412,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             } else {
                 stopTypeless(message, requestCount: requestCount)
             }
+        case let .macAudioCodec(codec):
+            macAudioCodec = codec
         case let .macAudio(isEnabled):
             Self.logger.notice("Mac の音を iPad で鳴らす: \(isEnabled ? "始める" : "やめる", privacy: .public)")
             setMacAudio(isEnabled, on: channel)
@@ -434,10 +438,17 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func setMacAudio(_ isEnabled: Bool, on channel: MessageChannel) {
         if isEnabled, macAudio == nil {
+            // 塊は取り込みのキューから順に届くので、符号化もその上で順に行う
+            let encoder = macAudioCodec == .opus ? MacAudioEncoder() : nil
+            Self.logger.notice("Mac の音の形式: \(encoder == nil ? "無圧縮" : "Opus", privacy: .public)")
             let capture = MacAudioCapture { [weak channel] samples in
                 // 届かずにたまっている間は捨て、つながり直したときにまとめて鳴って遅れないようにする
                 guard let channel, channel.pendingSendCount < 25 else { return }
-                channel.send(.macAudio(samples))
+                if let encoder {
+                    encoder.encode(samples).forEach { channel.send(.macAudioOpus($0)) }
+                } else {
+                    channel.send(.macAudio(samples))
+                }
             }
             capture.start()
             macAudio = capture
@@ -494,6 +505,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
+        macAudioCodec = .pcm
         // つなぎ直しの原因を後から追えるよう、どの経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信 awdl か) かも記録する
         let interface = channel.connection.currentPath?.availableInterfaces.first?.name ?? "不明"
         Self.logger.notice("接続: \(deviceName, privacy: .public) (\(interface, privacy: .public))")

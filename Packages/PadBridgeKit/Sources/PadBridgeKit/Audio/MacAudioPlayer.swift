@@ -7,6 +7,12 @@ public final class MacAudioPlayer: @unchecked Sendable {
     public let node: AVAudioSourceNode
     public let format = AVAudioFormat(standardFormatWithSampleRate: Double(MacAudio.sampleRate), channels: AVAudioChannelCount(MacAudio.channelCount))!
     private let state = State()
+    private let decoderLock = NSLock()
+    private var decoder = MacAudioDecoder()
+    /// Opus を戻せるか。戻せなければ、Mac に無圧縮で送ってもらう。
+    public var canDecodeOpus: Bool {
+        decoderLock.withLock { decoder != nil }
+    }
 
     public init() {
         node = AVAudioSourceNode(format: format, renderBlock: Self.renderBlock(state: state))
@@ -18,6 +24,12 @@ public final class MacAudioPlayer: @unchecked Sendable {
                 state.buffer.write(samples)
             }
         }
+    }
+
+    /// Opus の 1 パケットを戻して鳴らす。戻すのは鳴らすスレッドとは別に、届いたキューの上で行う。
+    public func feedOpus(_ packet: Data) {
+        guard let samples = decoderLock.withLock({ decoder?.decode(packet) }) else { return }
+        feed(samples)
     }
 
     /// iPad のマイクを使っている間は true にする。
@@ -33,6 +45,8 @@ public final class MacAudioPlayer: @unchecked Sendable {
     /// 鳴らすのをやめたときに、ためている音を捨てる。
     public func reset() {
         state.lock.withLock { state.buffer.removeAll() }
+        // 次に鳴らすときは前の音の続きではないので、戻す側も作り直す
+        decoderLock.withLock { decoder = MacAudioDecoder() }
     }
 
     private static func renderBlock(state: State) -> AVAudioSourceNodeRenderBlock {

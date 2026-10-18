@@ -88,6 +88,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case videoRegion(VideoRegion)
     /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。
     case macAudio(isEnabled: Bool)
+    /// iPad から Mac へ。Mac の音をこの形式で送ってほしい。`macAudio(isEnabled:)` より前に送る。知らない古い Mac は無圧縮のまま送る。
+    case macAudioCodec(MacAudio.Codec)
     /// Mac から iPad へ。映せる画面と、今映している画面。接続したときと変わったときに知らせる。
     case displays([RemoteDisplay], shownID: UInt32)
     /// iPad から Mac へ。映す画面を選ぶ。Mac は選ばれた画面を覚え、その画面がつながっている間はそれを映す。
