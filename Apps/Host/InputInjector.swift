@@ -10,7 +10,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var currentClickCount = 1
     private var pressedButtons: Set<MouseButton> = []
     private var pressedKeys: Set<UInt16> = []
-    private var scrollRemainder = CGPoint.zero
+    private var scrollWheel = ScrollWheel()
     private var location = CGPoint.zero
     // iPad に映している画面。タッチの位置はこの画面の上の割合で届く
     private var displayID: CGDirectDisplayID?
@@ -195,14 +195,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
 
     private func scroll(dx: Double, dy: Double) {
         let bounds = displayBounds
-        // 端数を持ち越さないと、ゆっくり動かしたときに 1 ピクセル未満の移動が全部消える
-        scrollRemainder.x += dx * bounds.width
-        scrollRemainder.y += dy * bounds.height
-        let wheelX = Int32(scrollRemainder.x.rounded(.towardZero))
-        let wheelY = Int32(scrollRemainder.y.rounded(.towardZero))
-        guard wheelX != 0 || wheelY != 0 else { return }
-        scrollRemainder.x -= CGFloat(wheelX)
-        scrollRemainder.y -= CGFloat(wheelY)
+        guard let (wheelX, wheelY) = scrollWheel.pixels(dx: dx, dy: dy, width: Double(bounds.width), height: Double(bounds.height)) else { return }
         let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheelY, wheel2: wheelX, wheel3: 0)
         // ⌘ を押しながらのスクロールで拡大するアプリがあるので、押されている修飾キーを載せる
         event?.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
