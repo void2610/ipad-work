@@ -13,11 +13,14 @@ nonisolated enum TextInserter {
 
     private static func insertViaAccessibility(_ text: String) -> Bool {
         let systemWide = AXUIElementCreateSystemWide()
+        // 応答しないアプリで、入力の列 (マウス・キー) ごと何秒も止まらないようにする
+        AXUIElementSetMessagingTimeout(systemWide, 0.5)
         var focusedValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedValue) == .success,
               let focusedValue, CFGetTypeID(focusedValue) == AXUIElementGetTypeID()
         else { return false }
         let element = unsafeDowncast(focusedValue, to: AXUIElement.self)
+        AXUIElementSetMessagingTimeout(element, 0.5)
 
         var settable: DarwinBoolean = false
         guard AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success, settable.boolValue else {
