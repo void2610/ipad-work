@@ -36,6 +36,14 @@ final class BackgroundAudio {
         restartEngine()
     }
 
+    /// 動かしているはずなのに止まっていたら、流し直す。
+    func resumeIfNeeded() {
+        guard isRunning, !engine.isRunning || !player.isPlaying else { return }
+        Self.logger.notice("無音の再生が止まっていたので流し直す")
+        applyCategory()
+        restartEngine()
+    }
+
     func stop() {
         guard isRunning else { return }
         isRunning = false
@@ -80,6 +88,13 @@ final class BackgroundAudio {
             guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .ended
             else { return }
+            MainActor.assumeIsolated {
+                self?.applyCategory()
+                self?.restartEngine()
+            }
+        })
+        // 音の仕組みが作り直されると、オーディオセッションの設定も消えてエンジンが止まる
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.applyCategory()
                 self?.restartEngine()
