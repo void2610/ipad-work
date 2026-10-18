@@ -199,7 +199,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
         let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheelY, wheel2: wheelX, wheel3: 0)
         // ⌘ を押しながらのスクロールで拡大するアプリがあるので、押されている修飾キーを載せる
         event?.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
-        event?.post(tap: .cghidEventTap)
+        // LinearMouse などは HID の段でホイールに速さと加速をかけるので、その後ろの段に入れ、指を動かした分だけ動かす
+        event?.post(tap: .cgSessionEventTap)
     }
 
     private func key(usage: Int, isDown: Bool, modifiers: KeyModifiers) {
