@@ -43,7 +43,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let sentFrames = Atomic(0)
     private let flow: Mutex<VideoFlowControl>
     private let bitRateController = Mutex<BitRateController?>(nil)
-    private let roundTrip = Mutex<TimeInterval?>(nil)
+    private let roundTrip: Mutex<TimeInterval?>
     private let initialBitRate: Int?
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
     private let frameRate: Int
@@ -60,11 +60,12 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。取り込みのキューから呼ばれる。
     init(
         channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion,
-        isAcknowledged: Bool = false, initialBitRate: Int? = nil, frameRate: Int = PreferredFrameRate.normal,
+        isAcknowledged: Bool = false, initialBitRate: Int? = nil, initialRoundTrip: TimeInterval? = nil, frameRate: Int = PreferredFrameRate.normal,
         onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)? = nil
     ) {
         self.channel = channel
         self.frameRate = frameRate
+        roundTrip = Mutex(initialRoundTrip)
         self.onQualityChange = onQualityChange
         flow = Mutex(VideoFlowControl(isAcknowledged: isAcknowledged))
         self.initialBitRate = initialBitRate
@@ -98,12 +99,14 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
         let bitRate = CaptureSize.bitRate(width: size.width, height: size.height)
         let output: VideoEncoder.OutputHandler = { [channel, weak self] format, frame in
+            // 止めたあとにエンコーダから遅れて出たフレームを、同じ接続で作り直した取り込みの映像に混ぜない
+            guard let self, !lock.withLock({ isStopped }) else { return }
             if let format {
                 channel.send(.videoFormat(format))
             }
-            self?.flow.withLock { $0.sent(presentationTimeMicros: frame.presentationTimeMicros, isKeyFrame: frame.isKeyFrame, bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime) }
+            flow.withLock { $0.sent(presentationTimeMicros: frame.presentationTimeMicros, isKeyFrame: frame.isKeyFrame, bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime) }
             channel.send(.videoFrame(frame))
-            guard let count = self?.sentFrames.add(1, ordering: .relaxed).newValue else { return }
+            let count = sentFrames.add(1, ordering: .relaxed).newValue
             if count == 1 || count.isMultiple(of: 600) {
                 Self.logger.info("映像を送信: \(count) フレーム目 (\(frame.data.count) バイト)")
             }
@@ -178,6 +181,11 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     /// 回線に合わせて決めた今のビットレート。取り込みを始める前は nil。
     var currentBitRate: Int? {
         bitRateController.withLock { $0?.current }
+    }
+
+    /// ならした往復の遅れ。同じ映像の接続で作り直すときに引き継ぐ。
+    var currentRoundTrip: TimeInterval? {
+        roundTrip.withLock { $0 }
     }
 
     /// iPad の「接続の状態」に出す、今の映像の状態。取り込みを始める前は nil。

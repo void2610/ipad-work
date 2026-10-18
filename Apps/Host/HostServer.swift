@@ -566,7 +566,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         let displayID = selection.shownID ?? CGMainDisplayID()
         let streamer = ScreenStreamer(
             channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion,
-            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate, frameRate: videoFrameRate,
+            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate, initialRoundTrip: previous?.currentRoundTrip,
+            frameRate: videoFrameRate,
             onQualityChange: { [weak self] isReduced in
                 self?.queue.async { self?.videoQualityChanged(isReduced) }
             }
