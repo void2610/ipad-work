@@ -23,6 +23,7 @@ struct FloatingControls: View {
     @Binding var isTyping: Bool
     @AppStorage("floatingControlsCorner") private var cornerName = Corner.bottomTrailing.rawValue
     @State private var dragOffset = CGSize.zero
+    @GestureState private var isDragging = false
     @State private var isShowingGuide = false
     @State private var isShowingStats = false
 
@@ -35,6 +36,7 @@ struct FloatingControls: View {
                 .offset(dragOffset)
                 .gesture(
                     DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                        .updating($isDragging) { _, state, _ in state = true }
                         .onChanged { dragOffset = $0.translation }
                         .onEnded { value in
                             // 指を離した位置に近い隅へ吸い付かせる
@@ -46,6 +48,11 @@ struct FloatingControls: View {
                             }
                         }
                 )
+                // コントロールセンターを引き出すなどでシステムにドラッグを奪われると onEnded が呼ばれず、ずらしたまま残るので元の隅へ戻す
+                .onChange(of: isDragging) { _, isDragging in
+                    guard !isDragging, dragOffset != .zero else { return }
+                    withAnimation(.spring(duration: 0.3)) { dragOffset = .zero }
+                }
         }
     }
 
