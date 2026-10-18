@@ -55,7 +55,12 @@ public final class MessageChannel: Sendable {
 
     private func receiveNext(_ onMessage: @escaping @Sendable (WireMessage) -> Void) {
         connection.receiveMessage { [weak self] content, context, _, error in
-            guard let self, error == nil else { return }
+            guard let self else { return }
+            guard error == nil else {
+                // 受け取りをやめたまま開いていると、何も届かないのにつなぎ直しも始まらない。閉じて、つなぎ直す側に知らせる
+                connection.cancel()
+                return
+            }
             guard let framerMessage = context?.protocolMetadata(definition: PadBridgeFramer.definition) as? NWProtocolFramer.Message else {
                 // 相手が閉じた
                 connection.cancel()
