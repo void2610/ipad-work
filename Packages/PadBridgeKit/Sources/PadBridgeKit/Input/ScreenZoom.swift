@@ -42,7 +42,7 @@ public struct ScreenZoom: Sendable, Equatable {
             height: current.height * applied
         )
         // 等倍に戻すのは縮めているときだけにする。広げているときにも戻すと、指を大きく開いた位置から始めたピンチ (1 回ごとの倍率が小さい) が毎回戻され、拡大が始まらない
-        guard newScale > 1, newScale >= Self.snapScale || factor > 1 else {
+        guard newScale > 1, newScale >= Self.snapScale || factor >= 1 else {
             self = ScreenZoom()
             return
         }

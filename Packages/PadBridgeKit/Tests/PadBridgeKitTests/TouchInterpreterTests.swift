@@ -351,6 +351,14 @@ struct ScreenZoomTests {
         #expect(abs(zoom.scale - pow(1.02, 10)) < 0.001)
     }
 
+    /// 少しだけ広げた途中で、指を動かすだけの更新 (倍率 1) が来ても等倍に戻さない。
+    @Test func panDuringSmallZoomKeepsScale() {
+        var zoom = ScreenZoom()
+        zoom.apply(scale: 1.02, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
+        zoom.apply(scale: 1, center: CGPoint(x: 500, y: 400), translation: CGVector(dx: 5, dy: 0), fitted: fitted, area: area)
+        #expect(abs(zoom.scale - 1.02) < 0.001)
+    }
+
     /// 縮めて等倍の近くまで戻したときは、ぴったり等倍に戻す。
     @Test func shrinkingNearOneSnapsBack() {
         var zoom = ScreenZoom()
