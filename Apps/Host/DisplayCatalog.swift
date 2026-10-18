@@ -98,17 +98,17 @@ enum DisplayCatalog {
         }
     }
 
-    /// Dock のある画面。Dock のウィンドウ (Dock の層にある Dock のもの) は、隠れている間も載っている画面全体の大きさで置かれている。
-    nonisolated static func dockDisplay(in displays: [UInt32: CGRect]) -> UInt32? {
-        let dockLevel = Int(CGWindowLevelForKey(.dockWindow))
-        let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
-        for window in windows where window[kCGWindowOwnerName as String] as? String == "Dock" && window[kCGWindowLayer as String] as? Int == dockLevel {
-            guard let bounds = (window[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { continue }
-            if let id = RemoteDisplay.showing(window: bounds, displays: displays) {
-                return id
-            }
-        }
-        return nil
+    /// Dock のある画面。ウィンドウサーバーが持つ Dock の範囲と、その範囲に一番合う画面を、yabai と同じ非公開の関数で読む。
+    /// 隠れている Dock の範囲は高さ 0 で画面の端に載るので、範囲の重なりでは決められない。読めなければ nil。
+    nonisolated static func dockDisplay() -> CGDirectDisplayID? {
+        guard let skyLight = SkyLight.shared else { return nil }
+        let connection = skyLight.mainConnection()
+        var rect = CGRect.zero
+        var reason: Int32 = 0
+        guard skyLight.dockRect(connection, &rect, &reason) == 0,
+              let uuid = skyLight.bestDisplay(connection, rect)?.takeRetainedValue()
+        else { return nil }
+        return id(ofUUID: uuid as String)
     }
 
     nonisolated static func frame(of window: AXUIElement) -> CGRect? {
@@ -143,4 +143,24 @@ enum DisplayCatalog {
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
         return Array(ids.prefix(Int(count)))
     }
+}
+
+/// Dock の位置を読むための SkyLight の非公開の関数。リンクせずに探し、見つからない macOS では使わない。
+private nonisolated struct SkyLight: @unchecked Sendable {
+    let mainConnection: @convention(c) () -> Int32
+    let dockRect: @convention(c) (Int32, UnsafeMutablePointer<CGRect>, UnsafeMutablePointer<Int32>) -> Int32
+    let bestDisplay: @convention(c) (Int32, CGRect) -> Unmanaged<CFString>?
+
+    static let shared: SkyLight? = {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+              let mainConnection = dlsym(handle, "SLSMainConnectionID"),
+              let dockRect = dlsym(handle, "SLSGetDockRectWithReason"),
+              let bestDisplay = dlsym(handle, "SLSCopyBestManagedDisplayForRect")
+        else { return nil }
+        return SkyLight(
+            mainConnection: unsafeBitCast(mainConnection, to: (@convention(c) () -> Int32).self),
+            dockRect: unsafeBitCast(dockRect, to: (@convention(c) (Int32, UnsafeMutablePointer<CGRect>, UnsafeMutablePointer<Int32>) -> Int32).self),
+            bestDisplay: unsafeBitCast(bestDisplay, to: (@convention(c) (Int32, CGRect) -> Unmanaged<CFString>?).self)
+        )
+    }()
 }
