@@ -59,6 +59,8 @@ final class HostSession {
     private(set) var shownDisplayID: UInt32?
     /// Mac の文字入力が英数とかなのどちらか。古い Host からは届かないので nil のままになる。
     private(set) var macInputMode: MacInputMode?
+    /// Mac の画面がロックされているか。ロック中は映像が止まり、入力も届かないことがあるので、黒いままの理由を出す。
+    private(set) var isMacScreenLocked = false
     /// 映す画面が替わったときや、回線に合わせて画質を変えたときに、少しの間だけ出す知らせ。Mac が自分で替えたときも、何が起きたか分かるように。
     /// 種類ごとに持ち、画面を替えた知らせで画質を下げた知らせが消えないようにする。
     private(set) var notices: [TransientNotice] = []
@@ -461,6 +463,8 @@ final class HostSession {
         guard case let .control(message) = message else { return }
         switch message {
         case let .welcome(_, status):
+            // ロックされていれば、続けて Mac が知らせる
+            isMacScreenLocked = false
             // つながっただけでは戻さない。つながってすぐ Mac に切られることが続くときに、0.5 秒おきにつなぎ直し続けないように
             retryDelay = .milliseconds(500)
             hostStatus = status
@@ -483,6 +487,8 @@ final class HostSession {
             showDisplay(shownID)
         case let .macInputMode(mode):
             macInputMode = mode
+        case let .macScreenLocked(isLocked):
+            isMacScreenLocked = isLocked
         case let .videoStats(stats):
             // 映像を止めた直後に届いた分で、止めた前の状態を出し直さない
             guard video != nil else { break }

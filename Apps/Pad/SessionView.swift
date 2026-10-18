@@ -27,10 +27,15 @@ struct SessionView: View {
         .statusBarHidden()
     }
 
+    // ロック中は macOS が画面の取り込みとロック画面への合成の入力を制限するので、黒いまま止まった理由を出す
+    private var lockNotice: String? {
+        session.isMacScreenLocked ? "Mac の画面がロックされています。ロック中は映像が止まり、iPad からの入力が届かないことがあります。" : nil
+    }
+
     @ViewBuilder
     private var statusOverlay: some View {
         VStack {
-            ForEach([permissionNotice, relayNotice, session.microphoneNotice].compactMap(\.self), id: \.self) { notice in
+            ForEach([permissionNotice, relayNotice, session.microphoneNotice, lockNotice].compactMap(\.self), id: \.self) { notice in
                 Label(notice, systemImage: "exclamationmark.triangle.fill")
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)

@@ -54,6 +54,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
     private var macAudio: MacAudioCapture?
+    private var screenLockMonitor: ScreenLockMonitor?
+    private var isScreenLocked = false
     // iPad が頼んだ毎秒の枚数。低電力モードや本体が熱いときに少なく頼まれる
     private var videoFrameRate = PreferredFrameRate.normal
     // 映像を送っている間、iPad の「接続の状態」に映像の状態を送る
@@ -125,6 +127,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             self.refreshDisplays()
             self.startInputModeMonitor()
+            self.startScreenLockMonitor()
         }
     }
 
@@ -141,6 +144,36 @@ nonisolated final class HostServer: @unchecked Sendable {
                 return monitor
             }
             queue.async { self.inputModeMonitor = monitor }
+        }
+    }
+
+    /// 画面のロックの知らせはメインスレッドで受ける。
+    private func startScreenLockMonitor() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let monitor = MainActor.assumeIsolated {
+                let monitor = ScreenLockMonitor { [weak self] isLocked in
+                    guard let self else { return }
+                    queue.async { self.screenLockChanged(isLocked) }
+                }
+                monitor.start()
+                return monitor
+            }
+            queue.async {
+                self.screenLockMonitor = monitor
+                self.isScreenLocked = ScreenLockMonitor.isLocked
+            }
+        }
+    }
+
+    private func screenLockChanged(_ isLocked: Bool) {
+        guard isLocked != isScreenLocked else { return }
+        isScreenLocked = isLocked
+        Self.logger.notice("Mac の画面: \(isLocked ? "ロックされた" : "ロックが解除された", privacy: .public)")
+        control?.send(.control(.macScreenLocked(isLocked)))
+        // ロック中に止まった取り込みは、解除しても自分では戻らないので作り直す
+        if !isLocked, let video, streamer != nil {
+            startStreamer(on: video)
         }
     }
 
@@ -171,6 +204,10 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             if let monitor = self.inputModeMonitor {
                 self.inputModeMonitor = nil
+                DispatchQueue.main.async { MainActor.assumeIsolated { monitor.stop() } }
+            }
+            if let monitor = self.screenLockMonitor {
+                self.screenLockMonitor = nil
                 DispatchQueue.main.async { MainActor.assumeIsolated { monitor.stop() } }
             }
         }
@@ -456,7 +493,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .key:
             // 押したキーは記録に残さない (パスワードも打つため)
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .videoStats, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .videoStats, .macScreenLocked, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -552,6 +589,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         sendDisplays()
         if let inputMode {
             channel.send(.control(.macInputMode(inputMode)))
+        }
+        if isScreenLocked {
+            channel.send(.control(.macScreenLocked(true)))
         }
         onClientChange(deviceName)
     }
