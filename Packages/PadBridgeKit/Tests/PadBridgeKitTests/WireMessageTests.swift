@@ -21,6 +21,7 @@ struct WireMessageTests {
         .selectDisplay(id: 16),
         .moveFrontWindow(toDisplay: 15),
         .showDock,
+        .releaseHeldInput,
         .microphoneRelayHello(token: "abc"),
         .microphoneRelay(isListening: true),
         .microphoneRelayReady(isUsingPadMicrophone: true),

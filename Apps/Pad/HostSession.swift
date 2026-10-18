@@ -276,6 +276,8 @@ final class HostSession {
         if isForeground {
             startVideoIfNeeded()
         } else {
+            // iPadOS に取られて離した知らせが届かなかったキーやボタンを、Mac に押したまま残さない
+            send(.releaseHeldInput)
             // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
             stopVoiceInputStartedHere()
             stopMicrophone()

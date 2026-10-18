@@ -404,6 +404,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             moveFrontWindow(to: id)
         case .showDock:
             showDock()
+        case .releaseHeldInput:
+            inputQueue.async { [injector] in injector.releaseHeldInput() }
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
@@ -548,8 +550,6 @@ nonisolated final class HostServer: @unchecked Sendable {
             closeSession()
         } else if channel === video {
             stopVideo()
-            // 映像の接続が閉じるのは、たいてい iPad が裏に回ったとき。押したままのキーやボタンを Mac に残さない
-            inputQueue.async { [injector] in injector.releaseHeldInput() }
         }
     }
 
