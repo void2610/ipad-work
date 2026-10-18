@@ -3,6 +3,7 @@ import CoreAudio
 import Foundation
 import os
 import PadBridgeKit
+import Synchronization
 
 /// Mac で鳴っている音をプロセスタップで取り出し、`MacAudio` の形にして渡す。取り出している間は、Mac のスピーカーから鳴らさない。
 /// iPad のマイクの音を鳴らしている補助アプリの出力は取り出さない (iPad に送り返さない)。
@@ -13,6 +14,9 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     private static let helperBundleIdentifier = "dev.void2610.padbridge.mic"
 
     private let queue = DispatchQueue(label: "dev.void2610.padbridge.host.mac-audio")
+    // 処理を待っている写しの数。キューが詰まったときに、オーディオのスレッドが写しを際限なく積まないように上限で捨てる (約 0.5 秒分)
+    private let backlog = Atomic(0)
+    private static let maxBacklog = 50
     private let send: @Sendable (Data) -> Void
     private var isRunning = false
     private var tapID = AudioObjectID(kAudioObjectUnknown)
@@ -121,8 +125,12 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         var procID: AudioDeviceIOProcID?
         AudioDeviceCreateIOProcIDWithBlock(&procID, device, nil) { [weak self, queue] _, inputData, _, _, _ in
             // 入力の中身は呼ばれている間しか使えないので写してから、変換はオーディオのスレッドの外で行う
-            guard let self, let copy = Self.copy(inputData, format: format) else { return }
-            queue.async { self.process(copy) }
+            guard let self, backlog.load(ordering: .relaxed) < Self.maxBacklog, let copy = Self.copy(inputData, format: format) else { return }
+            backlog.add(1, ordering: .relaxed)
+            queue.async {
+                self.process(copy)
+                self.backlog.subtract(1, ordering: .relaxed)
+            }
         }
         guard let procID, AudioDeviceStart(device, procID) == noErr else {
             Self.logger.error("Mac の音を読み始められない")
