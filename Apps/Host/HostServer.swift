@@ -58,8 +58,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var typelessCannotReadPadMicrophone = false
     private var typelessUsesOtherMicrophone = false
     private var didOpenAudioCaptureSettings = false
-    // iPad から音声入力の開始・完了が来るたびに増やし、古い要求の結果を知らせないようにする
-    private var voiceInputRequestCount = 0
+    // iPad から届いた音声入力の要求。古い要求の続きで Typeless を押したり、その結果を知らせたりしないようにする
+    private var voiceInputRequests = VoiceInputRequests()
 
     init(
         hostName: String,
@@ -182,6 +182,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func typelessRecordingChanged(_ isRecording: Bool) {
         Self.logger.notice("Typeless の聞き取り: \(isRecording ? "開始" : "終了", privacy: .public)")
         inputQueue.async { [injector] in injector.typelessRecordingChanged(isRecording) }
+        // 止めた直後に iPad でまた始めたとき、前の聞き取りの終わりで新しい聞き取りの準備を消さない。始まらなければ押し直しのあとで知らせる
+        if !isRecording, !voiceInputRequests.announcesStop { return }
         control?.send(.control(.voiceInputState(isActive: isRecording)))
         if isRecording, isUsingPadMicrophone {
             checkTypelessAudioCaptureRefusal()
@@ -331,12 +333,12 @@ nonisolated final class HostServer: @unchecked Sendable {
             inputQueue.async { TextInserter.insert(text) }
         case let .voiceInput(isActive):
             Self.logger.notice("Typeless の音声入力: \(isActive ? "開始" : "完了", privacy: .public)")
-            voiceInputRequestCount += 1
-            let requestCount = voiceInputRequestCount
+            let requestCount = voiceInputRequests.receive(isActive: isActive)
             if isActive {
                 // Typeless が録音を始める前に、iPad の声を流す準備をしておく
                 microphone?.beginListening { [weak self, inputQueue, injector] isUsingPadMicrophone in
-                    guard let self else { return }
+                    // 補助アプリの返事を待つ間に iPad で止めた (または切れた) ときは、もう始めない
+                    guard let self, voiceInputRequests.isCurrent(requestCount) else { return }
                     self.isUsingPadMicrophone = isUsingPadMicrophone
                     inputQueue.async {
                         injector.handle(message)
@@ -397,15 +399,15 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// 完了のショートカットを押す。その間に iPad でまた始めていたら、Typeless は聞き取りを続けるので押さない。
     private func stopTypeless(_ message: ControlMessage, requestCount: Int) {
-        guard requestCount == voiceInputRequestCount else { return }
+        guard voiceInputRequests.isCurrent(requestCount) else { return }
         inputQueue.async { [injector] in injector.handle(message) }
         // Typeless がショートカットに反応しなかったときは状態の変化が来ないので、待ってから実際の状態を知らせて iPad の表示を戻す
         queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime) { [weak self] in
-            guard let self, requestCount == voiceInputRequestCount else { return }
+            guard let self, voiceInputRequests.isCurrent(requestCount) else { return }
             control?.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         }
         queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime + 0.5) { [weak self] in
-            guard let self, requestCount == voiceInputRequestCount else { return }
+            guard let self, voiceInputRequests.isCurrent(requestCount) else { return }
             microphone?.endListening()
         }
     }
@@ -414,8 +416,9 @@ nonisolated final class HostServer: @unchecked Sendable {
     /// 押し直しても始まらなければ、iPad の表示を戻す。iPad に「止まった」と知らせると iPad はマイクを止めるので、あきらめるまでは知らせない。
     private func confirmVoiceInputStarted(_ message: ControlMessage, requestCount: Int, retriesLeft: Int) {
         queue.asyncAfter(deadline: .now() + TypelessToggle.settleTime) { [weak self] in
-            guard let self, requestCount == voiceInputRequestCount else { return }
+            guard let self, voiceInputRequests.isCurrent(requestCount) else { return }
             if TypelessMonitor.isRecording() {
+                voiceInputRequests.settle(requestCount)
                 control?.send(.control(.voiceInputState(isActive: true)))
             } else if retriesLeft > 0 {
                 Self.logger.notice("Typeless が聞き取りを始めないので、ショートカットを押し直す (残り \(retriesLeft) 回)")
@@ -423,6 +426,7 @@ nonisolated final class HostServer: @unchecked Sendable {
                 confirmVoiceInputStarted(message, requestCount: requestCount, retriesLeft: retriesLeft - 1)
             } else {
                 Self.logger.notice("Typeless が聞き取りを始めなかった")
+                voiceInputRequests.settle(requestCount)
                 control?.send(.control(.voiceInputState(isActive: false)))
                 microphone?.endListening()
             }
@@ -650,6 +654,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         Self.logger.notice("切断")
         control.cancel()
         self.control = nil
+        // 押し直しや補助アプリの返事を待っている要求が、切れたあとで Typeless を始めないようにする
+        voiceInputRequests.cancelAll()
         typeless?.stop()
         stopMacAudio()
         microphone?.endListening()

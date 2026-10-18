@@ -33,6 +33,8 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     // 起動してから接続してくるまでの間に、もう 1 つ起動しないようにする
     private var launchedAt: TimeInterval?
     private var pendingReady: (@Sendable (Bool) -> Void)?
+    // 聞き取りを始めるたびに増やす。前の要求の待ち時間切れで、次の要求の返事を待つのをやめないように
+    private var readyCount = 0
     private var pendingFinish: (id: Int, done: @Sendable () -> Void)?
     private var finishCount = 0
     private(set) var isKnownUnauthorized = false
@@ -71,9 +73,12 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         }
         finishPendingReady()
         pendingReady = ready
+        readyCount += 1
+        let id = readyCount
         channel.send(.control(.microphoneRelay(isListening: true)))
         queue.asyncAfter(deadline: .now() + Self.readyTimeout) { [weak self] in
-            self?.finishPendingReady()
+            guard let self, readyCount == id else { return }
+            finishPendingReady()
         }
     }
 
