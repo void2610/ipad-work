@@ -39,6 +39,9 @@ final class HostSession {
     private(set) var videoStats: VideoStats?
     private(set) var receivedRate: (framesPerSecond: Double, megabitsPerSecond: Double)?
     private let receiveMeter = ReceiveRateMeter()
+    // Mac に頼んだ毎秒の枚数。Mac はつながるたびに 60 から始める
+    private var requestedFrameRate = PreferredFrameRate.normal
+    private var powerObservers: [any NSObjectProtocol] = []
     /// 今表示している映像に写っている、Mac の画面の範囲。
     private(set) var videoRegion = VideoRegion.full
     // 送ってほしいと頼んだ範囲。つなぎ直したときに頼み直す
@@ -103,6 +106,12 @@ final class HostSession {
 
     func start() {
         watchReachability()
+        // 低電力モードや本体の熱さが変わったら、受けたい映像の枚数を頼み直す
+        powerObservers = [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.requestFrameRateIfChanged() }
+            }
+        }
         renderer.onNeedsKeyFrame = { [weak self] in
             Task { @MainActor in self?.send(.requestKeyFrame) }
         }
@@ -204,6 +213,14 @@ final class HostSession {
             guard !Task.isCancelled else { return }
             self?.notices.removeAll { $0.kind == notice.kind }
         }
+    }
+
+    /// 低電力モードのときや本体が熱いときは、映像の枚数を半分にしてもらい、復号と描画の電池と熱を抑える。
+    private func requestFrameRateIfChanged() {
+        let rate = PreferredFrameRate.choose(isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled, thermalState: ProcessInfo.processInfo.thermalState)
+        guard rate != requestedFrameRate, phase == .connected else { return }
+        requestedFrameRate = rate
+        send(.videoFrameRate(rate))
     }
 
     /// 映像を止めたら、前の映像の状態を出したままにしない。
@@ -317,6 +334,8 @@ final class HostSession {
     }
 
     func close() {
+        powerObservers.forEach(NotificationCenter.default.removeObserver)
+        powerObservers = []
         commitAppSwitch()
         stopVoiceInputStartedHere()
         stopMicrophone()
@@ -448,6 +467,8 @@ final class HostSession {
                 sendMacAudioCodec()
                 send(.macAudio(isEnabled: true))
             }
+            requestedFrameRate = PreferredFrameRate.normal
+            requestFrameRateIfChanged()
             startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status

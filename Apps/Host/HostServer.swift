@@ -53,6 +53,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
     private var macAudio: MacAudioCapture?
+    // iPad が頼んだ毎秒の枚数。低電力モードや本体が熱いときに少なく頼まれる
+    private var videoFrameRate = PreferredFrameRate.normal
     // 映像を送っている間、iPad の「接続の状態」に映像の状態を送る
     private var statsTimer: DispatchSourceTimer?
     // iPad に知らせた、回線に合わせて画質を下げているか。同じことを何度も知らせない
@@ -416,6 +418,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             } else {
                 stopTypeless(message, requestCount: requestCount)
             }
+        case let .videoFrameRate(rate):
+            setVideoFrameRate(rate)
         case let .macAudioCodec(codec):
             macAudioCodec = codec
         case let .macAudio(isEnabled):
@@ -509,6 +513,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 新しい iPad が来たら古いセッションは捨てる。同時に操作されると入力が混ざるため
         closeSession()
         control = channel
+        videoFrameRate = PreferredFrameRate.normal
         macAudioCodec = .pcm
         isVideoQualityReduced = false
         // つなぎ直しの原因を後から追えるよう、どの経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信 awdl か) かも記録する
@@ -561,7 +566,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         let displayID = selection.shownID ?? CGMainDisplayID()
         let streamer = ScreenStreamer(
             channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion,
-            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate,
+            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate, frameRate: videoFrameRate,
             onQualityChange: { [weak self] isReduced in
                 self?.queue.async { self?.videoQualityChanged(isReduced) }
             }
@@ -586,6 +591,17 @@ nonisolated final class HostServer: @unchecked Sendable {
                     }
                 }
             }
+        }
+    }
+
+    private func setVideoFrameRate(_ requested: Int) {
+        let rate = min(max(requested, PreferredFrameRate.range.lowerBound), PreferredFrameRate.range.upperBound)
+        guard rate != videoFrameRate else { return }
+        videoFrameRate = rate
+        Self.logger.notice("iPad の頼みで、映像を毎秒 \(rate) 枚までにする")
+        // 取り込みの間隔とエンコーダの想定は作るときに決まるので、作り直す
+        if let video, streamer != nil {
+            startStreamer(on: video)
         }
     }
 

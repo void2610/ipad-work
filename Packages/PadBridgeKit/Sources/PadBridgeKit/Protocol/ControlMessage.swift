@@ -88,6 +88,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case videoQuality(isReduced: Bool)
     /// Mac から iPad へ。映像を送っている間、2 秒ごとに送る映像の状態。iPad の「接続の状態」に出す。
     case videoStats(VideoStats)
+    /// iPad から Mac へ。受けたい映像の毎秒の枚数 (`PreferredFrameRate`)。つないだときに 60 でなければ送り、変わったときにも送る。
+    case videoFrameRate(Int)
     /// iPad から Mac へ。映像として送ってほしい画面の範囲。拡大している間は見えている範囲だけを高い解像度で送ってもらう。
     case videoRegion(VideoRegion)
     /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。

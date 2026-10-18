@@ -17,6 +17,9 @@ struct ConnectionStatsView: View {
                             row("届いている映像", String(format: "毎秒 %.0f 枚・%.1f Mbps", rate.framesPerSecond, rate.megabitsPerSecond))
                         }
                         row("往復の遅れ", stats.roundTripMillis.map { "\($0) ms" } ?? "この Mac は測らない")
+                        if let frameRate = stats.frameRate {
+                            row("毎秒の上限", frameRate < PreferredFrameRate.normal ? "\(frameRate) 枚 (低電力モードか本体が熱いので減らしています)" : "\(frameRate) 枚")
+                        }
                     } else {
                         Text("映像の状態が Mac から届くのを待っています")
                             .foregroundStyle(.secondary)

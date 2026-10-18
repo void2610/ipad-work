@@ -11,14 +11,17 @@ public struct VideoStats: Codable, Sendable, Equatable {
     public var maximumBitRate: Int
     /// Mac がフレームを送ってから、iPad の受け取りの返事が届くまで (ミリ秒、ならした値)。返事を返さない iPad では nil。
     public var roundTripMillis: Int?
+    /// 取り込む毎秒の枚数の上限。iPad が低電力モードなどで少なく頼んだときに分かるように。
+    public var frameRate: Int?
 
-    public init(codec: VideoCodec, width: Int, height: Int, bitRate: Int, maximumBitRate: Int, roundTripMillis: Int?) {
+    public init(codec: VideoCodec, width: Int, height: Int, bitRate: Int, maximumBitRate: Int, roundTripMillis: Int?, frameRate: Int? = nil) {
         self.codec = codec
         self.width = width
         self.height = height
         self.bitRate = bitRate
         self.maximumBitRate = maximumBitRate
         self.roundTripMillis = roundTripMillis
+        self.frameRate = frameRate
     }
 
     /// 往復の遅れは 1 枚ごとに揺れるので、新しい値を 2 割ずつ混ぜてならす。

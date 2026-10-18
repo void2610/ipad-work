@@ -46,6 +46,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let roundTrip = Mutex<TimeInterval?>(nil)
     private let initialBitRate: Int?
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
+    private let frameRate: Int
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
     private var region = VideoRegion.full
     private var configuration: SCStreamConfiguration?
@@ -59,9 +60,11 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。取り込みのキューから呼ばれる。
     init(
         channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion,
-        isAcknowledged: Bool = false, initialBitRate: Int? = nil, onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)? = nil
+        isAcknowledged: Bool = false, initialBitRate: Int? = nil, frameRate: Int = PreferredFrameRate.normal,
+        onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)? = nil
     ) {
         self.channel = channel
+        self.frameRate = frameRate
         self.onQualityChange = onQualityChange
         flow = Mutex(VideoFlowControl(isAcknowledged: isAcknowledged))
         self.initialBitRate = initialBitRate
@@ -88,7 +91,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         let captureSize = initialRegion.isFull ? size : native
         configuration.width = captureSize.width
         configuration.height = captureSize.height
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.showsCursor = true
         configuration.queueDepth = 4
@@ -108,10 +111,10 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         // HEVC は同じビットレートで文字がにじみにくい (流れる文字の輝度の PSNR で H.264 の 27dB に対し 40dB)。作れない Mac では H.264 にする
         let encoder: VideoEncoder
         do {
-            encoder = try VideoEncoder(codec: .hevc, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60, output: output)
+            encoder = try VideoEncoder(codec: .hevc, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: frameRate, output: output)
         } catch {
             Self.logger.notice("HEVC のエンコーダを作れないので H.264 にする: \(error, privacy: .public)")
-            encoder = try VideoEncoder(codec: .h264, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60, output: output)
+            encoder = try VideoEncoder(codec: .h264, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: frameRate, output: output)
         }
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -184,7 +187,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         let roundTrip = roundTrip.withLock { $0 }
         return VideoStats(
             codec: codec, width: size.width, height: size.height, bitRate: rates.current, maximumBitRate: rates.maximum,
-            roundTripMillis: roundTrip.map { Int(($0 * 1000).rounded()) }
+            roundTripMillis: roundTrip.map { Int(($0 * 1000).rounded()) }, frameRate: frameRate
         )
     }
 
