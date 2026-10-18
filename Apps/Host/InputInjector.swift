@@ -12,6 +12,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var pressedKeys: Set<UInt16> = []
     private var scrollRemainder = CGPoint.zero
     private var location = CGPoint.zero
+    // iPad に映している画面。タッチの位置はこの画面の上の割合で届く
+    private var displayID: CGDirectDisplayID?
     private var typeless = TypelessToggle()
     private var heldModifiers = HeldModifiers()
     private let queue: DispatchQueue
@@ -46,6 +48,16 @@ nonisolated final class InputInjector: @unchecked Sendable {
         default:
             break
         }
+    }
+
+    func setDisplay(_ displayID: CGDirectDisplayID?) {
+        self.displayID = displayID
+    }
+
+    /// 映す画面を選び直したときに、ポインタをその画面の中央へ動かす。
+    /// Mission Control など、画面ごとの操作スペースではポインタのある画面に効く操作を、映している画面に効かせるため。
+    func moveToDisplayCenter() {
+        move(to: screenPoint(NormalizedPoint(x: 0.5, y: 0.5)))
     }
 
     /// Typeless のマイクが動き出したり止まったりしたときに呼ぶ。
@@ -126,9 +138,14 @@ nonisolated final class InputInjector: @unchecked Sendable {
         return shortcut
     }
 
+    private var displayBounds: CGRect {
+        CGDisplayBounds(displayID ?? CGMainDisplayID())
+    }
+
     private func screenPoint(_ point: NormalizedPoint) -> CGPoint {
-        let bounds = CGDisplayBounds(CGMainDisplayID())
-        return CGPoint(x: bounds.minX + point.x * bounds.width, y: bounds.minY + point.y * bounds.height)
+        let bounds = displayBounds
+        // 右端と下端 (割合 1) は隣の画面の端にあたるので、映している画面の内側に収める
+        return CGPoint(x: min(bounds.minX + point.x * bounds.width, bounds.maxX - 1), y: min(bounds.minY + point.y * bounds.height, bounds.maxY - 1))
     }
 
     private func move(to point: CGPoint) {
@@ -157,7 +174,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     }
 
     private func scroll(dx: Double, dy: Double) {
-        let bounds = CGDisplayBounds(CGMainDisplayID())
+        let bounds = displayBounds
         // 端数を持ち越さないと、ゆっくり動かしたときに 1 ピクセル未満の移動が全部消える
         scrollRemainder.x += dx * bounds.width
         scrollRemainder.y += dy * bounds.height

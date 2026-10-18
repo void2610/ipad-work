@@ -27,8 +27,13 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var streamer: ScreenStreamer?
     // 映像の要求で受け取った、iPad が表示できる最大の大きさ。画面の構成が変わって取り込みを作り直すときにも使う
     private var videoMaxSize = (width: 0, height: 0)
-    // 取り込みを始めたときのメインディスプレイ。解像度や画面が変わったら、取り込みを作り直す
+    // 取り込みを始めたときの画面。解像度や置き場所が変わったら、取り込みを作り直す
     private var streamedDisplay: DisplayLayout?
+    // 映せる画面。名前はメインスレッドでしか読めないので、そこで読んだものを持っておく
+    private var displays: [RemoteDisplay] = []
+    // iPad に映している画面。iPad で選ばれた画面がつながっていればそれ、なければメインディスプレイ
+    private var shownDisplayID: CGDirectDisplayID?
+    private static let preferredDisplayKey = "preferredDisplayUUID"
     private var screenObserver: (any NSObjectProtocol)?
     private var displayChange: DispatchWorkItem?
     // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
@@ -83,6 +88,7 @@ nonisolated final class HostServer: @unchecked Sendable {
                 guard let self else { return }
                 queue.async { self.screenParametersChanged() }
             }
+            self.refreshDisplays()
         }
     }
 
@@ -308,13 +314,15 @@ nonisolated final class HostServer: @unchecked Sendable {
         case let .macAudio(isEnabled):
             Self.logger.notice("Mac の音を iPad で鳴らす: \(isEnabled ? "始める" : "やめる", privacy: .public)")
             setMacAudio(isEnabled, on: channel)
+        case let .selectDisplay(id):
+            selectDisplay(id)
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -393,6 +401,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         setUpTypelessMicrophone(after: 5)
         channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
         channel.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
+        sendDisplays()
         onClientChange(deviceName)
     }
 
@@ -414,9 +423,10 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func startStreamer(on channel: MessageChannel) {
         streamer?.stop()
-        let streamer = ScreenStreamer(channel: channel, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion)
+        let displayID = shownDisplayID ?? CGMainDisplayID()
+        let streamer = ScreenStreamer(channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion)
         self.streamer = streamer
-        streamedDisplay = DisplayLayout.main()
+        streamedDisplay = DisplayLayout(of: displayID)
         Task {
             do {
                 try await streamer.start()
@@ -438,17 +448,71 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// 取り込みは始めたときの画面の大きさのまま続き、触った位置とずれるので、解像度やメインディスプレイが変わったら作り直す。
     private func screenParametersChanged() {
         displayChange?.cancel()
-        // 1 回の変更で続けて届くことがあるので、落ち着いてから 1 度だけ作り直す
-        let change = DispatchWorkItem { [weak self] in
-            guard let self, let video, streamer != nil, streamedDisplay != DisplayLayout.main() else { return }
-            Self.logger.notice("Mac の画面の構成が変わったので、取り込みを作り直す")
-            startStreamer(on: video)
-        }
+        // 1 回の変更で続けて届くことがあるので、落ち着いてから 1 度だけ読み直す
+        let change = DispatchWorkItem { [weak self] in self?.refreshDisplays() }
         displayChange = change
         queue.asyncAfter(deadline: .now() + 0.5, execute: change)
+    }
+
+    /// 画面の名前は NSScreen からしか読めないので、メインスレッドで読んでから受け取る。
+    private func refreshDisplays() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let displays = MainActor.assumeIsolated { DisplayCatalog.current() }
+            queue.async { self.displaysChanged(displays) }
+        }
+    }
+
+    /// 選ばれた画面が外れたらメインディスプレイを映し、つなぎ直されたらまた選ばれた画面を映す。
+    /// 取り込みは始めたときの画面の大きさのまま続き、触った位置とずれるので、映す画面やその解像度・置き場所が変わったら作り直す。
+    private func displaysChanged(_ newDisplays: [RemoteDisplay]) {
+        let previous = (displays, shownDisplayID)
+        displays = newDisplays
+        let shown = RemoteDisplay.shown(preferred: preferredDisplayID(), in: newDisplays)
+        if shown != shownDisplayID {
+            show(shown)
+        }
+        if (displays, shownDisplayID) != previous {
+            Self.logger.notice("映せる画面: \(newDisplays.map(\.label).joined(separator: "、"), privacy: .public)")
+            sendDisplays()
+        }
+        guard let video, streamer != nil, let shownDisplayID, streamedDisplay != DisplayLayout(of: shownDisplayID) else { return }
+        Self.logger.notice("Mac の画面の構成が変わったので、取り込みを作り直す")
+        startStreamer(on: video)
+    }
+
+    /// iPad で選ばれた画面を覚えて映す。
+    private func selectDisplay(_ id: CGDirectDisplayID) {
+        guard let display = displays.first(where: { $0.id == id }) else { return }
+        Self.logger.notice("映す画面を選んだ: \(display.label, privacy: .public)")
+        if let uuid = DisplayCatalog.uuid(of: id) {
+            UserDefaults.standard.set(uuid, forKey: Self.preferredDisplayKey)
+        }
+        guard id != shownDisplayID else { return }
+        show(id)
+        inputQueue.async { [injector] in injector.moveToDisplayCenter() }
+        sendDisplays()
+        if let video, streamer != nil {
+            startStreamer(on: video)
+        }
+    }
+
+    private func show(_ displayID: CGDirectDisplayID?) {
+        shownDisplayID = displayID
+        // 前の画面で拡大していた範囲は、別の画面では意味がない。iPad も画面が替わると拡大を戻す
+        videoRegion = .full
+        inputQueue.async { [injector] in injector.setDisplay(displayID) }
+    }
+
+    private func sendDisplays() {
+        guard let shownDisplayID else { return }
+        control?.send(.control(.displays(displays, shownID: shownDisplayID)))
+    }
+
+    private func preferredDisplayID() -> CGDirectDisplayID? {
+        UserDefaults.standard.string(forKey: Self.preferredDisplayKey).flatMap(DisplayCatalog.id(ofUUID:))
     }
 
     private func stopVideo() {

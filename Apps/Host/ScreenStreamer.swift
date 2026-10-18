@@ -11,23 +11,26 @@ enum ScreenStreamerError: Error {
     case displayNotFound
 }
 
-/// メインディスプレイと、その大きさ。取り込みを作り直すべき変化かを見分ける。
+/// 映している画面と、その大きさ。取り込みを作り直すべき変化かを見分ける。
 nonisolated struct DisplayLayout: Equatable {
     var displayID: CGDirectDisplayID
     var bounds: CGRect
     var pixelWidth: Int
     var pixelHeight: Int
 
-    static func main() -> DisplayLayout {
-        let displayID = CGMainDisplayID()
+    init(of displayID: CGDirectDisplayID) {
         let mode = CGDisplayCopyDisplayMode(displayID)
-        return DisplayLayout(displayID: displayID, bounds: CGDisplayBounds(displayID), pixelWidth: mode?.pixelWidth ?? 0, pixelHeight: mode?.pixelHeight ?? 0)
+        self.displayID = displayID
+        bounds = CGDisplayBounds(displayID)
+        pixelWidth = mode?.pixelWidth ?? 0
+        pixelHeight = mode?.pixelHeight ?? 0
     }
 }
 
-/// メインディスプレイを取り込み、H.264 にして映像用の接続へ流す。
+/// 画面を 1 台取り込み、H.264 にして映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let channel: MessageChannel
+    private let displayID: CGDirectDisplayID
     private let maxWidth: Int
     private let maxHeight: Int
     private let sampleQueue = DispatchQueue(label: "dev.void2610.padbridge.host.capture")
@@ -47,8 +50,9 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var outputPool: CVPixelBufferPool?
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
-    init(channel: MessageChannel, maxWidth: Int, maxHeight: Int, region: VideoRegion) {
+    init(channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion) {
         self.channel = channel
+        self.displayID = displayID
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
         self.region = region
@@ -56,8 +60,8 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let mainDisplayID = CGMainDisplayID()
-        guard let display = content.displays.first(where: { $0.displayID == mainDisplayID }) ?? content.displays.first else {
+        // 別の画面で代わりに映すと、触った位置がその画面に届かないので、見つからなければ始めない
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw ScreenStreamerError.displayNotFound
         }
         let filter = SCContentFilter(display: display, excludingWindows: [])
@@ -118,7 +122,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         }
         guard shouldStart else { return }
         try await stream.startCapture()
-        Self.logger.info("画面の取り込みを開始: \(size.width)x\(size.height)、\(bitRate / 1_000_000) Mbps")
+        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(bitRate / 1_000_000) Mbps")
     }
 
     func stop() {
