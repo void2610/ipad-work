@@ -439,8 +439,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .mouseMove, .mouseButton, .scroll, .key:
+        case .mouseMove, .mouseButton, .scroll:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
+            inputQueue.async { [injector] in injector.handle(message) }
+        case .key:
+            // 押したキーは記録に残さない (パスワードも打つため)
             inputQueue.async { [injector] in injector.handle(message) }
         case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .videoStats, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
