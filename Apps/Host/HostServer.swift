@@ -18,6 +18,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let onListenerChange: @Sendable (String) -> Void
     private let onStatusChange: @Sendable (HostStatus) -> Void
     private let onMacAudioChange: @Sendable (Bool) -> Void
+    private let onShownDisplayChange: @Sendable (String?) -> Void
     private let injector: InputInjector
 
     private var listener: NWListener?
@@ -73,13 +74,15 @@ nonisolated final class HostServer: @unchecked Sendable {
         onClientChange: @escaping @Sendable (String?) -> Void,
         onListenerChange: @escaping @Sendable (String) -> Void,
         onStatusChange: @escaping @Sendable (HostStatus) -> Void,
-        onMacAudioChange: @escaping @Sendable (Bool) -> Void
+        onMacAudioChange: @escaping @Sendable (Bool) -> Void,
+        onShownDisplayChange: @escaping @Sendable (String?) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
         self.onListenerChange = onListenerChange
         self.onStatusChange = onStatusChange
         self.onMacAudioChange = onMacAudioChange
+        self.onShownDisplayChange = onShownDisplayChange
         injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
@@ -679,6 +682,9 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func sendDisplays() {
+        // Mac の前にいる人にも、iPad がどの画面を見ているかを Host のメニューで見せる (画面が 2 台以上のときだけ)
+        let shown = selection.displays.first { $0.id == selection.shownID }
+        onShownDisplayChange(control != nil && selection.hasMultipleDisplays ? shown?.label : nil)
         guard let announcement = selection.announcement else { return }
         control?.send(.control(announcement))
     }
@@ -704,6 +710,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         self.control = nil
         // 押し直しや補助アプリの返事を待っている要求が、切れたあとで Typeless を始めないようにする
         voiceInputRequests.cancelAll()
+        onShownDisplayChange(nil)
         typeless?.stop()
         stopMacAudio()
         microphone?.endListening()

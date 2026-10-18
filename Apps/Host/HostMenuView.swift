@@ -16,6 +16,11 @@ struct HostMenuView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if let display = controller.shownDisplayOnPad {
+                Label("iPad に映している画面: \(display)", systemImage: "display")
+                    .font(.caption)
+            }
+
             // Mac の前にいる人が、Mac から音が出ない理由を分かるようにする
             if controller.isPlayingMacAudioOnPad {
                 Label("Mac の音は iPad で鳴らしています。Mac のスピーカーからは鳴りません。", systemImage: "speaker.wave.2")

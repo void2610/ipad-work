@@ -17,6 +17,8 @@ final class HostController {
     private(set) var typelessCannotReadPadMicrophone = false
     /// Mac の音を iPad で鳴らしていて、Mac のスピーカーからは鳴らない。
     private(set) var isPlayingMacAudioOnPad = false
+    /// iPad に映している画面。iPad がつながっていて、画面が 2 台以上あるときだけ。
+    private(set) var shownDisplayOnPad: String?
     /// ログインしたときに Host を起動するか。蓋を閉じた Mac では、再起動のあと Host を手で開けないため。
     private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -117,6 +119,9 @@ final class HostController {
             },
             onMacAudioChange: { [weak self] isPlaying in
                 Task { @MainActor in self?.isPlayingMacAudioOnPad = isPlaying }
+            },
+            onShownDisplayChange: { [weak self] label in
+                Task { @MainActor in self?.shownDisplayOnPad = label }
             }
         )
         server.start()
