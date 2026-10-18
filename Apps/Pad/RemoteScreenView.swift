@@ -19,6 +19,7 @@ struct RemoteScreenView: UIViewRepresentable {
     func updateUIView(_ view: RemoteScreenUIView, context _: Context) {
         view.videoSize = session.videoSize
         view.shownRegion = session.videoRegion
+        view.displayID = session.shownDisplayID
     }
 }
 
@@ -37,6 +38,16 @@ final class RemoteScreenUIView: UIView {
     }
     private var regionRequestTimer: Timer?
     var videoSize = CGSize.zero
+    /// 映している Mac の画面。別の画面に替わったら、拡大を戻す。
+    var displayID: UInt32? {
+        didSet {
+            guard oldValue != nil, displayID != oldValue else { return }
+            regionRequestTimer?.invalidate()
+            stopMomentum()
+            zoom = ScreenZoom()
+            setNeedsLayout()
+        }
+    }
 
     private let displayLayer: AVSampleBufferDisplayLayer
     // ビューの座標での、画面の下端に付いたキーボードの上端。キーボードがなければ無限大

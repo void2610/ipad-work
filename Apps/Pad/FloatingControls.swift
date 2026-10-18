@@ -63,6 +63,16 @@ struct FloatingControls: View {
             }
             PanelButton(title: "アプリ切替", systemImage: "rectangle.2.swap", isActive: false, action: session.switchApp)
             Menu {
+                if session.displays.count > 1 {
+                    Section("映す画面") {
+                        Picker("映す画面", selection: Binding(get: { session.shownDisplayID ?? 0 }, set: { session.selectDisplay($0) })) {
+                            ForEach(session.displays) { display in
+                                Text(display.label).tag(display.id)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
+                }
                 Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {

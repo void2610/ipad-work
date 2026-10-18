@@ -30,6 +30,10 @@ final class HostSession {
     /// Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らない。
     /// 裏に回っている間は Mac で鳴らす。iPad をしまったまま Mac を開いたときに、Mac が無音のままにならないように。
     private(set) var playsMacAudio = UserDefaults.standard.bool(forKey: HostSession.playsMacAudioKey)
+    /// Mac につながっている、映せる画面。2 台以上あれば、映す画面を選べる。
+    private(set) var displays: [RemoteDisplay] = []
+    /// 今映している Mac の画面。
+    private(set) var shownDisplayID: UInt32?
 
     /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
     @ObservationIgnored var microphoneLevel: Float {
@@ -109,6 +113,22 @@ final class HostSession {
         guard region != requestedRegion else { return }
         requestedRegion = region
         send(.videoRegion(region))
+    }
+
+    func selectDisplay(_ id: UInt32) {
+        guard id != shownDisplayID else { return }
+        showDisplay(id)
+        send(.selectDisplay(id: id))
+    }
+
+    private func showDisplay(_ id: UInt32) {
+        guard id != shownDisplayID else { return }
+        let isSwitching = shownDisplayID != nil
+        shownDisplayID = id
+        guard isSwitching else { return }
+        // 前の画面で拡大していた範囲は、別の画面では意味がない。画面を替える前に頼んだ範囲が後から届いても、全体に戻させる
+        requestedRegion = .full
+        send(.videoRegion(.full))
     }
 
     func setPlaysMacAudio(_ isEnabled: Bool) {
@@ -308,6 +328,9 @@ final class HostSession {
             startVideoIfNeeded()
         case let .hostStatus(status):
             hostStatus = status
+        case let .displays(displays, shownID):
+            self.displays = displays
+            showDisplay(shownID)
         case let .voiceInputState(isActive):
             isVoiceInputActive = isActive
             if !isActive {
