@@ -40,6 +40,14 @@ struct GestureGuideView: View {
             Item(gesture: "アプリ切替", action: "⌘Tab。タップごとに次のアプリへ進み、1 秒で確定"),
             Item(gesture: "パネルをドラッグ", action: "好きな隅へ動かす"),
         ]),
+        ("「…」の中", [
+            Item(gesture: "映す画面", action: "Mac に画面が 2 台以上あるとき、iPad に映す画面を選ぶ"),
+            Item(gesture: "手前のウィンドウを移す", action: "手前のウィンドウを選んだ画面へ移し、その画面を映す"),
+            Item(gesture: "Mac の音を iPad で鳴らす", action: "Mac で鳴っている音を iPad で鳴らす (その間 Mac のスピーカーは鳴らない)"),
+            Item(gesture: "Mac のショートカット", action: "iPadOS が受け取ってしまうショートカットを Mac へ送る"),
+            Item(gesture: "接続の状態", action: "映像の画質・届いている枚数・往復の遅れを見る (遅い・カクつくとき)"),
+            Item(gesture: "切断", action: "Mac との接続を切って、Mac の一覧に戻る"),
+        ]),
     ]
 
     var body: some View {
