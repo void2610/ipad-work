@@ -66,7 +66,8 @@ final class HostController {
         // 新旧が同時に動くと Bonjour 名が「(2)」付きに変わり、iPad が名前で覚えている接続先から外れるため、終了してから起動し直す
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        // 古い Host が終わるのを待ってから開く。決まった時間だけ待つと、終わるのが遅れたときに古い方を前に出すだけで終わり、Host が 1 つも残らない
+        process.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; /usr/bin/open \"$0\"", Bundle.main.bundlePath, String(ProcessInfo.processInfo.processIdentifier)]
         try? process.run()
         NSApp.terminate(nil)
     }
