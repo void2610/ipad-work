@@ -335,6 +335,8 @@ final class HostSession {
         isVoiceInputStartedHere = false
         // つなぎ直すまで Mac の文字入力の状態は分からない。つなぎ直すと Mac から届く
         macInputMode = nil
+        // 切れたときに Mac は押したままのものを離すので、iPad も修飾キーを押したつもりのまま残さない
+        pointerModifiers = PointerModifierHold()
         stopMicrophone()
         replaceControl(with: nil)
         stopVideo()
