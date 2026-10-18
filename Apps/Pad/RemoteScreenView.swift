@@ -18,6 +18,7 @@ struct RemoteScreenView: UIViewRepresentable {
 
     func updateUIView(_ view: RemoteScreenUIView, context _: Context) {
         view.videoSize = session.videoSize
+        view.isVideoShown = session.isVideoShown
         view.shownRegion = session.videoRegion
         view.displayID = session.shownDisplayID
     }
@@ -42,6 +43,12 @@ final class RemoteScreenUIView: UIView {
         // 画面を替えると、替えた知らせで一度置き直したあとに新しい画面の大きさが届く。そのときも置き直さないと、映像が前の画面の縦横比の枠に縮んで描かれ、触った位置とずれる
         didSet {
             if videoSize != oldValue { setNeedsLayout() }
+        }
+    }
+    /// 映像を映しているか。映していない間は Mac のポインタも見えないので、iPad のポインタを隠さない。
+    var isVideoShown = false {
+        didSet {
+            if isVideoShown != oldValue { pointerInteraction?.invalidate() }
         }
     }
     /// 映している Mac の画面。別の画面に替わったら、拡大を戻す。
@@ -450,8 +457,10 @@ enum HardwareKeys {
 // Mac の画面の上では iPad のポインタを隠し、映像に描かれた Mac のポインタだけを見せる。両方だと二重に見え、形 (I ビームなど) は Mac 側にしかない
 extension RemoteScreenUIView: UIPointerInteractionDelegate {
     func pointerInteraction(_: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion _: UIPointerRegion) -> UIPointerRegion? {
-        let screen = videoRect.intersection(bounds)
-        // 上下や左右の黒い帯では Mac のポインタが端で止まるので、iPad のポインタを出したままにする
+        // 映像が届く前は映像の範囲が画面全体になるが、Mac のポインタはまだ見えない
+        guard isVideoShown else { return nil }
+        // 上下や左右の黒い帯と、拡大した映像がキーボードの下に回り込んだところでは、iPad のポインタを出したままにする
+        let screen = videoRect.intersection(screenArea)
         return screen.contains(request.location) ? UIPointerRegion(rect: screen) : nil
     }
 

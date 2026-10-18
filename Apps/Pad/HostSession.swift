@@ -33,6 +33,8 @@ final class HostSession {
     private var reachabilityTask: Task<Void, Never>?
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
+    /// 映像を映しているか。映像の接続を張り直している間は、前の大きさが残っていても映していない。
+    private(set) var isVideoShown = false
     /// 今表示している映像に写っている、Mac の画面の範囲。
     private(set) var videoRegion = VideoRegion.full
     // 送ってほしいと頼んだ範囲。つなぎ直したときに頼み直す
@@ -51,8 +53,9 @@ final class HostSession {
     /// Mac の文字入力が英数とかなのどちらか。古い Host からは届かないので nil のままになる。
     private(set) var macInputMode: MacInputMode?
     /// 映す画面が替わったときや、回線に合わせて画質を変えたときに、少しの間だけ出す知らせ。Mac が自分で替えたときも、何が起きたか分かるように。
-    private(set) var notice: TransientNotice?
-    private var noticeTask: Task<Void, Never>?
+    /// 種類ごとに持ち、画面を替えた知らせで画質を下げた知らせが消えないようにする。
+    private(set) var notices: [TransientNotice] = []
+    private var noticeTasks: [TransientNotice.Kind: Task<Void, Never>] = [:]
 
     /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
     @ObservationIgnored var microphoneLevel: Float {
@@ -102,6 +105,7 @@ final class HostSession {
         renderer.onVideoSizeChange = { [weak self] size in
             Task { @MainActor in
                 self?.videoSize = size
+                self?.isVideoShown = true
                 // 映像が届いたので、張り直す間隔を戻す
                 self?.videoRetryDelay = .milliseconds(500)
             }
@@ -181,17 +185,27 @@ final class HostSession {
 
     private func announceDisplay(_ id: UInt32) {
         guard let display = displays.first(where: { $0.id == id }) else { return }
-        showNotice(TransientNotice(text: "\(display.label) を映しています", systemImage: "display"))
+        showNotice(TransientNotice(kind: .display, text: "\(display.label) を映しています", systemImage: "display"))
     }
 
     private func showNotice(_ notice: TransientNotice, for duration: Duration = .seconds(2)) {
-        self.notice = notice
-        noticeTask?.cancel()
-        noticeTask = Task { [weak self] in
+        if let index = notices.firstIndex(where: { $0.kind == notice.kind }) {
+            notices[index] = notice
+        } else {
+            notices.append(notice)
+        }
+        noticeTasks[notice.kind]?.cancel()
+        noticeTasks[notice.kind] = Task { [weak self] in
             try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
-            self?.notice = nil
+            self?.notices.removeAll { $0.kind == notice.kind }
         }
+    }
+
+    private func clearNotices() {
+        noticeTasks.values.forEach { $0.cancel() }
+        noticeTasks = [:]
+        notices = []
     }
 
     func setPlaysMacAudio(_ isEnabled: Bool) {
@@ -300,6 +314,9 @@ final class HostSession {
         videoRetryTask?.cancel()
         replaceControl(with: nil)
         stopVideo()
+        clearNotices()
+        // 次につないだときに、前の接続でためた Mac の音が鳴らないように
+        BackgroundAudio.shared.macAudio.reset()
         BackgroundAudio.shared.stop()
     }
 
@@ -431,8 +448,8 @@ final class HostSession {
         case let .videoQuality(isReduced):
             // 映像がぼやけたり戻ったりした理由が分かるように
             let notice = isReduced
-                ? TransientNotice(text: "回線が遅いため、画質を下げています", systemImage: "wifi.exclamationmark")
-                : TransientNotice(text: "画質を戻しました", systemImage: "wifi")
+                ? TransientNotice(kind: .quality, text: "回線が遅いため、画質を下げています", systemImage: "wifi.exclamationmark")
+                : TransientNotice(kind: .quality, text: "画質を戻しました", systemImage: "wifi")
             showNotice(notice, for: .seconds(3))
         case let .voiceInputState(isActive):
             isVoiceInputActive = isActive
@@ -451,6 +468,7 @@ final class HostSession {
         guard phase == .connected, isForeground, video == nil, !isClosed else { return }
         videoRetryTask?.cancel()
         let renderer = renderer
+        isVideoShown = false
         videoQueue.async { renderer.reset() }
         let channel = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge()), queue: videoQueue)
         video = channel
@@ -483,11 +501,13 @@ final class HostSession {
     private func stopVideo() {
         let old = video
         video = nil
+        isVideoShown = false
         old?.cancel()
     }
 
     private func videoLost() {
         video = nil
+        isVideoShown = false
         let delay = videoRetryDelay
         videoRetryDelay = min(videoRetryDelay * 2, .seconds(5))
         videoRetryTask = Task { [weak self] in
@@ -513,7 +533,17 @@ enum HIDUsage {
 }
 
 /// 画面の上に少しの間だけ出す知らせ。
-struct TransientNotice: Equatable {
+struct TransientNotice: Equatable, Identifiable {
+    enum Kind {
+        case display
+        case quality
+    }
+
+    var kind: Kind
     var text: String
     var systemImage: String
+
+    var id: Kind {
+        kind
+    }
 }
