@@ -43,6 +43,8 @@ public struct VideoFlowControl: Sendable {
     private var recentRoundTrips: [(time: TimeInterval, value: TimeInterval)] = []
     // 60fps で 9 枚ほど。0.1 秒だと揺れで全部が遅れた窓を詰まりと取り (往復 80ms・揺れ 30ms で 3.1 Mbps まで下げた)、0.2 秒だと詰まりに気づくまでに遅れが積み上がった
     static let recentWindow: TimeInterval = 0.15
+    // 返事がこれだけ来なければ、途切れたとみなす。揺れで返事の間が 0.15 秒空くことはあるので、直近の窓より長くする (同じ長さだと、往復 80ms・揺れ 30ms で 5.2 Mbps まで下げた)
+    static let acknowledgementGap: TimeInterval = 0.3
     /// iPad が返事を返すと分かったか。返事を返さない古い iPad アプリには、送り待ちの数で間引く。
     public private(set) var isAcknowledged = false
 
@@ -71,8 +73,11 @@ public struct VideoFlowControl: Sendable {
         guard isAcknowledged, inFlight.count >= Self.maxInFlight, let oldest = inFlight.first else { return true }
         // 往復が長いだけの回線では、返事を待つ枚数が増えても遅れは積み上がらない。枚数で止めると、帯域に余裕があっても 3 枚 ÷ 往復しか送れず
         // (往復 80ms で毎秒 37 枚)、捨てた分でビットレートを下限まで下げていた。直近の往復の最小値がいつもの往復に近い間は、揺れで遅れても捨てない
-        if let base = baseRoundTrip, let recent = recentRoundTrips.map(\.value).min(), inFlight.count < Self.maxInFlightOnSlowRoundTrip {
-            let isQueueing = recent - base >= Self.queueingAllowance
+        if let base = baseRoundTrip, inFlight.count < Self.maxInFlightOnSlowRoundTrip {
+            // 返事が途切れたら、途切れる前の小さな往復で詰まっていないとみなさない (途切れた 1 秒に 30 枚を送り込んだ)
+            let isFresh = recentRoundTrips.last.map { time - $0.time <= Self.acknowledgementGap } ?? false
+            let recent = recentRoundTrips.map(\.value).min()
+            let isQueueing = !isFresh || recent.map { $0 - base >= Self.queueingAllowance } ?? true
             if !isQueueing || time - oldest.sentAt < base + Self.queueingAllowance {
                 return true
             }
@@ -101,7 +106,10 @@ public struct VideoFlowControl: Sendable {
         guard let first = delivered.first, let last = delivered.last else { return Delivery(bytes: 0, busyDuration: nil) }
         let bytes = delivered.reduce(0) { $0 + $1.bytes }
         let roundTrip = time - last.sentAt
-        recordRoundTrip(roundTrip, at: time)
+        // キーフレームは送るだけで時間がかかるので、その往復をいつもの往復に混ぜない (作り直した直後の最初の返事はキーフレーム)
+        if !last.isKeyFrame {
+            recordRoundTrip(roundTrip, at: time)
+        }
         guard let previousAcknowledgedAt, first.sentAt <= previousAcknowledgedAt, time > previousAcknowledgedAt else {
             return Delivery(bytes: bytes, busyDuration: nil, roundTrip: roundTrip)
         }

@@ -73,6 +73,36 @@ struct VideoFlowControlTests {
         #expect(allowed.allSatisfy { $0 })
     }
 
+    /// 返事が途切れたら、途切れる前の往復で詰まっていないとみなさず、0.3 秒ほどで止める (直す前は途切れた 1 秒に 31 枚を送った)。
+    @Test func stopsSoonAfterAcknowledgementsStop() {
+        var flow = VideoFlowControl()
+        for pts in Int64(0) ..< 60 {
+            flow.sent(presentationTimeMicros: pts, at: Double(pts) / 60)
+            flow.received(presentationTimeMicros: pts, at: Double(pts) / 60 + 0.01)
+        }
+        var sent = 0
+        for pts in Int64(60) ..< 120 {
+            let time = Double(pts) / 60
+            if flow.canSend(at: time) {
+                flow.sent(presentationTimeMicros: pts, at: time)
+                sent += 1
+            }
+        }
+        #expect(sent <= 20, "途切れた 1 秒に \(sent) 枚")
+    }
+
+    /// キーフレームは送るだけで時間がかかるので、その返事の往復をいつもの往復に混ぜない。
+    @Test func ignoresKeyFrameRoundTrip() {
+        var flow = VideoFlowControl()
+        flow.sent(presentationTimeMicros: 1, isKeyFrame: true, at: 0)
+        flow.received(presentationTimeMicros: 1, at: 0.4)
+        let afterKeyFrame = flow.baseRoundTrip
+        flow.sent(presentationTimeMicros: 2, at: 0.5)
+        flow.received(presentationTimeMicros: 2, at: 0.52)
+        #expect(afterKeyFrame == nil)
+        #expect(abs((flow.baseRoundTrip ?? 0) - 0.02) < 1e-9)
+    }
+
     /// 往復が長い回線でも、返事を待つフレームは 30 枚で止める。
     @Test func capsFramesInFlight() {
         var flow = VideoFlowControl()
