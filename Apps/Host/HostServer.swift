@@ -46,6 +46,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var inputMode: MacInputMode?
     // アプリが前に出るたびに増やす。続けて切り替えたときに、前のアプリの問い合わせが後から返っても使わない
     private var activationCount = 0
+    // ScreenCaptureKit の一覧にまだ載らない画面からメインへ落としたあと、選ばれた画面に戻れるかを読み直した回数
+    private var missingDisplayRetries = 0
     private var displayChange: DispatchWorkItem?
     // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
     private var displayAssertion: IOPMAssertionID?
@@ -652,6 +654,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         Task {
             do {
                 try await streamer.start()
+                self.queue.async {
+                    if self.streamer === streamer { self.missingDisplayRetries = 0 }
+                }
             } catch {
                 Self.logger.error("画面の取り込みを開始できない: \(error, privacy: .public)")
                 let isDisplayMissing = (error as? ScreenStreamerError) == .displayNotFound
@@ -662,6 +667,11 @@ nonisolated final class HostServer: @unchecked Sendable {
                         self.applyShownDisplay()
                         self.sendDisplays()
                         self.startStreamer(on: video)
+                        // つないだ直後の画面は、CoreGraphics に見えても ScreenCaptureKit の一覧に載るまで少しかかる。少し待って選ばれた画面に戻れるかを読み直す
+                        if self.missingDisplayRetries < 3 {
+                            self.missingDisplayRetries += 1
+                            self.queue.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refreshDisplays() }
+                        }
                     } else {
                         self.stopVideo()
                     }
@@ -745,6 +755,9 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func selectDisplay(_ id: CGDirectDisplayID) {
+        // 選ぶ直前のアプリ切替で待っている「ウィンドウを追う」処理が、あとから選んだ画面を替え直さないように
+        activationCount += 1
+        missingDisplayRetries = 0
         switchDisplay(to: id, reason: "映す画面を選んだ", movesPointer: true)
     }
 
@@ -754,15 +767,19 @@ nonisolated final class HostServer: @unchecked Sendable {
             sendDisplays()
             return
         }
-        let usableAreas = usableAreas
-        // アクセシビリティの操作は相手のアプリの応答を待つので、サーバーのキューの外で行う
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let isMoved = DisplayCatalog.moveFrontWindow(to: id, usableAreas: usableAreas)
-            guard let self else { return }
-            queue.async {
-                Self.logger.notice("手前のウィンドウを画面 \(id) へ: \(isMoved ? "移した" : "移せない", privacy: .public)")
-                guard isMoved else { return }
-                self.switchDisplay(to: id, reason: "手前のウィンドウを移した画面を映す", movesPointer: true)
+        activationCount += 1
+        // Dock やメニューバーの大きさや隠し方を変えても画面の構成の知らせは来ないので、移す直前に使える範囲を読み直す
+        DispatchQueue.main.async {
+            let usableAreas = MainActor.assumeIsolated { DisplayCatalog.current().usableAreas }
+            // アクセシビリティの操作は相手のアプリの応答を待つので、サーバーのキューの外で行う
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let isMoved = DisplayCatalog.moveFrontWindow(to: id, usableAreas: usableAreas)
+                guard let self else { return }
+                queue.async {
+                    Self.logger.notice("手前のウィンドウを画面 \(id) へ: \(isMoved ? "移した" : "移せない", privacy: .public)")
+                    guard isMoved else { return }
+                    self.switchDisplay(to: id, reason: "手前のウィンドウを移した画面を映す", movesPointer: true)
+                }
             }
         }
     }
@@ -810,7 +827,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         if let uuid = DisplayCatalog.uuid(of: id) {
             UserDefaults.standard.set(uuid, forKey: Self.preferredDisplayKey)
         }
-        guard result == .switched else { return }
+        // iPad は選んだ画面を先に映したことにしているので、もう映していたときも今の一覧を知らせ直して食い違いを残さない
+        guard result == .switched else {
+            sendDisplays()
+            return
+        }
         applyShownDisplay()
         if movesPointer {
             inputQueue.async { [injector] in injector.moveToDisplayCenter() }
