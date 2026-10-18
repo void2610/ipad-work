@@ -38,6 +38,9 @@ nonisolated final class HostServer: @unchecked Sendable {
     private static let preferredDisplayKey = "preferredDisplayUUID"
     private var screenObserver: (any NSObjectProtocol)?
     private var activationObserver: (any NSObjectProtocol)?
+    private var inputModeMonitor: InputModeMonitor?
+    // Mac の文字入力が英数とかなのどちらか。iPad の特殊キーの列で効いている方を示すのに送る
+    private var inputMode: MacInputMode?
     // アプリが前に出るたびに増やす。続けて切り替えたときに、前のアプリの問い合わせが後から返っても使わない
     private var activationCount = 0
     private var displayChange: DispatchWorkItem?
@@ -99,7 +102,30 @@ nonisolated final class HostServer: @unchecked Sendable {
                 queue.async { self.applicationActivated(pid) }
             }
             self.refreshDisplays()
+            self.startInputModeMonitor()
         }
+    }
+
+    /// 入力ソースはメインスレッドで読むので、見張りもメインスレッドで動かす。
+    private func startInputModeMonitor() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let monitor = MainActor.assumeIsolated {
+                let monitor = InputModeMonitor { [weak self] mode in
+                    guard let self else { return }
+                    queue.async { self.inputModeChanged(mode) }
+                }
+                monitor.start()
+                return monitor
+            }
+            queue.async { self.inputModeMonitor = monitor }
+        }
+    }
+
+    private func inputModeChanged(_ mode: MacInputMode) {
+        guard mode != inputMode else { return }
+        inputMode = mode
+        control?.send(.control(.macInputMode(mode)))
     }
 
     func stop() {
@@ -119,6 +145,10 @@ nonisolated final class HostServer: @unchecked Sendable {
             if let activationObserver = self.activationObserver {
                 NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
                 self.activationObserver = nil
+            }
+            if let monitor = self.inputModeMonitor {
+                self.inputModeMonitor = nil
+                DispatchQueue.main.async { MainActor.assumeIsolated { monitor.stop() } }
             }
         }
     }
@@ -340,7 +370,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -420,6 +450,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         channel.send(.control(.welcome(hostName: hostName, status: currentStatus())))
         channel.send(.control(.voiceInputState(isActive: TypelessMonitor.isRecording())))
         sendDisplays()
+        if let inputMode {
+            channel.send(.control(.macInputMode(inputMode)))
+        }
         onClientChange(deviceName)
     }
 
