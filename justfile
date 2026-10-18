@@ -24,6 +24,10 @@ build-host: generate
 run-host: build-host
     open "{{derived_data}}/Build/Products/Debug/PadBridge Host.app"
 
+# 動いている Mac 側の常駐アプリを新しいビルドに入れ替える。Typeless が聞き取り中のときと、iPad がつながっているときは入れ替えない
+deploy-host: build-host
+    Scripts/deploy-host.sh "{{derived_data}}/Build/Products/Debug/PadBridge Host.app"
+
 # iPad アプリを実機向けにビルドする
 build-pad: generate
     xcodebuild -project PadBridge.xcodeproj -scheme PadBridge -configuration Debug -destination generic/platform=iOS -derivedDataPath {{derived_data}} -allowProvisioningUpdates build
