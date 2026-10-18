@@ -341,7 +341,10 @@ final class HostSession {
 
     private func handleControl(_ message: WireMessage) {
         if case let .macAudio(samples) = message {
-            BackgroundAudio.shared.macAudio.feed(samples)
+            // 切ったあと (裏に回ったあと) も、送られている途中の音が少し届く。鳴らすと止めたはずの音がまた鳴るので捨てる
+            if playsMacAudio, isForeground {
+                BackgroundAudio.shared.macAudio.feed(samples)
+            }
             return
         }
         guard case let .control(message) = message else { return }
