@@ -53,6 +53,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private var passThroughBuffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 3 / 100)
     private var passThroughGate = PassThroughGate()
     private var readingListener: AudioObjectPropertyListenerBlock?
+    private var configurationObserver: (any NSObjectProtocol)?
 
     /// `onAuthorizationChange` は、システムオーディオの録音の許可があるかが分かるたび (変わったときだけ) に呼ばれる。
     init(onAuthorizationChange: @escaping @Sendable (Bool) -> Void) {
@@ -86,6 +87,21 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: format)
+        // 既定の出力の機器が変わり、チャンネル数やサンプルレートが変わると、エンジンは自分で止まる。止まったままだとタップが無音になり、iPad で話しても Typeless に何も届かない
+        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            queue.async { self.restartEngineAfterConfigurationChange() }
+        }
+    }
+
+    private func restartEngineAfterConfigurationChange() {
+        guard deviceID != kAudioObjectUnknown, !engine.isRunning else { return }
+        do {
+            try engine.start()
+            Self.logger.notice("出力の機器が変わって止まった、音を鳴らすエンジンを動かし直した")
+        } catch {
+            Self.logger.error("出力の機器が変わったあと、音を鳴らすエンジンを動かし直せない: \(error, privacy: .public)")
+        }
     }
 
     /// 許可がないと分かっているか。まだ確かめていなければ false。
