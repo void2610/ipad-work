@@ -512,9 +512,9 @@ nonisolated final class HostServer: @unchecked Sendable {
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
-        startStreamer(on: channel)
         // 眠っている画面は取り込めないことがあるので、始める前に起こす。始められずに張り直しが続くときは、iPad が張り直す間隔を延ばしていく
         keepDisplayAwake(true)
+        startStreamer(on: channel)
     }
 
     private func startStreamer(on channel: MessageChannel) {
