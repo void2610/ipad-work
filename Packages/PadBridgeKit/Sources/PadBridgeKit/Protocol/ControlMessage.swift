@@ -92,6 +92,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     /// iPad から Mac へ。Dock を出してキーボードで選べるようにする (画面の下端から上へ払ったとき)。
     /// Dock は 1 台の画面にしかないので、映していない画面にあれば Mac はその画面を映してから出す。
     case showDock
+    /// Mac から iPad へ。Mac の文字入力が英数とかなのどちらか。接続したときと変わったときに知らせる。
+    case macInputMode(MacInputMode)
     // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする
     /// 補助アプリが Host につないだら最初に送る。Host が起動時に渡した合言葉で、他のプロセスからの接続と見分ける。
     case microphoneRelayHello(token: String)
