@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 import Network
 import os
@@ -8,6 +9,43 @@ import PadBridgeKit
 nonisolated enum PadMicrophoneDevice {
     static let uid = "dev.void2610.padbridge.ipad-mic"
     static let name = "PadBridge iPad マイク"
+
+    /// 補助アプリが後始末をできずに終わって (強制終了など) 残ったデバイスとタップを消す。
+    /// 残ったものは補助アプリが次に起動するまで消えず、iPad をつながないとサウンドの設定に「PadBridge iPad マイク」が出続けるので、Host の起動時にも消す。
+    static func removeLeftovers() {
+        if let device = objects(kAudioHardwarePropertyDevices).first(where: { string($0, kAudioDevicePropertyDeviceUID) == uid }) {
+            AudioHardwareDestroyAggregateDevice(device)
+        }
+        for tap in objects(kAudioHardwarePropertyTapList) where tapName(tap) == name {
+            AudioHardwareDestroyProcessTap(tap)
+        }
+    }
+
+    private static func tapName(_ tap: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioTapPropertyDescription, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var description: Unmanaged<CATapDescription>?
+        var size = UInt32(MemoryLayout<Unmanaged<CATapDescription>?>.size)
+        guard AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &description) == noErr else { return nil }
+        return description?.takeRetainedValue().name
+    }
+
+    private static func objects(_ selector: AudioObjectPropertySelector) -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr else { return [] }
+        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &objects) == noErr else { return [] }
+        return objects
+    }
+
+    private static func string(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value?.takeRetainedValue() as String?
+    }
 }
 
 /// 補助アプリ「PadBridge マイク」を起動し、iPad のマイクの音を渡す。補助アプリがそれを Mac の入力デバイスとして見せる。
@@ -32,6 +70,8 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private var isRunning = false
     // 起動してから接続してくるまでの間に、もう 1 つ起動しないようにする
     private var launchedAt: TimeInterval?
+    // 起動に続けて失敗した回数。署名などで起動できないときに、iPad がつなぎ直すまで黙って使えないままにしない
+    private var launchFailures = 0
     private var pendingReady: (@Sendable (Bool) -> Void)?
     // 聞き取りを始めるたびに増やす。前の要求の待ち時間切れで、次の要求の返事を待つのをやめないように
     private var readyCount = 0
@@ -153,17 +193,34 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         configuration.createsNewApplicationInstance = true
         configuration.arguments = ["--port", String(port.rawValue), "--token", token]
         DispatchQueue.main.async {
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-                if let error {
-                    Self.logger.error("補助アプリを起動できない: \(error, privacy: .public)")
-                }
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
+                guard let error else { return }
+                Self.logger.error("補助アプリを起動できない: \(error, privacy: .public)")
+                guard let self else { return }
+                queue.async { self.retryLaunch() }
             }
+        }
+    }
+
+    private func retryLaunch() {
+        launchedAt = nil
+        launchFailures += 1
+        guard launchFailures <= 3 else { return }
+        queue.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, isRunning, channel == nil else { return }
+            start()
         }
     }
 
     private func accept(_ connection: NWConnection) {
         let channel = MessageChannel(connection: connection, queue: queue)
         pending[ObjectIdentifier(channel)] = channel
+        // 合言葉を言わないままの接続を残さない
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak channel] in
+            guard let self, let channel, pending[ObjectIdentifier(channel)] === channel else { return }
+            pending[ObjectIdentifier(channel)] = nil
+            channel.cancel()
+        }
         channel.start(
             onStateChange: { [weak self, weak channel] state in
                 switch state {
@@ -174,9 +231,12 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     self.channel = nil
                     finishPendingReady()
                     completeFinish()
-                    // 補助アプリが落ちたら、iPad がつながっている間は起動し直す
+                    // 補助アプリが落ちたら、iPad がつながっている間は起動し直す。落ち続けるときに起動を繰り返し続けないよう、少し待つ
                     if isRunning {
-                        start()
+                        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+                            guard let self, isRunning, self.channel == nil else { return }
+                            start()
+                        }
                     }
                 default:
                     break
@@ -194,6 +254,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     self.channel?.cancel()
                     self.channel = channel
                     launchedAt = nil
+                    launchFailures = 0
                     Self.logger.notice("補助アプリとつながった")
                 // 合言葉を確かめた接続からのものだけを受ける
                 case let .microphoneRelayReady(isUsingPadMicrophone) where channel === self.channel:

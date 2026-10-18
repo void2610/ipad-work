@@ -88,6 +88,8 @@ nonisolated final class HostServer: @unchecked Sendable {
                 guard let self else { return }
                 queue.async { self.typelessRecordingChanged(isRecording) }
             }
+            // 前の補助アプリが後始末をできずに終わって残ったデバイスを消す。この時点では、この Host の補助アプリはまだ動いていない
+            PadMicrophoneDevice.removeLeftovers()
             self.microphone = MicrophoneRelay(queue: self.queue) { [weak self] in
                 guard let self else { return }
                 publishStatus()
