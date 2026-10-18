@@ -36,9 +36,17 @@ struct SessionView: View {
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
             }
+            if let notice = session.displayNotice {
+                Label(notice, systemImage: "display")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .transition(.opacity)
+            }
             Spacer()
         }
         .padding()
+        .animation(.easeInOut(duration: 0.2), value: session.displayNotice)
         switch session.phase {
         case .connecting:
             ProgressView("\(session.host.name) に接続中…")

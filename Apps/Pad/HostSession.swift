@@ -34,6 +34,9 @@ final class HostSession {
     private(set) var displays: [RemoteDisplay] = []
     /// 今映している Mac の画面。
     private(set) var shownDisplayID: UInt32?
+    /// 映す画面が替わったときに、少しの間だけ出す知らせ。前に出たウィンドウを追って Mac が替えたときも、何が起きたか分かるように。
+    private(set) var displayNotice: String?
+    private var displayNoticeTask: Task<Void, Never>?
 
     /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
     @ObservationIgnored var microphoneLevel: Float {
@@ -129,6 +132,18 @@ final class HostSession {
         // 前の画面で拡大していた範囲は、別の画面では意味がない。画面を替える前に頼んだ範囲が後から届いても、全体に戻させる
         requestedRegion = .full
         send(.videoRegion(.full))
+        announceDisplay(id)
+    }
+
+    private func announceDisplay(_ id: UInt32) {
+        guard let display = displays.first(where: { $0.id == id }) else { return }
+        displayNotice = "\(display.label) を映しています"
+        displayNoticeTask?.cancel()
+        displayNoticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.displayNotice = nil
+        }
     }
 
     func setPlaysMacAudio(_ isEnabled: Bool) {
