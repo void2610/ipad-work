@@ -13,11 +13,24 @@ public struct VideoRegion: Codable, Sendable, Equatable {
     // 少しずらしただけで頼み直さないよう、この刻みに丸める
     static let step = 1.0 / 128
 
+    /// 画面の外や大きさのない範囲は、画面の中に収める。NaN などが届いて、iPad の表示の位置や Mac の切り出しが壊れないように
     public init(x: Double, y: Double, width: Double, height: Double) {
-        self.x = x
-        self.y = y
-        self.width = width
-        self.height = height
+        guard [x, y, width, height].allSatisfy(\.isFinite) else {
+            (self.x, self.y, self.width, self.height) = (0, 0, 1, 1)
+            return
+        }
+        self.width = min(max(width, Self.step), 1)
+        self.height = min(max(height, Self.step), 1)
+        self.x = min(max(x, 0), 1 - self.width)
+        self.y = min(max(y, 0), 1 - self.height)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            x: container.decode(Double.self, forKey: .x), y: container.decode(Double.self, forKey: .y),
+            width: container.decode(Double.self, forKey: .width), height: container.decode(Double.self, forKey: .height)
+        )
     }
 
     public var isFull: Bool {
