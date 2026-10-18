@@ -57,6 +57,9 @@ public struct TouchInterpreter {
     public var multiFingerGrace: TimeInterval = 0.08
 
     private var state = State.idle
+    private var scrollStartTime: TimeInterval = 0
+    /// スクロールの開始からこれより後に触れた 3 本目は、払うつもりではなく親指や手のひらとみなす (指をずらして置く人の残りの指は数十 ms で触れる)。
+    public var lateThirdFinger: TimeInterval = 0.25
     private var touches: [Int: CGPoint] = [:]
     private var velocity = CGVector.zero
 
@@ -71,6 +74,11 @@ public struct TouchInterpreter {
     public mutating func began(touch id: Int, at point: CGPoint, time: TimeInterval) -> [Action] {
         touches[id] = point
         if touches.count == 3 {
+            if case let .scrolling(_, lastTime) = state, time - scrollStartTime > lateThirdFinger {
+                // 指が増えると重心が飛ぶので、そこを新しい基準にしてスクロールを続ける
+                state = .scrolling(last: centroid, lastTime: lastTime)
+                return []
+            }
             return beginThreeFinger()
         }
         switch state {
@@ -103,6 +111,7 @@ public struct TouchInterpreter {
             guard time - startTime >= multiFingerGrace else { return [] }
             velocity = .zero
             state = .scrolling(last: point, lastTime: time)
+            scrollStartTime = time
             // スクロールはカーソルの下にあるものに効くので、先に指の位置へカーソルを移す
             return [.move(start), .scroll(dx: point.x - start.x, dy: point.y - start.y)]
         case let .longPressed(touch, start):
@@ -121,6 +130,7 @@ public struct TouchInterpreter {
             guard distance(start, center) > slop else { return [] }
             velocity = .zero
             state = .scrolling(last: center, lastTime: time)
+            scrollStartTime = time
             return [.move(start), .scroll(dx: center.x - start.x, dy: center.y - start.y)]
         case let .pinching(lastCenter, lastSpan):
             guard touches.count == 2 else { return [] }

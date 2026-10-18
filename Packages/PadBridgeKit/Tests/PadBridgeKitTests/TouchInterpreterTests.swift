@@ -250,6 +250,22 @@ struct ThreeFingerSwipeTests {
         #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.12) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
+    /// 2 本指でしばらくスクロールしてから親指が触れても、3 本指の払いにせずスクロールを続ける。
+    @Test func lateThirdFingerDuringTwoFingerScrollKeepsScrolling() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 150, y: 300), time: 0.01)
+        _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 330), time: 0.1)
+        _ = interpreter.moved(touch: 2, to: CGPoint(x: 150, y: 330), time: 0.1)
+        #expect(interpreter.began(touch: 3, at: CGPoint(x: 400, y: 600), time: 0.6).isEmpty)
+        // 3 本で動かしても払いにならず、重心の動いた分だけスクロールする
+        let actions = [(1, CGFloat(100)), (2, 150), (3, 400)].flatMap { id, x in
+            interpreter.moved(touch: id, to: CGPoint(x: x, y: (id == 3 ? 600 : 330) - 90), time: 0.7)
+        }
+        #expect(!actions.contains { if case .threeFingerSwipe = $0 { true } else { false } })
+        #expect(actions.contains { if case .scroll = $0 { true } else { false } })
+    }
+
     /// 左へ払うと右隣のスペースへ移る、トラックパッドと同じ向きにすること。
     @Test func directionsMapToTrackpadActions() {
         #expect(DesktopAction(swipe: .left) == .switchSpace(toRight: true))
