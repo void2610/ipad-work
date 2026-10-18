@@ -34,6 +34,8 @@ final class HostSession {
     private(set) var displays: [RemoteDisplay] = []
     /// 今映している Mac の画面。
     private(set) var shownDisplayID: UInt32?
+    /// Mac の文字入力が英数とかなのどちらか。古い Host からは届かないので nil のままになる。
+    private(set) var macInputMode: MacInputMode?
     /// 映す画面が替わったときに、少しの間だけ出す知らせ。前に出たウィンドウを追って Mac が替えたときも、何が起きたか分かるように。
     private(set) var displayNotice: String?
     private var displayNoticeTask: Task<Void, Never>?
@@ -351,6 +353,8 @@ final class HostSession {
         case let .displays(displays, shownID):
             self.displays = displays
             showDisplay(shownID)
+        case let .macInputMode(mode):
+            macInputMode = mode
         case let .voiceInputState(isActive):
             isVoiceInputActive = isActive
             if !isActive {

@@ -36,6 +36,8 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
 
     private weak var session: HostSession?
     private var modifierButtons: [(KeyModifiers, KeyCapButton)] = []
+    // 英数・かなのキー。Mac の文字入力で効いている方を示す
+    private var inputModeButtons: [(MacInputMode, KeyCapButton)] = []
     // iPad でコピーした文字を Mac に入れる。システムのペーストボタンなら、iOS がペーストの許可を尋ねない
     private let pasteControl: UIPasteControl = {
         var configuration = UIPasteControl.Configuration()
@@ -88,6 +90,9 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
                 let button = RepeatingButton(title: title, repeats: repeats) { [weak self] in
                     self?.session?.tapKey(usage: usage)
                 }
+                if let mode = Self.inputMode(ofUsage: usage) {
+                    inputModeButtons.append((mode, button))
+                }
                 stack.addArrangedSubview(button)
             case let .modifier(title, modifier):
                 let button = KeyCapButton(title: title)
@@ -130,6 +135,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     }
 
     /// 修飾キーは、次の 1 回だけ効く状態と固定した状態を色の濃さで見せる。クリックで外れたときも追従させる。
+    /// 英数・かなは、Mac で効いている方を薄い色で見せる。Mac で直接切り替えたときも追従させる。
     private func observeModifiers() {
         withObservationTracking {
             refreshModifiers()
@@ -142,6 +148,18 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         guard let session else { return }
         for (modifier, button) in modifierButtons {
             button.showLatchState(session.modifierLatch.state(of: modifier))
+        }
+        let inputMode = session.macInputMode
+        for (mode, button) in inputModeButtons {
+            button.showCurrent(mode == inputMode)
+        }
+    }
+
+    private static func inputMode(ofUsage usage: Int) -> MacInputMode? {
+        switch usage {
+        case 0x91: .alphanumeric
+        case 0x90: .kana
+        default: nil
         }
     }
 }
@@ -156,6 +174,7 @@ private final class KeyScrollView: UIScrollView {
 /// キーボードのキーに似せたボタン。
 fileprivate class KeyCapButton: UIButton {
     private var latchState = ModifierLatch.State.off
+    private var isCurrent = false
 
     init(title: String) {
         super.init(frame: .zero)
@@ -179,6 +198,14 @@ fileprivate class KeyCapButton: UIButton {
         fatalError("init(coder:) is not supported")
     }
 
+    /// 英数・かなのキーで、Mac の文字入力がこのキーの側になっているか。
+    func showCurrent(_ isCurrent: Bool) {
+        guard self.isCurrent != isCurrent else { return }
+        self.isCurrent = isCurrent
+        setNeedsUpdateConfiguration()
+        accessibilityValue = isCurrent ? "入力中" : nil
+    }
+
     func showLatchState(_ state: ModifierLatch.State) {
         latchState = state
         setNeedsUpdateConfiguration()
@@ -192,6 +219,9 @@ fileprivate class KeyCapButton: UIButton {
         case (true, _):
             configuration.baseBackgroundColor = .tintColor
             configuration.baseForegroundColor = .white
+        case (false, .off) where isCurrent:
+            configuration.baseBackgroundColor = .tintColor.withAlphaComponent(0.35)
+            configuration.baseForegroundColor = .label
         case (false, .off):
             configuration.baseBackgroundColor = nil
             configuration.baseForegroundColor = nil
