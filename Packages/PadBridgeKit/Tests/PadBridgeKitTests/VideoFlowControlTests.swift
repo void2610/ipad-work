@@ -56,7 +56,7 @@ struct VideoFlowControlTests {
         #expect(abs((flow.baseRoundTrip ?? 0) - 0.1) < 1e-9)
     }
 
-    /// Wi-Fi の揺れで 1 枚の返事だけが大きく遅れても、ならした往復はいつもの往復に近いので捨てない。
+    /// Wi-Fi の揺れで 1 枚の返事だけが大きく遅れても、直近の往復の最小値はいつもの往復に近いので捨てない。
     @Test func toleratesJitterSpike() {
         var flow = VideoFlowControl()
         for pts in Int64(0) ..< 30 {
@@ -229,11 +229,24 @@ struct VideoLinkSimulationTests {
 
     /// 帯域に余裕があれば、往復が長くても揺れがあっても、捨てずに上限のビットレートのまま送る。
     /// 返事を待つのを 3 枚までにしていたときは、往復 80ms で 4 割、40ms と揺れ 20ms で 4 割弱を捨て、どれも下限の 1.5 Mbps まで下げていた。
-    @Test(arguments: [Link(bandwidth: 50e6, roundTrip: 0.08), Link(bandwidth: 50e6, roundTrip: 0.12), Link(bandwidth: 50e6, roundTrip: 0.04, jitter: 0.02)])
+    /// 往復をならした平均で詰まりを見ていたときも、往復 80ms と揺れ 30ms では 1 割を捨てて下限まで下げた。
+    @Test(arguments: [
+        Link(bandwidth: 50e6, roundTrip: 0.08), Link(bandwidth: 50e6, roundTrip: 0.12),
+        Link(bandwidth: 50e6, roundTrip: 0.04, jitter: 0.02), Link(bandwidth: 50e6, roundTrip: 0.08, jitter: 0.03),
+    ])
     func keepsQualityWhenOnlyRoundTripIsLong(link: Link) {
         let result = run(link)
         #expect(result.droppedShare < 0.01, "\(link): 捨てた割合 \(result.droppedShare)")
         #expect(result.finalBitRate == 14_500_000, "\(link): \(result.finalBitRate)")
+    }
+
+    /// 帯域が足りず揺れもある回線では、帯域の近くまでは下げるが、揺れで捨てた分で下限まで下げ続けない (平均で見ていたときは 1.5 Mbps まで下げた)。
+    @Test(arguments: [Link(bandwidth: 10e6, roundTrip: 0.04, jitter: 0.03), Link(bandwidth: 5e6, roundTrip: 0.08, jitter: 0.02)])
+    func staysNearBandwidthOnJitteryLink(link: Link) {
+        let result = run(link)
+        #expect(Double(result.finalBitRate) >= link.bandwidth * 0.6, "\(link): \(result.finalBitRate)")
+        // 天井を超えて 1.1 倍だけ試してから戻すので、試している最中なら帯域を少し超える
+        #expect(Double(result.finalBitRate) <= link.bandwidth * 1.25, "\(link): \(result.finalBitRate)")
     }
 
     /// 帯域が足りない回線では、これまでどおり捨ててビットレートを帯域まで下げ、遅れを積み上げない。

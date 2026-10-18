@@ -39,8 +39,10 @@ public struct VideoFlowControl: Sendable {
     private var lastAcknowledgedAt: TimeInterval?
     private var roundTripMinimum: (since: TimeInterval, value: TimeInterval)?
     private var previousRoundTripMinimum: TimeInterval?
-    // ならした往復の時間。Wi-Fi の揺れで 1 枚だけ遅れたのか、回線に詰まって遅れ続けているのかを見分ける
-    private var smoothedRoundTrip: TimeInterval?
+    // 直近の往復。Wi-Fi の揺れなら一部だけが遅れ、回線に詰まるとどれも遅れるので、この中の最小値で見分ける (平均で見ると揺れの大きな遅れに引かれ、往復 80ms・揺れ 30ms の回線で下限まで下げた)
+    private var recentRoundTrips: [(time: TimeInterval, value: TimeInterval)] = []
+    // 60fps で 9 枚ほど。0.1 秒だと揺れで全部が遅れた窓を詰まりと取り (往復 80ms・揺れ 30ms で 3.1 Mbps まで下げた)、0.2 秒だと詰まりに気づくまでに遅れが積み上がった
+    static let recentWindow: TimeInterval = 0.15
     /// iPad が返事を返すと分かったか。返事を返さない古い iPad アプリには、送り待ちの数で間引く。
     public private(set) var isAcknowledged = false
 
@@ -68,9 +70,9 @@ public struct VideoFlowControl: Sendable {
     public mutating func canSend(at time: TimeInterval) -> Bool {
         guard isAcknowledged, inFlight.count >= Self.maxInFlight, let oldest = inFlight.first else { return true }
         // 往復が長いだけの回線では、返事を待つ枚数が増えても遅れは積み上がらない。枚数で止めると、帯域に余裕があっても 3 枚 ÷ 往復しか送れず
-        // (往復 80ms で毎秒 37 枚)、捨てた分でビットレートを下限まで下げていた。ならした往復がいつもの往復に近い間は、揺れで 1 枚遅れても捨てない
-        if let base = baseRoundTrip, let smoothed = smoothedRoundTrip, inFlight.count < Self.maxInFlightOnSlowRoundTrip {
-            let isQueueing = smoothed - base >= Self.queueingAllowance
+        // (往復 80ms で毎秒 37 枚)、捨てた分でビットレートを下限まで下げていた。直近の往復の最小値がいつもの往復に近い間は、揺れで遅れても捨てない
+        if let base = baseRoundTrip, let recent = recentRoundTrips.map(\.value).min(), inFlight.count < Self.maxInFlightOnSlowRoundTrip {
+            let isQueueing = recent - base >= Self.queueingAllowance
             if !isQueueing || time - oldest.sentAt < base + Self.queueingAllowance {
                 return true
             }
@@ -108,7 +110,8 @@ public struct VideoFlowControl: Sendable {
 
     private mutating func recordRoundTrip(_ roundTrip: TimeInterval, at time: TimeInterval) {
         guard roundTrip >= 0 else { return }
-        smoothedRoundTrip = smoothedRoundTrip.map { $0 + (roundTrip - $0) / 8 } ?? roundTrip
+        recentRoundTrips.append((time, roundTrip))
+        recentRoundTrips.removeAll { time - $0.time > Self.recentWindow }
         if let current = roundTripMinimum, time - current.since < Self.roundTripWindow {
             roundTripMinimum = (current.since, min(current.value, roundTrip))
         } else {
