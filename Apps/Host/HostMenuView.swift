@@ -1,4 +1,5 @@
 import AppKit
+import PadBridgeKit
 import SwiftUI
 
 struct HostMenuView: View {
@@ -18,6 +19,12 @@ struct HostMenuView: View {
 
             if let display = controller.shownDisplayOnPad {
                 Label("iPad に映している画面: \(display)", systemImage: "display")
+                    .font(.caption)
+            }
+
+            // iPad で映像が遅い・粗いと言われたときに、Mac の前でも回線のせいかを見られるように
+            if let stats = controller.videoStatsOnPad {
+                Label("iPad への映像: \(stats.summary)", systemImage: "gauge.with.dots.needle.33percent")
                     .font(.caption)
             }
 

@@ -19,6 +19,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let onStatusChange: @Sendable (HostStatus) -> Void
     private let onMacAudioChange: @Sendable (Bool) -> Void
     private let onShownDisplayChange: @Sendable (String?) -> Void
+    private let onVideoStatsChange: @Sendable (VideoStats?) -> Void
     private let injector: InputInjector
 
     private var listener: NWListener?
@@ -83,7 +84,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         onListenerChange: @escaping @Sendable (String) -> Void,
         onStatusChange: @escaping @Sendable (HostStatus) -> Void,
         onMacAudioChange: @escaping @Sendable (Bool) -> Void,
-        onShownDisplayChange: @escaping @Sendable (String?) -> Void
+        onShownDisplayChange: @escaping @Sendable (String?) -> Void,
+        onVideoStatsChange: @escaping @Sendable (VideoStats?) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
@@ -91,6 +93,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         self.onStatusChange = onStatusChange
         self.onMacAudioChange = onMacAudioChange
         self.onShownDisplayChange = onShownDisplayChange
+        self.onVideoStatsChange = onVideoStatsChange
         injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
@@ -613,6 +616,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         timer.setEventHandler { [weak self] in
             guard let self, let stats = streamer?.stats else { return }
             control?.send(.control(.videoStats(stats)))
+            onVideoStatsChange(stats)
         }
         timer.resume()
         statsTimer = timer
@@ -768,6 +772,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func stopVideo() {
         statsTimer?.cancel()
         statsTimer = nil
+        onVideoStatsChange(nil)
         keepDisplayAwake(false)
         streamer?.stop()
         streamer = nil

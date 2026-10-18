@@ -24,6 +24,21 @@ public struct VideoStats: Codable, Sendable, Equatable {
         self.frameRate = frameRate
     }
 
+    /// 1 行にまとめた状態。Mac のメニューに出す。
+    public var summary: String {
+        var parts = ["\(codec == .hevc ? "HEVC" : "H.264") \(width)×\(height)", String(format: "%.1f Mbps", Double(bitRate) / 1_000_000)]
+        if bitRate < maximumBitRate {
+            parts[1] += " (回線に合わせて下げています)"
+        }
+        if let frameRate, frameRate < PreferredFrameRate.normal {
+            parts.append("毎秒 \(frameRate) 枚まで")
+        }
+        if let roundTripMillis {
+            parts.append("往復 \(roundTripMillis) ms")
+        }
+        return parts.joined(separator: "・")
+    }
+
     /// 往復の遅れは 1 枚ごとに揺れるので、新しい値を 2 割ずつ混ぜてならす。
     public static func smoothed(_ previous: TimeInterval?, with sample: TimeInterval) -> TimeInterval {
         previous.map { $0 * 0.8 + sample * 0.2 } ?? sample

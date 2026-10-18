@@ -3,6 +3,7 @@ import ApplicationServices
 import CoreGraphics
 import Observation
 import os
+import PadBridgeKit
 import ServiceManagement
 
 @Observable
@@ -19,6 +20,8 @@ final class HostController {
     private(set) var isPlayingMacAudioOnPad = false
     /// iPad に映している画面。iPad がつながっていて、画面が 2 台以上あるときだけ。
     private(set) var shownDisplayOnPad: String?
+    /// iPad に送っている映像の状態 (2 秒ごと)。映像を送っていなければ nil。
+    private(set) var videoStatsOnPad: VideoStats?
     /// ログインしたときに Host を起動するか。蓋を閉じた Mac では、再起動のあと Host を手で開けないため。
     private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -124,6 +127,9 @@ final class HostController {
             },
             onShownDisplayChange: { [weak self] label in
                 Task { @MainActor in self?.shownDisplayOnPad = label }
+            },
+            onVideoStatsChange: { [weak self] stats in
+                Task { @MainActor in self?.videoStatsOnPad = stats }
             }
         )
         server.start()
