@@ -83,6 +83,44 @@ struct MacAudioTests {
         #expect(try Self.render(engine, frames: tenth) == ([50], [50]))
     }
 
+    /// iPad で受ける形と同じく、Opus のパケットを渡して鳴らす。鳴らすのをやめて再開したあとも同じく鳴る。
+    @Test func playerRendersOpusPacketsThroughEngine() throws {
+        let player = MacAudioPlayer()
+        #expect(player.canDecodeOpus)
+        let engine = try Self.offlineEngine(playing: player)
+        let encoder = try #require(MacAudioEncoder())
+        var chunkIndex = 0
+        // 左にだけ 440Hz・0.5 の正弦波を鳴らした 20ms の塊を、Opus にして渡す
+        func feedChunks(_ count: Int) {
+            for _ in 0 ..< count {
+                let left = (0 ..< MacAudio.chunkFrames).map { Float(sin(2 * Double.pi * 440 * Double(chunkIndex * MacAudio.chunkFrames + $0) / Double(MacAudio.sampleRate)) * 0.5) }
+                let right = [Float](repeating: 0, count: MacAudio.chunkFrames)
+                let chunk = left.withUnsafeBufferPointer { left in right.withUnsafeBufferPointer { MacAudio.encode(left: left, right: $0) } }
+                encoder.encode(chunk).forEach(player.feedOpus)
+                chunkIndex += 1
+            }
+        }
+        for round in 0 ..< 2 {
+            feedChunks(25)
+            // たまり始めの 100ms と符号化の先頭の遅れを越えたところから、200ms を測る
+            let (left, right) = try Self.renderSamples(engine, frames: MacAudio.sampleRate * 3 / 10)
+            let rms = { (samples: ArraySlice<Float>) in sqrt(samples.reduce(0) { $0 + Double($1 * $1) } / Double(samples.count)) }
+            let steadyLeft = left[(MacAudio.sampleRate / 10)...]
+            let steadyRight = right[(MacAudio.sampleRate / 10)...]
+            #expect(abs(rms(steadyLeft) - 0.354) < 0.05, "\(round + 1) 回目の左の実効値 \(rms(steadyLeft))")
+            #expect(rms(steadyRight) < 0.02, "\(round + 1) 回目の右の実効値 \(rms(steadyRight))")
+            player.reset()
+        }
+    }
+
+    private static func renderSamples(_ engine: AVAudioEngine, frames: Int) throws -> (left: [Float], right: [Float]) {
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: AVAudioFrameCount(frames)))
+        #expect(try engine.renderOffline(AVAudioFrameCount(frames), to: buffer) == .success)
+        let channels = try #require(buffer.floatChannelData)
+        let count = Int(buffer.frameLength)
+        return (Array(UnsafeBufferPointer(start: channels[0], count: count)), Array(UnsafeBufferPointer(start: channels[1], count: count)))
+    }
+
     private static func offlineEngine(playing player: MacAudioPlayer) throws -> AVAudioEngine {
         let engine = AVAudioEngine()
         engine.attach(player.node)
