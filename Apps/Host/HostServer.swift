@@ -21,6 +21,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let injector: InputInjector
 
     private var listener: NWListener?
+    // start から stop までの間か。止めたあとで待ち受けを作り直さない
+    private var isServing = false
     private var pending: [ObjectIdentifier: MessageChannel] = [:]
     private var control: MessageChannel?
     private var video: MessageChannel?
@@ -83,6 +85,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     func start() {
         queue.async {
+            self.isServing = true
             self.startListener()
             self.typeless = TypelessMonitor { [weak self] isRecording in
                 guard let self else { return }
@@ -132,6 +135,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     func stop() {
         queue.async {
+            self.isServing = false
             self.listener?.cancel()
             self.listener = nil
             self.pending.values.forEach { $0.cancel() }
@@ -160,7 +164,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         listener?.cancel()
         listener = nil
         queue.asyncAfter(deadline: .now() + 2) { [weak self] in
-            guard let self, listener == nil else { return }
+            // 止めたあとで作り直すと、終わるはずの Host が Bonjour の名前を持ち続け、起動し直した Host と取り合う
+            guard let self, isServing, listener == nil else { return }
             Self.logger.notice("待ち受けを作り直す")
             startListener()
         }
@@ -192,6 +197,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         } catch {
             Self.logger.error("listener の作成に失敗: \(error, privacy: .public)")
             onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+            restartListener()
         }
     }
 
