@@ -31,15 +31,19 @@ public struct VideoFlowControl: Sendable {
     /// iPad が返事を返すと分かったか。返事を返さない古い iPad アプリには、送り待ちの数で間引く。
     public private(set) var isAcknowledged = false
 
-    public init() {}
+    /// `isAcknowledged` は、同じ iPad への取り込みを作り直したときに引き継ぐ。最初の返事を待つ間は間引かないので、遅い回線では遅れがたまる。
+    public init(isAcknowledged: Bool = false) {
+        self.isAcknowledged = isAcknowledged
+    }
 
     public var inFlightCount: Int {
         inFlight.count
     }
 
     /// キーフレームの返事を待っているか。キーフレームは大きく、遅い回線では送るのに何枚分もかかるので、その間に捨てたフレームでビットレートを下げない。
+    /// 返事が来ない間はそもそも間引かない。返事を返さない古い iPad アプリでは、覚えているキーフレームが消えないので待っているとみなさない。
     public var isWaitingForKeyFrame: Bool {
-        inFlight.contains { $0.isKeyFrame }
+        isAcknowledged && inFlight.contains { $0.isKeyFrame }
     }
 
     /// 次のフレームを符号化して送ってよいか。
@@ -85,6 +89,11 @@ public struct BitRateController: Sendable {
     static let dropRatioToLower = 0.1
     static let lowerFactor = 0.6
     static let raiseFactor = 1.25
+    // 天井を超えて試すときの、上げる幅と待つ窓の数。回線の限界のすぐ上へ何度も上げて詰まらせ、周期的にカクつかないように
+    static let probeFactor = 1.1
+    static let calmWindowsToProbe = 6
+    // 天井は、見積もった回線の速さのこの割合
+    static let ceilingShare = 0.95
     // 見積もった回線の速さのうち、映像に使う割合。残りは揺れと Mac の音に回す
     static let capacityShare = 0.85
     // 回線が埋まっていた時間がこれより短いと、速さを見積もらない
@@ -103,11 +112,14 @@ public struct BitRateController: Sendable {
     private var busyBytes = 0
     private var busyDuration: TimeInterval = 0
     private var calmWindows = 0
+    // 下げたときに見積もった回線の速さから決めた天井。ここまでは上げてよいが、超えるのは慎重に試す
+    private var ceiling: Int?
 
-    public init(maximum: Int, minimum: Int = 1_500_000) {
+    /// `initial` は、同じ iPad への取り込みを作り直す前のビットレート。回線は変わっていないので、上限から測り直さない。
+    public init(maximum: Int, minimum: Int = 1_500_000, initial: Int? = nil) {
         self.maximum = maximum
         self.minimum = min(minimum, maximum)
-        current = maximum
+        current = min(max(initial ?? maximum, self.minimum), maximum)
     }
 
     /// 返事が来るたびに呼ぶ。回線が埋まっていた間に届いた量から、回線の速さを見積もる。
@@ -150,19 +162,33 @@ public struct BitRateController: Sendable {
         if Double(dropped) / Double(offered) >= Self.dropRatioToLower {
             var target = Double(current) * Self.lowerFactor
             if busyDuration >= Self.minimumBusyDuration {
-                target = max(target, Double(busyBytes * 8) / busyDuration * Self.capacityShare)
+                let capacity = Double(busyBytes * 8) / busyDuration
+                target = max(target, capacity * Self.capacityShare)
+                ceiling = Int(capacity * Self.ceilingShare)
             }
             current = min(max(Int(target), minimum), current)
             calmWindows = 0
         } else if dropped == 0 {
             calmWindows += 1
-            if calmWindows >= Self.calmWindowsToRaise {
-                current = min(Int(Double(current) * Self.raiseFactor), maximum)
-                calmWindows = 0
-            }
+            raiseIfCalm()
         } else {
             calmWindows = 0
         }
+    }
+
+    private mutating func raiseIfCalm() {
+        guard current < maximum else { return }
+        if let ceiling, current >= ceiling {
+            // 回線が速くなったかを確かめるときだけ、天井を少し超えてみる
+            guard calmWindows >= Self.calmWindowsToProbe else { return }
+            current = min(Int(Double(current) * Self.probeFactor), maximum)
+            self.ceiling = nil
+        } else {
+            guard calmWindows >= Self.calmWindowsToRaise else { return }
+            let raised = min(Int(Double(current) * Self.raiseFactor), maximum)
+            current = ceiling.map { min(raised, $0) } ?? raised
+        }
+        calmWindows = 0
     }
 }
 

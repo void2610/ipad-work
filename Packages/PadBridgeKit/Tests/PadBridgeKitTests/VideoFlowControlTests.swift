@@ -67,7 +67,7 @@ struct VideoFlowControlTests {
 
     /// キーフレームの返事を待つ間だけ、待っていると答える。
     @Test func tellsWhileKeyFrameIsInFlight() {
-        var flow = VideoFlowControl()
+        var flow = VideoFlowControl(isAcknowledged: true)
         flow.sent(presentationTimeMicros: 1, isKeyFrame: true, at: 0)
         flow.sent(presentationTimeMicros: 2, at: 0)
         let waitingBefore = flow.isWaitingForKeyFrame
@@ -76,13 +76,26 @@ struct VideoFlowControlTests {
         #expect(!flow.isWaitingForKeyFrame)
     }
 
-    /// 返事を返さない古い iPad アプリでも、覚えておくフレームは増え続けない。
+    /// 返事を返さない古い iPad アプリでも、覚えておくフレームは増え続けず、覚えたキーフレームでビットレートの見直しを止めない。
     @Test func remembersBoundedFramesWithoutAcknowledgement() {
         var flow = VideoFlowControl()
         for pts in Int64(0) ..< 1000 {
             flow.sent(presentationTimeMicros: pts, isKeyFrame: pts % 300 == 0, at: Double(pts) / 60)
         }
         #expect(flow.inFlightCount == VideoFlowControl.maxRemembered)
+        #expect(!flow.isWaitingForKeyFrame)
+    }
+
+    /// 同じ iPad への取り込みを作り直したときは、最初の返事を待たずに間引く。
+    @Test func carriedAcknowledgementGatesFromTheStart() {
+        var flow = VideoFlowControl(isAcknowledged: true)
+        var allowed: [Bool] = []
+        for pts in Int64(1) ... 4 {
+            allowed.append(flow.canSend(at: 0))
+            flow.sent(presentationTimeMicros: pts, isKeyFrame: pts == 1, at: 0)
+        }
+        #expect(allowed == [true, true, true, false])
+        #expect(flow.isWaitingForKeyFrame)
     }
 
     /// 返事が来ないまま 2 秒たったら、待つのをやめて送る。
@@ -133,6 +146,31 @@ struct BitRateControllerTests {
             }
         }
         #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_250_000, nil])
+    }
+
+    /// 見積もった回線の速さの 95% を天井にし、そこまでは上げるが、超えるのは捨てない窓が 6 つ続いてから 1.1 倍だけ試す。
+    /// 天井がないと、限界の 1.06 倍へ 8 秒ごとに上げては詰まり、周期的にカクつく。
+    @Test func raisesUpToCeilingThenProbesCautiously() {
+        var controller = BitRateController(maximum: 20_000_000)
+        var changes: [Int?] = []
+        // 2 つの窓で詰まり、5 Mbps と見積もって 4.25 Mbps まで下げる (天井は 4.75 Mbps)
+        for window in 0 ..< 5 {
+            changes.append(feed(&controller, window: window, dropped: 60))
+            for _ in 0 ..< 20 {
+                controller.delivered(VideoFlowControl.Delivery(bytes: 39_000, busyDuration: 0.0624))
+            }
+        }
+        for window in 5 ..< 15 {
+            changes.append(feed(&controller, window: window, dropped: 0))
+        }
+        #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_250_000, nil, nil, nil, 4_750_000, nil, nil, nil, nil, nil, 5_225_000])
+    }
+
+    /// 作り直す前のビットレートから始める。上限と下限の中に収める。
+    @Test func startsFromCarriedRate() {
+        #expect(BitRateController(maximum: 20_000_000, initial: 6_000_000).current == 6_000_000)
+        #expect(BitRateController(maximum: 8_000_000, initial: 12_000_000).current == 8_000_000)
+        #expect(BitRateController(maximum: 8_000_000, minimum: 2_000_000, initial: 500_000).current == 2_000_000)
     }
 
     /// 窓を切り替えたときなどの大きな 1 枚を送る間に捨てた分 (5 Mbps で約 9 枚) では下げない。
