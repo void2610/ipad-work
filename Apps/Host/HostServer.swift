@@ -369,6 +369,12 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
             return
         }
+        if case let .videoFrameReceived(presentationTimeMicros) = message {
+            if channel === video {
+                streamer?.frameReceived(presentationTimeMicros: presentationTimeMicros)
+            }
+            return
+        }
         guard channel === control else { return }
         switch message {
         case .requestKeyFrame:
@@ -421,7 +427,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -517,6 +523,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         stopVideo()
         video = channel
         videoMaxSize = (maxWidth, maxHeight)
+        // 受け取りの返事で、回線に入りきらないフレームを送らずに捨てる
+        channel.send(.control(.acknowledgeVideoFrames))
         let status = currentStatus()
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))

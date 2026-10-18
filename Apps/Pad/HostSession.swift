@@ -428,6 +428,7 @@ final class HostSession {
         let channel = MessageChannel(connection: NWConnection(to: host.endpoint, using: .padBridge()), queue: videoQueue)
         video = channel
         let size = Self.maxVideoSize()
+        let acknowledger = VideoAcknowledger()
         channel.start(
             onStateChange: { [weak self, weak channel] state in
                 switch state {
@@ -442,7 +443,11 @@ final class HostSession {
                     break
                 }
             },
-            onMessage: { message in
+            onMessage: { [weak channel] message in
+                // 描く前に返し、描く時間で Mac が送るのを待たせない
+                if let reply = acknowledger.reply(to: message) {
+                    channel?.send(reply)
+                }
                 renderer.handle(message)
             }
         )

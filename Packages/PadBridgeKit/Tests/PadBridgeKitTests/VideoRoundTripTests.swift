@@ -45,12 +45,47 @@ struct VideoRoundTripTests {
         #expect(decoder.decodedSizes.allSatisfy { $0 == CGSize(width: width, height: height) })
     }
 
+    /// 回線が詰まったときに、符号化を続けたままビットレートを下げると、フレームが小さくなる。
+    @Test(arguments: [VideoCodec.h264, .hevc])
+    func loweringBitRateShrinksFrames(codec: VideoCodec) throws {
+        let (width, height) = (1280, 720)
+        let sizes = Mutex<[Int]>([])
+        let encoder = try VideoEncoder(codec: codec, width: width, height: height, averageBitRate: 20_000_000, frameRate: 60) { _, frame in
+            sizes.withLock { $0.append(frame.data.count) }
+        }
+        // 砂嵐にすると、エンコーダは細部を捨てて灰色にし、どちらでも数百バイトになる。8x8 の濃淡のブロックを毎フレーム替え、20 Mbps では収まり 2 Mbps では収まらない量にする
+        for index in 0 ..< 60 {
+            if index == 30 {
+                encoder.setAverageBitRate(2_000_000)
+            }
+            let pixelBuffer = try makePixelBuffer(width: width, height: height) { x, y in
+                var hash = UInt32(x / 8) &* 73_856_093 ^ UInt32(y / 8) &* 19_349_663 ^ UInt32(index) &* 83_492_791
+                hash ^= hash >> 13
+                hash = hash &* 1_274_126_177
+                return UInt8(truncatingIfNeeded: hash >> 24)
+            }
+            encoder.encode(pixelBuffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 60), forceKeyFrame: index == 0)
+        }
+        encoder.flush()
+        let outputs = sizes.withLock { $0 }
+        // 予算を超える分は低遅延のレート制御がフレームを落とす (この模様では 60 枚中 49〜50 枚が出た)
+        try #require(outputs.count >= 40)
+        let before = outputs[10 ..< 25].reduce(0, +) / 15
+        let after = outputs.suffix(10).reduce(0, +) / 10
+        // 1 枚あたりの予算は約 42KB から約 4KB に減る。この模様では 40KB ほどから 8〜12KB に縮んだ
+        #expect(after * 3 < before, "下げる前 \(before) バイト、下げたあと \(after) バイト")
+    }
+
     private func roundTrip(_ message: WireMessage) throws -> WireMessage {
         let encoded = try message.encoded()
         return try WireMessage(type: encoded.type, payload: encoded.payload)
     }
 
     private func makePixelBuffer(width: Int, height: Int, luma: UInt8) throws -> CVPixelBuffer {
+        try makePixelBuffer(width: width, height: height) { _, _ in luma }
+    }
+
+    private func makePixelBuffer(width: Int, height: Int, luma: (_ x: Int, _ y: Int) -> UInt8) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
         let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, attributes, &pixelBuffer)
@@ -59,7 +94,16 @@ struct VideoRoundTripTests {
         for plane in 0 ..< CVPixelBufferGetPlaneCount(buffer) {
             let base = CVPixelBufferGetBaseAddressOfPlane(buffer, plane)
             let size = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)
-            memset(base, plane == 0 ? Int32(luma) : 128, size)
+            guard let base else { continue }
+            if plane == 0 {
+                let bytes = base.assumingMemoryBound(to: UInt8.self)
+                let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
+                for offset in 0 ..< size {
+                    bytes[offset] = luma(offset % bytesPerRow, offset / bytesPerRow)
+                }
+            } else {
+                memset(base, 128, size)
+            }
         }
         CVPixelBufferUnlockBaseAddress(buffer, [])
         return buffer

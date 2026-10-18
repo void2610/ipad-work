@@ -27,7 +27,7 @@ nonisolated struct DisplayLayout: Equatable {
     }
 }
 
-/// 画面を 1 台取り込み、H.264 にして映像用の接続へ流す。
+/// 画面を 1 台取り込み、HEVC (作れなければ H.264) にして映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let channel: MessageChannel
     private let displayID: CGDirectDisplayID
@@ -41,6 +41,8 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var isStopped = false
     private let keyFrameRequested = Atomic(true)
     private let sentFrames = Atomic(0)
+    private let flow = Mutex(VideoFlowControl())
+    private let bitRateController = Mutex<BitRateController?>(nil)
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
     private var region = VideoRegion.full
     private var configuration: SCStreamConfiguration?
@@ -85,6 +87,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
             if let format {
                 channel.send(.videoFormat(format))
             }
+            self?.flow.withLock { $0.sent(presentationTimeMicros: frame.presentationTimeMicros, isKeyFrame: frame.isKeyFrame, bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime) }
             channel.send(.videoFrame(frame))
             guard let count = self?.sentFrames.add(1, ordering: .relaxed).newValue else { return }
             if count == 1 || count.isMultiple(of: 600) {
@@ -117,6 +120,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         ]
         CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, poolAttributes as CFDictionary, &pool)
 
+        bitRateController.withLock { $0 = BitRateController(maximum: bitRate) }
         let shouldStart = lock.withLock {
             guard !isStopped else { return false }
             self.stream = stream
@@ -152,6 +156,12 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         keyFrameRequested.store(true, ordering: .relaxed)
     }
 
+    /// iPad がこのフレームを受け取った。
+    func frameReceived(presentationTimeMicros: Int64) {
+        let delivery = flow.withLock { $0.received(presentationTimeMicros: presentationTimeMicros, at: ProcessInfo.processInfo.systemUptime) }
+        bitRateController.withLock { $0?.delivered(delivery) }
+    }
+
     /// iPad が見ている範囲を変える。拡大している間だけ、画面を元の解像度で取り込む (等倍のときは iPad の解像度で十分なので、取り込みを軽くする)。
     func setRegion(_ newRegion: VideoRegion) {
         let update: (SCStream, SCStreamConfiguration)? = lock.withLock {
@@ -175,14 +185,21 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     }
 
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer), let pixelBuffer = sampleBuffer.imageBuffer else { return }
-        // 送信が詰まっている間は符号化する前に捨て、遅延が積み上がらないようにする
-        guard channel.pendingSendCount < 4,
+        guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer), let pixelBuffer = sampleBuffer.imageBuffer,
               let (encoder, region, outputSize, transferSession, pool) = lock.withLock({ () -> (VideoEncoder, VideoRegion, (width: Int, height: Int), VTPixelTransferSession?, CVPixelBufferPool?)? in
                   guard let encoder else { return nil }
                   return (encoder, self.region, self.outputSize, self.transferSession, self.outputPool)
               })
         else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        // 回線に入りきらない間は符号化する前に捨て、遅延が積み上がらないようにする
+        let (canSendNow, isWaitingForKeyFrame) = flow.withLock { ($0.canSend(at: now), $0.isWaitingForKeyFrame) }
+        let canSend = channel.pendingSendCount < 4 && canSendNow
+        if !isWaitingForKeyFrame, let newBitRate = bitRateController.withLock({ $0?.record(isDropped: !canSend, at: now) }) {
+            encoder.setAverageBitRate(newBitRate)
+            Self.logger.notice("回線に合わせて映像のビットレートを \(String(format: "%.1f", Double(newBitRate) / 1_000_000), privacy: .public) Mbps にした")
+        }
+        guard canSend else { return }
         let forceKeyFrame = keyFrameRequested.exchange(false, ordering: .relaxed)
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)

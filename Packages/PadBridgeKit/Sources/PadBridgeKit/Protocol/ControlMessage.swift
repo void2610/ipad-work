@@ -79,6 +79,11 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     /// 3 本指で払った向き。Mac はトラックパッドの 3 本指スワイプと同じ操作をする。
     case desktopSwipe(TouchInterpreter.SwipeDirection)
     case requestKeyFrame
+    /// Mac から iPad へ、映像用の接続で。受け取ったフレームごとに `videoFrameReceived` を返してほしい。
+    /// 返事を知らない古い Mac に、知らないメッセージを毎フレーム送らないよう、求められたときだけ返す。
+    case acknowledgeVideoFrames
+    /// iPad から Mac へ、映像用の接続で。このフレームを受け取った。Mac は返事の来ていないフレームの数で、次を送るかを決める。
+    case videoFrameReceived(presentationTimeMicros: Int64)
     /// iPad から Mac へ。映像として送ってほしい画面の範囲。拡大している間は見えている範囲だけを高い解像度で送ってもらう。
     case videoRegion(VideoRegion)
     /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。

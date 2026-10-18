@@ -61,6 +61,11 @@ public final class VideoEncoder: @unchecked Sendable {
         }
     }
 
+    /// 符号化を続けたまま、平均のビットレートを変える。`encode` と同じスレッドから呼ぶ。
+    public func setAverageBitRate(_ bitRate: Int) {
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitRate as CFNumber)
+    }
+
     public func flush() {
         VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
     }
