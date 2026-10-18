@@ -91,4 +91,14 @@ struct AppSwitcherTests {
         #expect(switcher.commit() == [commandUp])
         #expect(switcher.commit().isEmpty)
     }
+
+    /// ⌘F のようなショートカットは、修飾キーを付けた F の押し離しだけにする (⌘ そのものは押したときに送っている)。
+    @Test func shortcutTapsKeyWithModifiers() {
+        #expect(RemoteKeys.shortcut("f", modifiers: .command) == [
+            .key(usage: 0x09, isDown: true, modifiers: .command),
+            .key(usage: 0x09, isDown: false, modifiers: .command),
+        ])
+        #expect(RemoteKeys.shortcut("N", modifiers: .command) == RemoteKeys.tap(usage: 0x11, modifiers: [.command, .shift]))
+        #expect(RemoteKeys.shortcut("ab", modifiers: .command).isEmpty)
+    }
 }

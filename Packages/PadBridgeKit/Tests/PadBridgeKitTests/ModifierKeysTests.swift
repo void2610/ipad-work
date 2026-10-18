@@ -49,6 +49,17 @@ struct HeldModifiersTests {
         #expect(held.mouseEventFlags == 0x100)
     }
 
+    /// iPadOS が ⌘ を外して渡した ⌘. も、押している ⌘ を載せて送る。修飾キーそのもののイベントは変えない。
+    @Test func heldModifiersAreAddedToOrdinaryKeys() {
+        var held = HeldModifiers()
+        held.apply(MacKeyEvent(usage: 0xE3, isDown: true, modifiers: [.command])!)
+        #expect(held.keyEvent(usage: 0x37, isDown: true, modifiers: []) == MacKeyEvent(usage: 0x37, isDown: true, modifiers: [.command]))
+        #expect(held.keyEvent(usage: 0x37, isDown: true, modifiers: [.shift]) == MacKeyEvent(usage: 0x37, isDown: true, modifiers: [.command, .shift]))
+        #expect(held.keyEvent(usage: 0xE3, isDown: false, modifiers: []) == MacKeyEvent(usage: 0xE3, isDown: false, modifiers: []))
+        held.apply(MacKeyEvent(usage: 0xE3, isDown: false, modifiers: [])!)
+        #expect(held.keyEvent(usage: 0x37, isDown: true, modifiers: []) == MacKeyEvent(usage: 0x37, isDown: true, modifiers: []))
+    }
+
     @Test func ordinaryKeysDoNotCount() {
         var held = HeldModifiers()
         held.apply(MacKeyEvent(usage: 0x04, isDown: true, modifiers: [])!)

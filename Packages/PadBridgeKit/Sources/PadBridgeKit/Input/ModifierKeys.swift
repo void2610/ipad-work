@@ -70,6 +70,15 @@ public struct HeldModifiers: Sendable {
         KeyboardMapping.eventFlags(modifiers: modifiers, macVirtualKeyCode: 0)
     }
 
+    /// 修飾キーでないキーのイベントに、押されている修飾キーを載せる。
+    /// iPadOS は ⌘. のように、押している修飾キーをキーの情報から外して渡すことがあり、そのままだと Mac には . だけが届く。
+    public func keyEvent(usage: Int, isDown: Bool, modifiers: KeyModifiers) -> MacKeyEvent? {
+        guard let event = MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers), !event.isFlagsChanged else {
+            return MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers)
+        }
+        return MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers.union(self.modifiers))
+    }
+
     public mutating func apply(_ event: MacKeyEvent) {
         guard event.isFlagsChanged else { return }
         if event.isDown {
@@ -133,6 +142,13 @@ extension RemoteKeys {
         }
         flushText()
         return messages
+    }
+
+    /// ハードウェアキーボードのショートカット (`input` は修飾キーと一緒に押した文字) を、修飾キーを付けたキーの押し離しにする。
+    /// 修飾キーそのものの押し離しは、押したときにそのまま Mac へ送っているので含めない。送れない文字なら空。
+    public static func shortcut(_ input: String, modifiers: KeyModifiers) -> [ControlMessage] {
+        guard input.count == 1, let character = input.first, let (usage, needsShift) = keyUsage(for: character) else { return [] }
+        return tap(usage: usage, modifiers: needsShift ? modifiers.union(.shift) : modifiers)
     }
 
     static func keyUsage(for character: Character) -> (usage: Int, needsShift: Bool)? {
