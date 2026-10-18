@@ -63,6 +63,7 @@ final class RemoteScreenUIView: UIView {
     private var keyboardTop = CGFloat.infinity
     private var interpreter = TouchInterpreter()
     private var zoom = ScreenZoom()
+    private var pointerInteraction: UIPointerInteraction?
     private var longPressTimer: DispatchWorkItem?
     // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
     private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
@@ -136,6 +137,8 @@ final class RemoteScreenUIView: UIView {
         CATransaction.commit()
         // キーボードが出ている間は、その上端は画面の下端ではないので、下端からの払いを受けない
         interpreter.bottomEdge = isKeyboardShown ? .infinity : bounds.maxY
+        // 拡大や回転で Mac の画面の範囲が変わったので、ポインタを隠す範囲を決め直させる
+        pointerInteraction?.invalidate()
     }
 
     // MARK: - キーボード
@@ -344,6 +347,9 @@ final class RemoteScreenUIView: UIView {
         pointerScroll.allowedTouchTypes = []
         addGestureRecognizer(pointerScroll)
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(handleHover)))
+        let pointerInteraction = UIPointerInteraction(delegate: self)
+        addInteraction(pointerInteraction)
+        self.pointerInteraction = pointerInteraction
     }
 
     @objc private func handlePointerScroll(_ recognizer: UIPanGestureRecognizer) {
@@ -438,5 +444,18 @@ enum HardwareKeys {
         if flags.contains(.alternate) { modifiers.insert(.option) }
         if flags.contains(.command) { modifiers.insert(.command) }
         return modifiers
+    }
+}
+
+// Mac の画面の上では iPad のポインタを隠し、映像に描かれた Mac のポインタだけを見せる。両方だと二重に見え、形 (I ビームなど) は Mac 側にしかない
+extension RemoteScreenUIView: UIPointerInteractionDelegate {
+    func pointerInteraction(_: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion _: UIPointerRegion) -> UIPointerRegion? {
+        let screen = videoRect.intersection(bounds)
+        // 上下や左右の黒い帯では Mac のポインタが端で止まるので、iPad のポインタを出したままにする
+        return screen.contains(request.location) ? UIPointerRegion(rect: screen) : nil
+    }
+
+    func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
+        .hidden()
     }
 }
