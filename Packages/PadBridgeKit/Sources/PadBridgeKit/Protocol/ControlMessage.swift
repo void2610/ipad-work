@@ -83,6 +83,10 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case videoRegion(VideoRegion)
     /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。
     case macAudio(isEnabled: Bool)
+    /// Mac から iPad へ。映せる画面と、今映している画面。接続したときと変わったときに知らせる。
+    case displays([RemoteDisplay], shownID: UInt32)
+    /// iPad から Mac へ。映す画面を選ぶ。Mac は選ばれた画面を覚え、その画面がつながっている間はそれを映す。
+    case selectDisplay(id: UInt32)
     // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする
     /// 補助アプリが Host につないだら最初に送る。Host が起動時に渡した合言葉で、他のプロセスからの接続と見分ける。
     case microphoneRelayHello(token: String)
