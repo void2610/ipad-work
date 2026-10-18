@@ -67,7 +67,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let pixelWidth = filter.contentRect.width * CGFloat(filter.pointPixelScale)
         let pixelHeight = filter.contentRect.height * CGFloat(filter.pointPixelScale)
-        let size = Self.captureSize(pixelWidth: pixelWidth, pixelHeight: pixelHeight, maxWidth: maxWidth, maxHeight: maxHeight)
+        let size = CaptureSize.fitting(pixelWidth: pixelWidth, pixelHeight: pixelHeight, limitWidth: maxWidth, limitHeight: maxHeight)
         let native = (width: Int(pixelWidth) & ~1, height: Int(pixelHeight) & ~1)
 
         let configuration = SCStreamConfiguration()
@@ -80,7 +80,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         configuration.showsCursor = true
         configuration.queueDepth = 4
 
-        let bitRate = min(max(size.width * size.height * 4, 8_000_000), 40_000_000)
+        let bitRate = CaptureSize.bitRate(width: size.width, height: size.height)
         let encoder = try H264Encoder(width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60) { [channel, weak self] format, frame in
             if let format {
                 channel.send(.videoFormat(format))
@@ -201,14 +201,6 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     func stream(_: SCStream, didStopWithError _: any Error) {
         channel.cancel()
-    }
-
-    static func captureSize(pixelWidth: CGFloat, pixelHeight: CGFloat, maxWidth: Int, maxHeight: Int) -> (width: Int, height: Int) {
-        let scale = min(1, CGFloat(maxWidth) / pixelWidth, CGFloat(maxHeight) / pixelHeight)
-        // H.264 の 4:2:0 は縦横とも偶数でないと符号化できない
-        let width = Int(pixelWidth * scale) & ~1
-        let height = Int(pixelHeight * scale) & ~1
-        return (max(width, 2), max(height, 2))
     }
 
     private static func isCompleteFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
