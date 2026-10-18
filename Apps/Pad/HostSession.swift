@@ -99,8 +99,13 @@ final class HostSession {
 
     /// バーのキーを押す。バーの修飾キーが有効なら一緒に押す。
     func tapKey(usage: Int) {
-        RemoteKeys.withModifiers(modifierLatch.active, RemoteKeys.tap(usage: usage)).forEach(send)
+        tapKey(usage: usage, modifiers: modifierLatch.active)
         modifierLatch.consume()
+    }
+
+    /// バーの修飾キーの状態を使わず、渡した修飾キーで押す。押し続けて繰り返すときに使う。
+    func tapKey(usage: Int, modifiers: KeyModifiers) {
+        RemoteKeys.withModifiers(modifiers, RemoteKeys.tap(usage: usage)).forEach(send)
     }
 
     /// ソフトウェアキーボードで打った文字を、そのまま Mac に送る。

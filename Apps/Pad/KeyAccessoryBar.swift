@@ -87,8 +87,16 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         for key in Self.keys {
             switch key {
             case let .tap(title, usage, repeats):
-                let button = RepeatingButton(title: title, repeats: repeats) { [weak self] in
-                    self?.session?.tapKey(usage: usage)
+                // 1 回だけ効く修飾キーは最初の 1 回で外れるので、押し始めに効いていた修飾キーを覚えて繰り返しにも使う (⇧ のあと ← を押し続けて選び続けられるように)
+                var heldModifiers: KeyModifiers = []
+                let button = RepeatingButton(title: title, repeats: repeats) { [weak self] isFirst in
+                    guard let session = self?.session else { return }
+                    if isFirst {
+                        heldModifiers = session.modifierLatch.active
+                        session.tapKey(usage: usage)
+                    } else {
+                        session.tapKey(usage: usage, modifiers: heldModifiers)
+                    }
                 }
                 if let mode = Self.inputMode(ofUsage: usage) {
                     inputModeButtons.append((mode, button))
@@ -243,12 +251,13 @@ fileprivate class KeyCapButton: UIButton {
 /// 指を離したときに 1 回送り、押し続けると実際のキーボードと同じく繰り返す。
 /// 押した瞬間に送ると、キーの列を横へずらそうとキーの上から触れただけでもキーが送られてしまう。押したことは表示と音ですぐに伝える。
 private final class RepeatingButton: KeyCapButton {
-    private let fire: () -> Void
+    /// 押し始めの 1 回目は true、押し続けて繰り返す 2 回目からは false で呼ぶ。
+    private let fire: (_ isFirst: Bool) -> Void
     private let repeats: Bool
     private var timer: Timer?
     private var didRepeat = false
 
-    init(title: String, repeats: Bool, fire: @escaping () -> Void) {
+    init(title: String, repeats: Bool, fire: @escaping (_ isFirst: Bool) -> Void) {
         self.fire = fire
         self.repeats = repeats
         super.init(title: title)
@@ -267,9 +276,9 @@ private final class RepeatingButton: KeyCapButton {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.didRepeat = true
-                self.fire()
+                self.fire(true)
                 self.timer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.fire() }
+                    MainActor.assumeIsolated { self?.fire(false) }
                 }
             }
         }
@@ -278,7 +287,7 @@ private final class RepeatingButton: KeyCapButton {
     private func release() {
         stopRepeating()
         if !didRepeat {
-            fire()
+            fire(true)
         }
     }
 
