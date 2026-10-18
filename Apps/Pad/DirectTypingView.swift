@@ -107,11 +107,18 @@ final class DirectTypingUIView: UIView, UITextInput {
 
     func insertText(_ text: String) {
         markedText = ""
+        guard !isCovered else { return }
         onText?(text)
     }
 
     func deleteBackward() {
+        guard !isCovered else { return }
         onDeleteBackward?()
+    }
+
+    // 「操作の一覧」などのシートを出している間も入力先のまま残るので、裏の Mac には送らない (シートを閉じようと押した esc が Mac にも届く)
+    private var isCovered: Bool {
+        window?.rootViewController?.presentedViewController != nil
     }
 
     // 特殊キーの列のペーストボタンで、iPad でコピーした文字をキーを 1 つずつ打たずに文字のまま Mac の入力欄へ入れる (日本語や記号もそのまま入る)
@@ -121,7 +128,7 @@ final class DirectTypingUIView: UIView, UITextInput {
     }
 
     override func paste(itemProviders: [NSItemProvider]) {
-        guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return }
+        guard !isCovered, let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return }
         _ = provider.loadObject(ofClass: NSString.self) { [weak self] object, _ in
             guard let text = object as? String, !text.isEmpty else { return }
             DispatchQueue.main.async { self?.onPaste?(text) }
@@ -143,7 +150,7 @@ final class DirectTypingUIView: UIView, UITextInput {
 
     // ハードウェアキーボードのキーは文字にせず、修飾キーや矢印も含めてそのまま Mac へ送る
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if !HardwareKeys.forward(presses, isDown: true, send: send) {
+        if isCovered || !HardwareKeys.forward(presses, isDown: true, send: send) {
             super.pressesBegan(presses, with: event)
         }
     }
