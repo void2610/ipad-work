@@ -16,6 +16,13 @@ struct RemoteDisplayTests {
         #expect(displays.map(\.label) == ["名前のない画面 (メインの左)", "VG258 (メイン)"])
     }
 
+    /// 同じ機種を 2 台ともメインの右に並べても、左から番号を付けて見分けられる。
+    @Test func numbersDisplaysWithSameNameAndPlacement() {
+        let near = RemoteDisplay.Source(id: 2, name: "DELL U2720Q", bounds: CGRect(x: 1920, y: 0, width: 2560, height: 1440), isMain: false, isMirror: false)
+        let far = RemoteDisplay.Source(id: 3, name: "DELL U2720Q", bounds: CGRect(x: 4480, y: 0, width: 2560, height: 1440), isMain: false, isMirror: false)
+        #expect(RemoteDisplay.list([far, main, near]).map(\.label) == ["VG258 (メイン)", "DELL U2720Q 1 (メインの右)", "DELL U2720Q 2 (メインの右)"])
+    }
+
     @Test func excludesMirroredDisplays() {
         let mirror = RemoteDisplay.Source(id: 3, name: "プロジェクタ", bounds: main.bounds, isMain: false, isMirror: true)
         #expect(RemoteDisplay.list([mirror, main]).map(\.id) == [16])

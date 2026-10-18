@@ -60,7 +60,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
     public static func list(_ sources: [Source]) -> [RemoteDisplay] {
         let shown = sources.filter { !$0.isMirror }
         guard let main = shown.first(where: \.isMain) ?? shown.first else { return [] }
-        return shown
+        let displays = shown
             .sorted { ($0.bounds.minX, $0.bounds.minY) < ($1.bounds.minX, $1.bounds.minY) }
             .map { source in
                 RemoteDisplay(
@@ -69,6 +69,17 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
                     placement: source.id == main.id ? .main : placement(of: source.bounds, from: main.bounds)
                 )
             }
+        // 同じ機種を同じ側に並べると名前も置き場所も同じになるので、左から番号を付けて見分ける
+        let counts = Dictionary(displays.map { ($0.label, 1) }, uniquingKeysWith: +)
+        var numbers: [String: Int] = [:]
+        return displays.map { display in
+            guard counts[display.label, default: 0] > 1 else { return display }
+            let number = numbers[display.label, default: 0] + 1
+            numbers[display.label] = number
+            var numbered = display
+            numbered.name += " \(number)"
+            return numbered
+        }
     }
 
     /// 映す画面。選ばれた画面がつながっていればそれを、なければメインディスプレイを映す。
