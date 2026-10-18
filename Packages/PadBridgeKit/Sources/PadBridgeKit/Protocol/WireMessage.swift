@@ -1,7 +1,7 @@
 import Foundation
 
 /// 映像の符号化の方式。
-public enum VideoCodec: UInt8, Sendable {
+public enum VideoCodec: UInt8, Codable, Sendable {
     case h264 = 0
     /// 同じビットレートでも文字がにじみにくいので、Mac で作れればこちらを使う。
     case hevc = 1

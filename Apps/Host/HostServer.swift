@@ -53,6 +53,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
     private var macAudio: MacAudioCapture?
+    // 映像を送っている間、iPad の「接続の状態」に映像の状態を送る
+    private var statsTimer: DispatchSourceTimer?
     // iPad に知らせた、回線に合わせて画質を下げているか。同じことを何度も知らせない
     private var isVideoQualityReduced = false
     // iPad が求めた Mac の音の形式。求めない古い iPad アプリには無圧縮で送る
@@ -433,7 +435,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .videoStats, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -549,6 +551,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         // 眠っている画面は取り込めないことがあるので、始める前に起こす。始められずに張り直しが続くときは、iPad が張り直す間隔を延ばしていく
         keepDisplayAwake(true)
         startStreamer(on: channel)
+        startStatsTimer()
     }
 
     private func startStreamer(on channel: MessageChannel) {
@@ -584,6 +587,18 @@ nonisolated final class HostServer: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    private func startStatsTimer() {
+        statsTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
+        timer.setEventHandler { [weak self] in
+            guard let self, let stats = streamer?.stats else { return }
+            control?.send(.control(.videoStats(stats)))
+        }
+        timer.resume()
+        statsTimer = timer
     }
 
     private func videoQualityChanged(_ isReduced: Bool) {
@@ -734,6 +749,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func stopVideo() {
+        statsTimer?.cancel()
+        statsTimer = nil
         keepDisplayAwake(false)
         streamer?.stop()
         streamer = nil

@@ -19,10 +19,13 @@ public struct VideoFlowControl: Sendable {
         /// 前の返事のときにはもう送っていたフレームなら、前の返事からの時間 (回線が埋まっていて、これだけの時間で届いた)。
         /// 回線が空いてから送ったフレームは、待っていた時間が入るので速さの見積もりに使わない。
         public var busyDuration: TimeInterval?
+        /// 届いたうちの最後のフレームを送ってから、返事が届くまで。iPad に「接続の状態」として見せる。
+        public var roundTrip: TimeInterval?
 
-        public init(bytes: Int, busyDuration: TimeInterval?) {
+        public init(bytes: Int, busyDuration: TimeInterval?, roundTrip: TimeInterval? = nil) {
             self.bytes = bytes
             self.busyDuration = busyDuration
+            self.roundTrip = roundTrip
         }
     }
 
@@ -70,12 +73,13 @@ public struct VideoFlowControl: Sendable {
         let previousAcknowledgedAt = lastAcknowledgedAt
         inFlight.removeFirst(count)
         lastAcknowledgedAt = time
-        guard let first = delivered.first else { return Delivery(bytes: 0, busyDuration: nil) }
+        guard let first = delivered.first, let last = delivered.last else { return Delivery(bytes: 0, busyDuration: nil) }
         let bytes = delivered.reduce(0) { $0 + $1.bytes }
+        let roundTrip = time - last.sentAt
         guard let previousAcknowledgedAt, first.sentAt <= previousAcknowledgedAt, time > previousAcknowledgedAt else {
-            return Delivery(bytes: bytes, busyDuration: nil)
+            return Delivery(bytes: bytes, busyDuration: nil, roundTrip: roundTrip)
         }
-        return Delivery(bytes: bytes, busyDuration: time - previousAcknowledgedAt)
+        return Delivery(bytes: bytes, busyDuration: time - previousAcknowledgedAt, roundTrip: roundTrip)
     }
 }
 

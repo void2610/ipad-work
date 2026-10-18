@@ -35,6 +35,10 @@ final class HostSession {
     private(set) var videoSize = CGSize.zero
     /// 映像を映しているか。映像の接続を張り直している間は、前の大きさが残っていても映していない。
     private(set) var isVideoShown = false
+    /// Mac が 2 秒ごとに送る映像の状態と、その間に iPad に届いた映像の枚数と量。「接続の状態」に出す。
+    private(set) var videoStats: VideoStats?
+    private(set) var receivedRate: (framesPerSecond: Double, megabitsPerSecond: Double)?
+    private let receiveMeter = ReceiveRateMeter()
     /// 今表示している映像に写っている、Mac の画面の範囲。
     private(set) var videoRegion = VideoRegion.full
     // 送ってほしいと頼んだ範囲。つなぎ直したときに頼み直す
@@ -200,6 +204,13 @@ final class HostSession {
             guard !Task.isCancelled else { return }
             self?.notices.removeAll { $0.kind == notice.kind }
         }
+    }
+
+    /// 映像を止めたら、前の映像の状態を出したままにしない。
+    private func clearVideoStats() {
+        videoStats = nil
+        receivedRate = nil
+        _ = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
     }
 
     private func clearNotices() {
@@ -445,6 +456,9 @@ final class HostSession {
             showDisplay(shownID)
         case let .macInputMode(mode):
             macInputMode = mode
+        case let .videoStats(stats):
+            videoStats = stats
+            receivedRate = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
         case let .videoQuality(isReduced):
             // 映像がぼやけたり戻ったりした理由が分かるように
             let notice = isReduced
@@ -474,6 +488,7 @@ final class HostSession {
         video = channel
         let size = Self.maxVideoSize()
         let acknowledger = VideoAcknowledger()
+        let receiveMeter = receiveMeter
         channel.start(
             onStateChange: { [weak self, weak channel] state in
                 switch state {
@@ -493,6 +508,9 @@ final class HostSession {
                 if let reply = acknowledger.reply(to: message) {
                     channel?.send(reply)
                 }
+                if case let .videoFrame(frame) = message {
+                    receiveMeter.record(bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime)
+                }
                 renderer.handle(message)
             }
         )
@@ -502,12 +520,14 @@ final class HostSession {
         let old = video
         video = nil
         isVideoShown = false
+        clearVideoStats()
         old?.cancel()
     }
 
     private func videoLost() {
         video = nil
         isVideoShown = false
+        clearVideoStats()
         let delay = videoRetryDelay
         videoRetryDelay = min(videoRetryDelay * 2, .seconds(5))
         videoRetryTask = Task { [weak self] in

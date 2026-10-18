@@ -43,6 +43,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let sentFrames = Atomic(0)
     private let flow: Mutex<VideoFlowControl>
     private let bitRateController = Mutex<BitRateController?>(nil)
+    private let roundTrip = Mutex<TimeInterval?>(nil)
     private let initialBitRate: Int?
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
@@ -176,10 +177,24 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         bitRateController.withLock { $0?.current }
     }
 
+    /// iPad の「接続の状態」に出す、今の映像の状態。取り込みを始める前は nil。
+    var stats: VideoStats? {
+        let (codec, size) = lock.withLock { (encoder?.codec, outputSize) }
+        guard let codec, let rates = bitRateController.withLock({ $0.map { (current: $0.current, maximum: $0.maximum) } }) else { return nil }
+        let roundTrip = roundTrip.withLock { $0 }
+        return VideoStats(
+            codec: codec, width: size.width, height: size.height, bitRate: rates.current, maximumBitRate: rates.maximum,
+            roundTripMillis: roundTrip.map { Int(($0 * 1000).rounded()) }
+        )
+    }
+
     /// iPad がこのフレームを受け取った。
     func frameReceived(presentationTimeMicros: Int64) {
         let delivery = flow.withLock { $0.received(presentationTimeMicros: presentationTimeMicros, at: ProcessInfo.processInfo.systemUptime) }
         bitRateController.withLock { $0?.delivered(delivery) }
+        if let sample = delivery.roundTrip {
+            roundTrip.withLock { $0 = VideoStats.smoothed($0, with: sample) }
+        }
     }
 
     /// iPad が見ている範囲を変える。拡大している間だけ、画面を元の解像度で取り込む (等倍のときは iPad の解像度で十分なので、取り込みを軽くする)。

@@ -24,6 +24,7 @@ struct FloatingControls: View {
     @AppStorage("floatingControlsCorner") private var cornerName = Corner.bottomTrailing.rawValue
     @State private var dragOffset = CGSize.zero
     @State private var isShowingGuide = false
+    @State private var isShowingStats = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -117,6 +118,7 @@ struct FloatingControls: View {
                     }
                 }
                 Button("操作の一覧", systemImage: "hand.tap") { isShowingGuide = true }
+                Button("接続の状態", systemImage: "gauge.with.dots.needle.33percent") { isShowingStats = true }
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {
                 Image(systemName: "ellipsis")
@@ -127,6 +129,9 @@ struct FloatingControls: View {
             .accessibilityLabel("その他")
             .sheet(isPresented: $isShowingGuide) {
                 GestureGuideView()
+            }
+            .sheet(isPresented: $isShowingStats) {
+                ConnectionStatsView(session: session)
             }
         }
         .foregroundStyle(.primary)

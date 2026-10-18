@@ -59,10 +59,14 @@ struct VideoFlowControlTests {
         // 回線が空いてから送ったフレームは、空いていた時間が入るので見積もりに使わない
         flow.sent(presentationTimeMicros: 3, bytes: 40_000, at: 0.5)
         let third = flow.received(presentationTimeMicros: 3, at: 0.56)
-        #expect(first == VideoFlowControl.Delivery(bytes: 50_000, busyDuration: nil))
+        #expect(first.bytes == 50_000 && first.busyDuration == nil)
         #expect(second.bytes == 40_000)
         #expect(abs((second.busyDuration ?? 0) - 0.064) < 1e-9)
-        #expect(third == VideoFlowControl.Delivery(bytes: 40_000, busyDuration: nil))
+        #expect(third.bytes == 40_000 && third.busyDuration == nil)
+        // 往復の遅れは、届いたフレームを送ってから返事が届くまで
+        #expect(abs((first.roundTrip ?? 0) - 0.08) < 1e-9)
+        #expect(abs((second.roundTrip ?? 0) - 0.134) < 1e-9)
+        #expect(abs((third.roundTrip ?? 0) - 0.06) < 1e-9)
     }
 
     /// キーフレームの返事を待つ間だけ、待っていると答える。
