@@ -13,14 +13,14 @@ struct GestureGuideView: View {
     private static let sections: [(title: String, items: [Item])] = [
         ("指", [
             Item(gesture: "1 本指でタップ", action: "クリック (続けてタップするとダブルクリック)"),
-            Item(gesture: "1 本指で払う・2 本指で動かす", action: "スクロール (指を離すと止まる)"),
+            Item(gesture: "1 本指でスワイプ・2 本指で動かす", action: "スクロール (指を離すと止まる)"),
             Item(gesture: "長押ししてから動かす", action: "ドラッグ"),
             Item(gesture: "長押しして離す・2 本指で短くタップ", action: "右クリック"),
             Item(gesture: "2 本指で広げる・縮める", action: "iPad の上で拡大・縮小 (5 倍まで。縮めきると等倍)"),
-            Item(gesture: "3 本指で左右に払う", action: "操作スペースの切り替え (左へ払うと右隣へ)"),
-            Item(gesture: "3 本指で上へ払う", action: "Mission Control"),
-            Item(gesture: "3 本指で下へ払う", action: "アプリケーションウインドウ"),
-            Item(gesture: "画面の下端から上へ払う", action: "Dock を出す (Dock が別の画面にあれば、その画面を映す)"),
+            Item(gesture: "3 本指で左右にスワイプ", action: "操作スペースの切り替え (左へスワイプすると右の操作スペースへ)"),
+            Item(gesture: "3 本指で上へスワイプ", action: "Mission Control"),
+            Item(gesture: "3 本指で下へスワイプ", action: "アプリケーションウインドウ"),
+            Item(gesture: "画面の下端から上へスワイプ", action: "Dock を表示 (Dock が別のディスプレイにあれば、そのディスプレイに切り替え)"),
         ]),
         ("トラックパッド・マウス・Apple Pencil", [
             Item(gesture: "クリック", action: "そのままクリック (副ボタンは右クリック)"),
@@ -28,25 +28,25 @@ struct GestureGuideView: View {
             Item(gesture: "ホバー", action: "カーソル移動"),
         ]),
         ("キーボード", [
-            Item(gesture: "ハードウェアキーボード", action: "そのままキー入力 (押し続けると繰り返す。⌘ を押しながらタップで ⌘クリック)"),
+            Item(gesture: "ハードウェアキーボード", action: "そのままキー入力 (長押しでキーリピート。⌘ を押しながらタップで ⌘クリック)"),
             Item(gesture: "⌘Space・⌘N・⌘O・⌘R・⌘M・⌘H・⌘Q", action: "iPadOS が受け取ってしまうので、「…」の「Mac のショートカット」から送る"),
-            Item(gesture: "特殊キーの列の ⌃ ⌥ ⌘ ⇧", action: "次の 1 回だけ効く。続けて 2 回押すと固定"),
-            Item(gesture: "特殊キーの列の英数・かな", action: "Mac の日本語入力を切り替える。効いている方が青くなる"),
-            Item(gesture: "特殊キーの列のペースト", action: "iPad でコピーした文字を Mac の入力欄に入れる"),
+            Item(gesture: "キーボード上部のバーの ⌃ ⌥ ⌘ ⇧", action: "次の 1 回だけ有効。2 回続けて押すとロック"),
+            Item(gesture: "キーボード上部のバーの英数・かな", action: "Mac の入力モードを切り替える。現在の入力モードが青く表示される"),
+            Item(gesture: "キーボード上部のバーのペースト", action: "iPad でコピーしたテキストを Mac の入力欄に貼り付ける"),
         ]),
         ("操作パネル", [
             Item(gesture: "Enter", action: "Mac の Return キー"),
-            Item(gesture: "マイク", action: "Mac の Typeless で音声入力を始める・終える"),
+            Item(gesture: "マイク", action: "Mac の Typeless で音声入力を開始・終了"),
             Item(gesture: "アプリ切替", action: "⌘Tab。タップごとに次のアプリへ進み、1 秒で確定"),
-            Item(gesture: "パネルをドラッグ", action: "好きな隅へ動かす"),
+            Item(gesture: "パネルをドラッグ", action: "好きな隅へ移動"),
         ]),
-        ("「…」の中", [
-            Item(gesture: "映す画面", action: "Mac に画面が 2 台以上あるとき、iPad に映す画面を選ぶ"),
-            Item(gesture: "手前のウィンドウを移す", action: "手前のウィンドウを選んだ画面へ移し、その画面を映す"),
-            Item(gesture: "Mac の音を iPad で鳴らす", action: "Mac で鳴っている音を iPad で鳴らす (その間 Mac のスピーカーは鳴らない)"),
+        ("「…」メニュー", [
+            Item(gesture: "表示するディスプレイ", action: "Mac にディスプレイが 2 台以上あるとき、iPad に表示するディスプレイを選ぶ"),
+            Item(gesture: "最前面のウィンドウを移動", action: "最前面のウィンドウを選んだディスプレイへ移動し、そのディスプレイを表示"),
+            Item(gesture: "Mac のサウンドを iPad で再生", action: "Mac のサウンドを iPad で再生 (その間 Mac のスピーカーからは再生されない)"),
             Item(gesture: "Mac のショートカット", action: "iPadOS が受け取ってしまうショートカットを Mac へ送る"),
-            Item(gesture: "接続の状態", action: "映像の画質・届いている枚数・往復の遅れを見る (遅い・カクつくとき)"),
-            Item(gesture: "切断", action: "Mac との接続を切って、Mac の一覧に戻る"),
+            Item(gesture: "接続状況", action: "映像の画質・フレームレート・遅延を確認 (動作が重いときに)"),
+            Item(gesture: "切断", action: "Mac との接続を切断して、Mac の一覧に戻る"),
         ]),
     ]
 
@@ -65,7 +65,7 @@ struct GestureGuideView: View {
                     }
                 }
             }
-            .navigationTitle("操作の一覧")
+            .navigationTitle("操作一覧")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

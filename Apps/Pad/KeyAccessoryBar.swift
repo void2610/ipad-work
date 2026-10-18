@@ -217,7 +217,7 @@ fileprivate class KeyCapButton: UIButton {
     func showLatchState(_ state: ModifierLatch.State) {
         latchState = state
         setNeedsUpdateConfiguration()
-        accessibilityValue = state == .off ? "オフ" : state == .once ? "次の 1 回" : "固定"
+        accessibilityValue = state == .off ? "オフ" : state == .once ? "次の 1 回" : "ロック"
     }
 
     override func updateConfiguration() {

@@ -206,7 +206,7 @@ final class HostSession {
 
     private func announceDisplay(_ id: UInt32) {
         guard let display = displays.first(where: { $0.id == id }) else { return }
-        showNotice(TransientNotice(kind: .display, text: "\(display.label) を映しています", systemImage: "display"))
+        showNotice(TransientNotice(kind: .display, text: "\(display.label) を表示中", systemImage: "display"))
     }
 
     private func showNotice(_ notice: TransientNotice, for duration: Duration = .seconds(2)) {
@@ -333,11 +333,11 @@ final class HostSession {
                     BackgroundAudio.shared.macAudio.setSuppressed(microphone.isRunning)
                     if !microphone.isRunning {
                         // 電話のあとや、ほかのアプリがマイクを使っているときは始められない。黙って Mac の無音を聞き取らせない
-                        microphoneNotice = "iPad のマイクを始められなかったので、Mac のマイクで聞き取ります。"
+                        microphoneNotice = "iPad のマイクを開始できなかったため、Mac のマイクで音声入力します。"
                     }
                 }
             case .denied:
-                microphoneNotice = "iPad のマイクが許可されていないので、Mac のマイクで聞き取ります。設定の「PadBridge」でマイクを許可してください。"
+                microphoneNotice = "iPad のマイクへのアクセスが許可されていないため、Mac のマイクで音声入力します。設定の「PadBridge」でマイクを許可してください。"
             }
             send(.voiceInput(isActive: true))
         }

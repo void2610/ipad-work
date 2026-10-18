@@ -5,12 +5,12 @@ public enum ConnectionRoute {
     public static func label(interfaceName name: String, type: NWInterface.InterfaceType) -> String {
         // awdl は種類としては Wi-Fi なので、名前で見分ける
         if name.hasPrefix("awdl") || name.hasPrefix("llw") {
-            return "Wi-Fi の直接通信 (awdl)"
+            return "Wi-Fi ピアツーピア (AWDL)"
         }
         switch type {
-        case .wifi: return "Wi-Fi のネットワーク"
-        case .wiredEthernet: return "有線のネットワーク"
-        case .loopback: return "同じ機器の中 (ループバック)"
+        case .wifi: return "Wi-Fi"
+        case .wiredEthernet: return "有線 LAN"
+        case .loopback: return "ループバック (同じ機器内)"
         default: return name
         }
     }

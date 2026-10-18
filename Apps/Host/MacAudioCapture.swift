@@ -9,7 +9,7 @@ import Synchronization
 /// iPad のマイクの音を鳴らしている補助アプリの出力は取り出さない (iPad に送り返さない)。
 nonisolated final class MacAudioCapture: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "mac-audio")
-    private static let name = "PadBridge Mac の音"
+    private static let name = "PadBridge Mac サウンド"
     private static let systemObject = AudioObjectID(kAudioObjectSystemObject)
     private static let helperBundleIdentifier = "dev.void2610.padbridge.mic"
 

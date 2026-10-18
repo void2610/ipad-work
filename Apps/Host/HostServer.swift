@@ -241,9 +241,9 @@ nonisolated final class HostServer: @unchecked Sendable {
                 switch state {
                 case .ready: onListenerChange("待機中")
                 case let .failed(error):
-                    onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+                    onListenerChange("接続の待ち受けに失敗しました: \(error.localizedDescription)")
                     restartListener()
-                case let .waiting(error): onListenerChange("待機準備中: \(error.localizedDescription)")
+                case let .waiting(error): onListenerChange("待ち受けの準備中: \(error.localizedDescription)")
                 default: break
                 }
             }
@@ -257,7 +257,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             self.listener = listener
         } catch {
             Self.logger.error("listener の作成に失敗: \(error, privacy: .public)")
-            onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+            onListenerChange("接続の待ち受けに失敗しました: \(error.localizedDescription)")
             restartListener()
         }
     }
@@ -899,11 +899,11 @@ nonisolated final class HostServer: @unchecked Sendable {
         if isAwake, displayAssertion == nil {
             // 眠らせないアサーションは、もう眠っている画面を起こさない。映し始めるときに操作があったと知らせて起こす
             var activity = IOPMAssertionID(0)
-            if IOPMAssertionDeclareUserActivity("iPad に画面を映し始めた" as CFString, kIOPMUserActiveLocal, &activity) == kIOReturnSuccess {
+            if IOPMAssertionDeclareUserActivity("iPad への画面配信を開始" as CFString, kIOPMUserActiveLocal, &activity) == kIOReturnSuccess {
                 IOPMAssertionRelease(activity)
             }
             var id = IOPMAssertionID(0)
-            if IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "iPad に画面を映している" as CFString, &id) == kIOReturnSuccess {
+            if IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "iPad に画面を配信中" as CFString, &id) == kIOReturnSuccess {
                 displayAssertion = id
             }
         } else if !isAwake, let id = displayAssertion {

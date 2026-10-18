@@ -102,30 +102,30 @@ struct FloatingControls: View {
             PanelButton(title: "アプリ切替", systemImage: "rectangle.2.swap", isActive: false, action: session.switchApp)
             Menu {
                 if session.displays.count > 1 {
-                    Section("映す画面") {
-                        Picker("映す画面", selection: Binding(get: { session.shownDisplayID ?? 0 }, set: { session.selectDisplay($0) })) {
+                    Section("表示するディスプレイ") {
+                        Picker("表示するディスプレイ", selection: Binding(get: { session.shownDisplayID ?? 0 }, set: { session.selectDisplay($0) })) {
                             ForEach(session.displays) { display in
                                 Text(display.label).tag(display.id)
                             }
                         }
                         .pickerStyle(.inline)
                         // 画面をまたいでドラッグできない代わりに、手前のウィンドウを選んだ画面へ移す
-                        Menu("手前のウィンドウを移す", systemImage: "macwindow") {
+                        Menu("最前面のウィンドウを移動", systemImage: "macwindow") {
                             ForEach(session.displays) { display in
                                 Button(display.label) { session.moveFrontWindow(to: display.id) }
                             }
                         }
                     }
                 }
-                Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
+                Toggle("Mac のサウンドを iPad で再生", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
                 // ハードウェアキーボードで押しても iPadOS が受け取ってしまい、Mac に届かないもの
                 Menu("Mac のショートカット", systemImage: "command") {
                     ForEach(Self.reservedShortcuts, id: \.title) { shortcut in
                         Button(shortcut.title) { session.sendShortcut(usage: shortcut.usage, modifiers: .command) }
                     }
                 }
-                Button("操作の一覧", systemImage: "hand.tap") { isShowingGuide = true }
-                Button("接続の状態", systemImage: "gauge.with.dots.needle.33percent") { isShowingStats = true }
+                Button("操作一覧", systemImage: "hand.tap") { isShowingGuide = true }
+                Button("接続状況", systemImage: "gauge.with.dots.needle.33percent") { isShowingStats = true }
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {
                 Image(systemName: "ellipsis")

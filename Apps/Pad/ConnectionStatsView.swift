@@ -14,34 +14,34 @@ struct ConnectionStatsView: View {
                         row("形式", "\(stats.codec == .hevc ? "HEVC" : "H.264")・\(stats.width)×\(stats.height)")
                         row("画質", Self.quality(stats))
                         if let rate = session.receivedRate {
-                            row("届いている映像", String(format: "毎秒 %.0f 枚・%.1f Mbps", rate.framesPerSecond, rate.megabitsPerSecond))
+                            row("受信している映像", String(format: "%.0f fps・%.1f Mbps", rate.framesPerSecond, rate.megabitsPerSecond))
                         }
-                        row("往復の遅れ", stats.roundTripMillis.map { "\($0) ms" } ?? "測っています")
+                        row("往復遅延 (RTT)", stats.roundTripMillis.map { "\($0) ms" } ?? "計測中")
                         if let frameRate = stats.frameRate {
-                            row("毎秒の上限", frameRate < PreferredFrameRate.normal ? "\(frameRate) 枚 (低電力モードか本体が熱いので減らしています)" : "\(frameRate) 枚")
+                            row("最大フレームレート", frameRate < PreferredFrameRate.normal ? "\(frameRate) fps (低電力モードまたは本体の温度上昇のため下げています)" : "\(frameRate) fps")
                         }
                     } else {
-                        Text("映像の状態が Mac から届くのを待っています")
+                        Text("Mac から映像の情報を待っています")
                             .foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("映像")
                 } footer: {
-                    Text("2 秒ごとに更新します。画面が止まっている間は、Mac は映像を送らないので枚数は 0 になります。往復の遅れは、Mac がフレームを送ってから iPad の受け取りの返事が届くまでの時間です。")
+                    Text("2 秒ごとに更新します。画面に変化がない間は Mac が映像を送らないため、フレームレートは 0 になります。往復遅延は、Mac がフレームを送信してから iPad の受信確認が届くまでの時間です。")
                 }
                 Section("接続") {
                     if let route = session.route {
                         row("経路", route)
                     }
                     // 片方だけ古い組み立てのまま動いていないかを見られるように
-                    row("組み立て (iPad)", BuildCommit.current() ?? "不明")
-                    row("組み立て (Mac)", session.hostCommit ?? "不明")
+                    row("ビルド (iPad)", BuildCommit.current() ?? "不明")
+                    row("ビルド (Mac)", session.hostCommit ?? "不明")
                 }
-                Section("音") {
-                    row("Mac の音", session.playsMacAudio ? (BackgroundAudio.shared.macAudio.canDecodeOpus ? "Opus で鳴らしています" : "無圧縮で鳴らしています") : "鳴らしていません")
+                Section("サウンド") {
+                    row("Mac のサウンド", session.playsMacAudio ? (BackgroundAudio.shared.macAudio.canDecodeOpus ? "Opus で再生中" : "非圧縮で再生中") : "再生していません")
                 }
             }
-            .navigationTitle("接続の状態")
+            .navigationTitle("接続状況")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -58,6 +58,6 @@ struct ConnectionStatsView: View {
     private static func quality(_ stats: VideoStats) -> String {
         let current = String(format: "%.1f Mbps", Double(stats.bitRate) / 1_000_000)
         guard stats.bitRate < stats.maximumBitRate else { return current }
-        return current + String(format: " (回線に合わせて下げています。上限 %.1f Mbps)", Double(stats.maximumBitRate) / 1_000_000)
+        return current + String(format: " (回線状況に合わせて低下中。最大 %.1f Mbps)", Double(stats.maximumBitRate) / 1_000_000)
     }
 }

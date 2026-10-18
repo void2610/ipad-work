@@ -28,13 +28,13 @@ public struct VideoStats: Codable, Sendable, Equatable {
     public var summary: String {
         var parts = ["\(codec == .hevc ? "HEVC" : "H.264") \(width)×\(height)", String(format: "%.1f Mbps", Double(bitRate) / 1_000_000)]
         if bitRate < maximumBitRate {
-            parts[1] += " (回線に合わせて下げています)"
+            parts[1] += " (回線状況に合わせて低下中)"
         }
         if let frameRate, frameRate < PreferredFrameRate.normal {
-            parts.append("毎秒 \(frameRate) 枚まで")
+            parts.append("最大 \(frameRate) fps")
         }
         if let roundTripMillis {
-            parts.append("往復 \(roundTripMillis) ms")
+            parts.append("RTT \(roundTripMillis) ms")
         }
         return parts.joined(separator: "・")
     }

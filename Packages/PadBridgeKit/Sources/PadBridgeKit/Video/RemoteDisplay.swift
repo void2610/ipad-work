@@ -36,7 +36,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var placement: Placement
 
-    public static let unnamed = "名前のない画面"
+    public static let unnamed = "名称不明のディスプレイ"
 
     public init(id: UInt32, name: String, placement: Placement) {
         self.id = id
@@ -47,11 +47,11 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
     /// iPad のメニューに出す名前。
     public var label: String {
         let place = switch placement {
-        case .main: "メイン"
-        case .left: "メインの左"
-        case .right: "メインの右"
-        case .above: "メインの上"
-        case .below: "メインの下"
+        case .main: "メインディスプレイ"
+        case .left: "メインディスプレイの左"
+        case .right: "メインディスプレイの右"
+        case .above: "メインディスプレイの上"
+        case .below: "メインディスプレイの下"
         }
         return "\(name) (\(place))"
     }

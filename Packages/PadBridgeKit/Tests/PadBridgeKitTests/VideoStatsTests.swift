@@ -39,9 +39,9 @@ struct VideoStatsTests {
     /// Mac のメニューには 1 行にまとめて出す。下げていることや減らした枚数は、そのときだけ書く。
     @Test func summarizesForMenu() {
         let full = VideoStats(codec: .hevc, width: 2360, height: 1532, bitRate: 14_462_080, maximumBitRate: 14_462_080, roundTripMillis: 12, frameRate: 60)
-        #expect(full.summary == "HEVC 2360×1532・14.5 Mbps・往復 12 ms")
+        #expect(full.summary == "HEVC 2360×1532・14.5 Mbps・RTT 12 ms")
         let reduced = VideoStats(codec: .h264, width: 1920, height: 1080, bitRate: 4_000_000, maximumBitRate: 8_294_400, roundTripMillis: nil, frameRate: 30)
-        #expect(reduced.summary == "H.264 1920×1080・4.0 Mbps (回線に合わせて下げています)・毎秒 30 枚まで")
+        #expect(reduced.summary == "H.264 1920×1080・4.0 Mbps (回線状況に合わせて低下中)・最大 30 fps")
     }
 
     /// 「接続の状態」は操作用の接続で送るので、JSON で往復できる。

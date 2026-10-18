@@ -18,30 +18,30 @@ struct HostMenuView: View {
                 .foregroundStyle(.secondary)
 
             if let display = controller.shownDisplayOnPad {
-                Label("iPad に映している画面: \(display)", systemImage: "display")
+                Label("iPad に表示中のディスプレイ: \(display)", systemImage: "display")
                     .font(.caption)
             }
 
             if let padCommit = controller.mismatchedPadCommit {
-                Label("iPad アプリの組み立てが違います (iPad: \(padCommit)、Mac: \(BuildCommit.current() ?? "?"))", systemImage: "exclamationmark.triangle")
+                Label("iPad アプリとビルドが一致しません (iPad: \(padCommit)、Mac: \(BuildCommit.current() ?? "?"))", systemImage: "exclamationmark.triangle")
                     .font(.caption)
             }
 
             // iPad で映像が遅い・粗いと言われたときに、Mac の前でも回線のせいかを見られるように
             if let stats = controller.videoStatsOnPad {
-                Label("iPad への映像: \(stats.summary)", systemImage: "gauge.with.dots.needle.33percent")
+                Label("iPad への配信: \(stats.summary)", systemImage: "gauge.with.dots.needle.33percent")
                     .font(.caption)
             }
 
             // Mac の前にいる人が、Mac から音が出ない理由を分かるようにする
             if controller.isPlayingMacAudioOnPad {
-                Label("Mac の音は iPad で鳴らしています。Mac のスピーカーからは鳴りません。", systemImage: "speaker.wave.2")
+                Label("Mac のサウンドを iPad で再生中です。Mac のスピーカーからは再生されません。", systemImage: "speaker.wave.2")
                     .font(.caption)
             }
 
             GroupBox("権限") {
                 VStack(alignment: .leading, spacing: 8) {
-                    PermissionRow(title: "画面収録", detail: "画面を iPad に映す", granted: controller.canCaptureScreen) {
+                    PermissionRow(title: "画面収録", detail: "画面を iPad に表示する", granted: controller.canCaptureScreen) {
                         controller.requestScreenCapture()
                     }
                     PermissionRow(title: "アクセシビリティ", detail: "iPad からの操作と文字入力", granted: controller.canControlInput) {
@@ -54,10 +54,10 @@ struct HostMenuView: View {
             // 蓋を閉じた Mac で iPad のマイクを使うときに要る許可。iPad をつなぐまでは分からないので、分かったものだけ出す
             GroupBox("iPad のマイク") {
                 VStack(alignment: .leading, spacing: 8) {
-                    PermissionRow(title: "PadBridge Host", detail: "システムオーディオの録音 (iPad の声を渡す)", granted: controller.canRelayMicrophone) {
+                    PermissionRow(title: "PadBridge Host", detail: "システムオーディオの録音 (iPad のマイクを Mac で使う)", granted: controller.canRelayMicrophone) {
                         controller.openAudioCaptureSettings()
                     }
-                    PermissionRow(title: "Typeless", detail: "「システムオーディオ録音のみ」に加える", granted: !controller.typelessCannotReadPadMicrophone) {
+                    PermissionRow(title: "Typeless", detail: "「システムオーディオ録音のみ」に追加する", granted: !controller.typelessCannotReadPadMicrophone) {
                         controller.openAudioCaptureSettings()
                     }
                 }
@@ -67,12 +67,12 @@ struct HostMenuView: View {
             Toggle(isOn: Binding(get: { controller.launchesAtLogin }, set: { controller.setLaunchesAtLogin($0) })) {
                 VStack(alignment: .leading) {
                     Text("ログイン時に起動")
-                    Text("蓋を閉じた Mac を再起動しても、iPad からつなげる").font(.caption).foregroundStyle(.secondary)
+                    Text("Mac を再起動しても、蓋を閉じたまま iPad から接続できます").font(.caption).foregroundStyle(.secondary)
                 }
             }
 
             // どの組み立てが動いているかを、iPad の「接続の状態」と見比べられるように
-            Text("組み立て: \(BuildCommit.current() ?? "不明")")
+            Text("ビルド: \(BuildCommit.current() ?? "不明")")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 

@@ -143,6 +143,6 @@ final class PushToTalkButton: UIButton {
         configuration.baseBackgroundColor = isVoiceInputActive ? .systemRed : .tintColor
         configuration.contentInsets = .zero
         self.configuration = configuration
-        accessibilityValue = isVoiceInputActive ? "聞き取り中" : nil
+        accessibilityValue = isVoiceInputActive ? "音声入力中" : nil
     }
 }

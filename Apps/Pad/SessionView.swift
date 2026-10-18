@@ -28,12 +28,12 @@ struct SessionView: View {
     }
 
     private var buildNotice: String? {
-        session.mismatchedHostCommit.map { "Mac の PadBridge Host と iPad アプリの組み立てが違います (Mac: \($0)、iPad: \(BuildCommit.current() ?? "?"))。片方だけ古いと、動きが食い違うことがあります。" }
+        session.mismatchedHostCommit.map { "Mac の PadBridge Host と iPad アプリのビルドが一致しません (Mac: \($0)、iPad: \(BuildCommit.current() ?? "?"))。片方だけ古いと、正しく動作しないことがあります。" }
     }
 
     // ロック中は macOS が画面の取り込みとロック画面への合成の入力を制限するので、黒いまま止まった理由を出す
     private var lockNotice: String? {
-        session.isMacScreenLocked ? "Mac の画面がロックされています。ロック中は映像が止まり、iPad からの入力が届かないことがあります。" : nil
+        session.isMacScreenLocked ? "Mac の画面がロックされています。ロック中は映像が止まり、iPad からの入力が反映されないことがあります。" : nil
     }
 
     @ViewBuilder
@@ -70,7 +70,7 @@ struct SessionView: View {
         VStack(spacing: 10) {
             ProgressView(title)
             if session.isUnreachable {
-                Text("Mac に届きません。Mac が眠っていないか、Mac の PadBridge Host が動いているかを確かめてください。")
+                Text("Mac に接続できません。Mac がスリープしていないか、Mac で PadBridge Host が起動しているかを確認してください。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -93,13 +93,13 @@ struct SessionView: View {
     private var relayNotice: String? {
         guard let status = session.hostStatus else { return nil }
         if !status.canRelayMicrophone {
-            return "iPad のマイクを Mac に渡すには、Mac で「PadBridge Host」に「システムオーディオの録音」を許可してください。"
+            return "iPad のマイクを Mac で使うには、Mac で「PadBridge Host」に「システムオーディオの録音」を許可してください。"
         }
         if status.typelessUsesOtherMicrophone {
-            return "Typeless が iPad ではないマイクで聞き取っていました。Typeless のマイクが「自動検出」なら、この聞き取りのあと Mac が「PadBridge iPad マイク」に切り替えます (Typeless で選んだマイクは変えません)。"
+            return "Typeless が iPad 以外のマイクで音声入力していました。Typeless のマイク設定が「自動検出」の場合は、この音声入力のあと Mac が「PadBridge iPad マイク」に切り替えます (Typeless で選択したマイクは変更しません)。"
         }
         if status.typelessCannotReadPadMicrophone {
-            return "Typeless が iPad のマイクを読めません。Mac で「画面とシステムオーディオの録音」の設定を開いたので、下の「システムオーディオ録音のみ」の「＋」で Typeless を加えてください。"
+            return "Typeless が iPad のマイクを使用できません。Mac で「画面とシステムオーディオの録音」の設定を開いたので、下の「システムオーディオ録音のみ」の「＋」から Typeless を追加してください。"
         }
         return nil
     }

@@ -21,7 +21,7 @@ struct HostListView: View {
                     ContentUnavailableView {
                         Label("ローカルネットワークを使えません", systemImage: "network.slash")
                     } description: {
-                        Text("Mac を探すには、iPad の設定で PadBridge に「ローカルネットワーク」の許可が要ります。")
+                        Text("Mac を検索するには、iPad の設定で PadBridge に「ローカルネットワーク」へのアクセスを許可してください。")
                     } actions: {
                         Button("設定を開く") {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -33,7 +33,7 @@ struct HostListView: View {
                     ContentUnavailableView(
                         "Mac が見つかりません",
                         systemImage: "laptopcomputer.slash",
-                        description: Text("Mac で PadBridge Host を起動し、この iPad と同じネットワークにつないでください。")
+                        description: Text("Mac で PadBridge Host を起動し、この iPad と同じネットワークに接続してください。")
                     )
                 }
             }
