@@ -16,7 +16,21 @@ final class HostSession {
 
     let host: DiscoveredHost
     let renderer = VideoRenderer()
-    private(set) var phase = Phase.connecting
+    private(set) var phase = Phase.connecting {
+        didSet {
+            if phase == .connected {
+                reachabilityTask?.cancel()
+                reachabilityTask = nil
+                isUnreachable = false
+            } else if oldValue == .connected {
+                // つなぎ直すたびに数え直すと、つなぎ直す間隔 (最大 5 秒) より長く待てないので、つながりが切れたときから数える
+                watchReachability()
+            }
+        }
+    }
+    /// つなごうとしてしばらくたってもつながらない。「接続中…」が続くだけで理由が分からないので、確かめることを知らせる。
+    private(set) var isUnreachable = false
+    private var reachabilityTask: Task<Void, Never>?
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
     /// 今表示している映像に写っている、Mac の画面の範囲。
@@ -71,7 +85,17 @@ final class HostSession {
         self.host = host
     }
 
+    private func watchReachability() {
+        reachabilityTask?.cancel()
+        reachabilityTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, !Task.isCancelled, phase != .connected else { return }
+            isUnreachable = true
+        }
+    }
+
     func start() {
+        watchReachability()
         renderer.onNeedsKeyFrame = { [weak self] in
             Task { @MainActor in self?.send(.requestKeyFrame) }
         }

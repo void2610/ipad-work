@@ -49,16 +49,27 @@ struct SessionView: View {
         .animation(.easeInOut(duration: 0.2), value: session.displayNotice)
         switch session.phase {
         case .connecting:
-            ProgressView("\(session.host.name) に接続中…")
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            connectingView("\(session.host.name) に接続中…")
         case .reconnecting:
-            ProgressView("\(session.host.name) に再接続中…")
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            connectingView("\(session.host.name) に再接続中…")
         case .connected:
             EmptyView()
         }
+    }
+
+    private func connectingView(_ title: String) -> some View {
+        VStack(spacing: 10) {
+            ProgressView(title)
+            if session.isUnreachable {
+                Text("Mac に届きません。Mac が眠っていないか、Mac の PadBridge Host が動いているかを確かめてください。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+        }
+        .padding()
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var permissionNotice: String? {
