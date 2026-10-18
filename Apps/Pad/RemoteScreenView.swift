@@ -97,6 +97,7 @@ final class RemoteScreenUIView: UIView {
         installGestureRecognizers()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(directTypingDidEnd), name: DirectTypingUIView.didEndTyping, object: nil)
     }
 
     @available(*, unavailable)
@@ -160,6 +161,12 @@ final class RemoteScreenUIView: UIView {
         // 画面の下端に付いていない (フローティングの) キーボードは、映像に重ねるだけにする
         keyboardTop = frame.minY < bounds.maxY && frame.maxY >= bounds.maxY - 1 ? frame.minY : .infinity
         setNeedsLayout()
+    }
+
+    // キーボードを閉じたあと、画面に触れなくてもハードウェアキーボードのキーを Mac に届ける (入力先がないとキーは捨てられる)
+    @objc private func directTypingDidEnd(_: Notification) {
+        guard window != nil, !isCovered, !isFirstResponder, !DirectTypingUIView.isTyping else { return }
+        becomeFirstResponder()
     }
 
     @objc private func keyboardWillHide(_: Notification) {

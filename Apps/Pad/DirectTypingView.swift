@@ -40,6 +40,8 @@ struct DirectTypingField: UIViewRepresentable {
 final class DirectTypingUIView: UIView, UITextInput {
     /// 直接入力中か。画面のタップでキーボードを閉じないよう、画面側が見る。
     static var isTyping = false
+    /// 直接入力を終えた知らせ。画面側がハードウェアキーボードの入力先に戻る。
+    static let didEndTyping = Notification.Name("DirectTypingUIView.didEndTyping")
 
     var onText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
@@ -131,7 +133,10 @@ final class DirectTypingUIView: UIView, UITextInput {
         if didResign {
             Self.isTyping = false
             let onResign = onResign
-            DispatchQueue.main.async { onResign?() }
+            DispatchQueue.main.async {
+                onResign?()
+                NotificationCenter.default.post(name: Self.didEndTyping, object: nil)
+            }
         }
         return didResign
     }
