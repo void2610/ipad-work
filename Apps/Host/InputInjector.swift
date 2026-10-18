@@ -21,6 +21,9 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private let keyRepeatInterval: TimeInterval
     private var keyRepeat = KeyRepeat()
     private var keyRepeatTimer: DispatchSourceTimer?
+    private var keyRepeatStartedAt: TimeInterval = 0
+    // 離した知らせが届かずに繰り返し続けても、ここで止める。実際のキーをこれより長く押し続けることはまずない
+    private static let maxKeyRepeatDuration: TimeInterval = 30
 
     /// `queue` は HostServer の入力キュー。押したままのキーの繰り返しもこのキューで送る。
     init(queue: DispatchQueue, doubleClickInterval: TimeInterval, keyRepeatDelay: TimeInterval, keyRepeatInterval: TimeInterval) {
@@ -70,6 +73,11 @@ nonisolated final class InputInjector: @unchecked Sendable {
         if typeless.isStartedByPad {
             setVoiceInput(false)
         }
+        releaseHeldInput()
+    }
+
+    /// 押したままのボタンとキーを離す。iPad が裏に回ったときにも呼ぶ (iPadOS に取られて離した知らせが届かなかったキーを、Mac に残さない)。
+    func releaseHeldInput() {
         stopKeyRepeat()
         for button in pressedButtons {
             press(button, isDown: false, at: location)
@@ -216,6 +224,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         timer.setEventHandler { [weak self] in self?.postKeyRepeat() }
         timer.resume()
         keyRepeatTimer = timer
+        keyRepeatStartedAt = ProcessInfo.processInfo.systemUptime
     }
 
     private func stopKeyRepeat() {
@@ -225,7 +234,9 @@ nonisolated final class InputInjector: @unchecked Sendable {
     }
 
     private func postKeyRepeat() {
-        guard let key = keyRepeat.key, let event = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true) else {
+        guard ProcessInfo.processInfo.systemUptime - keyRepeatStartedAt < Self.maxKeyRepeatDuration,
+              let key = keyRepeat.key, let event = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true)
+        else {
             stopKeyRepeat()
             return
         }

@@ -546,6 +546,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             closeSession()
         } else if channel === video {
             stopVideo()
+            // 映像の接続が閉じるのは、たいてい iPad が裏に回ったとき。押したままのキーやボタンを Mac に残さない
+            inputQueue.async { [injector] in injector.releaseHeldInput() }
         }
     }
 
