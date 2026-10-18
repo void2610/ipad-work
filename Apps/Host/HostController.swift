@@ -68,8 +68,10 @@ final class HostController {
         // 新旧が同時に動くと Bonjour 名が「(2)」付きに変わり、iPad が名前で覚えている接続先から外れるため、終了してから起動し直す
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // 古い Host が終わるのを待ってから開く。決まった時間だけ待つと、終わるのが遅れたときに古い方を前に出すだけで終わり、Host が 1 つも残らない
-        process.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; /usr/bin/open \"$0\"", Bundle.main.bundlePath, String(ProcessInfo.processInfo.processIdentifier)]
+        // 古い Host が終わるのを待ち、新しい Host が動いたと確かめるまで開き直す。決まった時間だけ待つと古い方を前に出すだけで終わり、終わった直後に開くと -600 で開けずに終わり、どちらも Host が 1 つも残らない
+        let script = "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; for _ in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/open \"$0\"; sleep 1; /usr/bin/pgrep -x \"$2\" >/dev/null && exit 0; done"
+        let executableName = Bundle.main.executableURL?.lastPathComponent ?? "PadBridge Host"
+        process.arguments = ["-c", script, Bundle.main.bundlePath, String(ProcessInfo.processInfo.processIdentifier), executableName]
         try? process.run()
         NSApp.terminate(nil)
     }
