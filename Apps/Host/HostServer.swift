@@ -540,6 +540,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         videoMaxSize = (maxWidth, maxHeight)
         // 受け取りの返事で、回線に入りきらないフレームを送らずに捨てる
         channel.send(.control(.acknowledgeVideoFrames))
+        // 新しい映像の接続では、ビットレートを上限から測り直すので、画質を下げた知らせも初めからにする
+        isVideoQualityReduced = false
         let status = currentStatus()
         Self.logger.info("映像の要求: \(maxWidth)x\(maxHeight)、画面収録=\(status.canCaptureScreen)、アクセシビリティ=\(status.canControlInput)")
         control?.send(.control(.hostStatus(status)))
