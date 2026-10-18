@@ -350,6 +350,9 @@ final class HostSession {
         isClosed = true
         retryTask?.cancel()
         videoRetryTask?.cancel()
+        // 次につないだセッションのマイクや「届かない」の表示に、前のセッションの予約が触らないように
+        microphoneStopTask?.cancel()
+        reachabilityTask?.cancel()
         replaceControl(with: nil)
         stopVideo()
         clearNotices()
@@ -365,6 +368,8 @@ final class HostSession {
             updateMacAudio()
         }
         if isForeground {
+            // 裏にいる間に無音の再生が止まっていたら流し直す。止まったままだと、次に裏に回ったときに iPadOS に止められて接続が切れる
+            BackgroundAudio.shared.resumeIfNeeded()
             startVideoIfNeeded()
         } else {
             // iPadOS に取られて離した知らせが届かなかったキーやボタンを、Mac に押したまま残さない
@@ -395,8 +400,12 @@ final class HostSession {
                     self.controlStateChanged(state)
                 }
             },
-            onMessage: { [weak self] message in
-                MainActor.assumeIsolated { self?.handleControl(message) }
+            onMessage: { [weak self, weak channel] message in
+                MainActor.assumeIsolated {
+                    // 張り直したあとに、前の接続から遅れて届いたものでつながった扱いにしない
+                    guard let self, let channel, channel === self.control else { return }
+                    self.handleControl(message)
+                }
             }
         )
     }
