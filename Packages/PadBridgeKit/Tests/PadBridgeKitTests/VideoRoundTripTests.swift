@@ -6,6 +6,8 @@ import Synchronization
 import Testing
 import VideoToolbox
 
+#if os(macOS)
+// 符号化するのは Mac の Host だけ。iOS のシミュレータには低遅延のエンコーダがなく、作れない (-12908)
 // 低遅延のエンコーダをいくつも同時に作ると、VTCompressionSessionCreate から戻らなくなった。Host も 1 つずつしか作らないので、順に試す
 @Suite(.serialized)
 struct VideoRoundTripTests {
@@ -135,3 +137,4 @@ struct VideoRoundTripTests {
         }
     }
 }
+#endif
