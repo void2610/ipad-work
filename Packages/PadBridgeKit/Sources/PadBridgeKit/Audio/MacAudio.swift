@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mac で鳴っている音を iPad へ送る形式。48kHz・ステレオ・16 ビットのリトルエンディアンで、左右を交互に並べる (約 1.5Mbps)。
+/// Mac で鳴っている音の塊の形式。48kHz・ステレオ・16 ビットのリトルエンディアンで、左右を交互に並べる (無圧縮のまま送ると約 1.5Mbps)。iPad が求めれば、塊ごとに Opus にして送る (`MacAudioEncoder`)。
 public enum MacAudio {
     public static let sampleRate = 48_000
     public static let channelCount = 2
