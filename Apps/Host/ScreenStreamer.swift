@@ -107,18 +107,16 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
             self.configuration = configuration
             self.outputSize = size
             self.nativeSize = native
+            // 取り込みを用意している間に範囲が変わっていたら、それに合わせる。ロックの中で渡し、あとから変わった範囲を古い範囲で上書きしない
+            sender.setRegion(region)
             return region
         }
         guard let latestRegion else {
             sender.stop()
             return
         }
-        // 取り込みを用意している間に範囲が変わっていたら、それに合わせる
-        if latestRegion != initialRegion {
-            sender.setRegion(latestRegion)
-            if latestRegion.isFull != initialRegion.isFull {
-                updateCaptureSize(stream: stream, configuration: configuration, isFull: latestRegion.isFull)
-            }
+        if latestRegion.isFull != initialRegion.isFull {
+            updateCaptureSize(stream: stream, configuration: configuration, isFull: latestRegion.isFull)
         }
         try await stream.startCapture()
         // 始めている途中で止められたときは、止める処理がまだ始まっていない取り込みに効かず、取り込みが動き続ける。始め終えたところで止め直す
@@ -172,14 +170,14 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     /// iPad が見ている範囲を変える。拡大している間だけ、画面を元の解像度で取り込む (等倍のときは iPad の解像度で十分なので、取り込みを軽くする)。
     func setRegion(_ newRegion: VideoRegion) {
-        let (sender, update): (VideoSender?, (SCStream, SCStreamConfiguration)?) = lock.withLock {
-            guard region != newRegion else { return (nil, nil) }
+        let update: (SCStream, SCStreamConfiguration)? = lock.withLock {
+            guard region != newRegion else { return nil }
             let wasFull = region.isFull
             region = newRegion
-            guard wasFull != newRegion.isFull, let stream, let configuration else { return (self.sender, nil) }
-            return (self.sender, (stream, configuration))
+            sender?.setRegion(newRegion)
+            guard wasFull != newRegion.isFull, let stream, let configuration else { return nil }
+            return (stream, configuration)
         }
-        sender?.setRegion(newRegion)
         if let (stream, configuration) = update {
             updateCaptureSize(stream: stream, configuration: configuration, isFull: newRegion.isFull)
         }
