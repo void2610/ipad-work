@@ -22,6 +22,11 @@ struct HostMenuView: View {
                     .font(.caption)
             }
 
+            if let padCommit = controller.mismatchedPadCommit {
+                Label("iPad アプリの組み立てが違います (iPad: \(padCommit)、Mac: \(BuildCommit.current() ?? "?"))", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+            }
+
             // iPad で映像が遅い・粗いと言われたときに、Mac の前でも回線のせいかを見られるように
             if let stats = controller.videoStatsOnPad {
                 Label("iPad への映像: \(stats.summary)", systemImage: "gauge.with.dots.needle.33percent")

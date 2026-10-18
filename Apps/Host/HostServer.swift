@@ -20,6 +20,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private let onMacAudioChange: @Sendable (Bool) -> Void
     private let onShownDisplayChange: @Sendable (String?) -> Void
     private let onVideoStatsChange: @Sendable (VideoStats?) -> Void
+    private let onBuildMismatch: @Sendable (_ padCommit: String?) -> Void
     private let injector: InputInjector
 
     private var listener: NWListener?
@@ -89,7 +90,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         onStatusChange: @escaping @Sendable (HostStatus) -> Void,
         onMacAudioChange: @escaping @Sendable (Bool) -> Void,
         onShownDisplayChange: @escaping @Sendable (String?) -> Void,
-        onVideoStatsChange: @escaping @Sendable (VideoStats?) -> Void
+        onVideoStatsChange: @escaping @Sendable (VideoStats?) -> Void,
+        onBuildMismatch: @escaping @Sendable (_ padCommit: String?) -> Void
     ) {
         self.hostName = hostName
         self.onClientChange = onClientChange
@@ -98,6 +100,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         self.onMacAudioChange = onMacAudioChange
         self.onShownDisplayChange = onShownDisplayChange
         self.onVideoStatsChange = onVideoStatsChange
+        self.onBuildMismatch = onBuildMismatch
         injector = InputInjector(queue: inputQueue, doubleClickInterval: doubleClickInterval, keyRepeatDelay: keyRepeatDelay, keyRepeatInterval: keyRepeatInterval)
     }
 
@@ -473,6 +476,12 @@ nonisolated final class HostServer: @unchecked Sendable {
             }
         case let .videoFrameRate(rate):
             setVideoFrameRate(rate)
+        case let .buildCommit(padCommit):
+            let isMismatch = BuildCommit.isMismatch(BuildCommit.current(), padCommit)
+            if isMismatch {
+                Self.logger.notice("iPad アプリの組み立てが違う: iPad \(padCommit, privacy: .public)")
+            }
+            onBuildMismatch(isMismatch ? padCommit : nil)
         case let .macAudioCodec(codec):
             macAudioCodec = codec
         case let .macAudio(isEnabled):
@@ -595,6 +604,10 @@ nonisolated final class HostServer: @unchecked Sendable {
         if isScreenLocked {
             channel.send(.control(.macScreenLocked(true)))
         }
+        if let commit = BuildCommit.current() {
+            channel.send(.control(.buildCommit(commit)))
+        }
+        onBuildMismatch(nil)
         onClientChange(deviceName)
     }
 

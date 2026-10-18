@@ -1,2 +1,5 @@
 // 署名チームは人によって違うので、各自の Local.xcconfig (Git 管理外) で DEVELOPMENT_TEAM を指定する
 #include? "Local.xcconfig"
+
+// 組み立てたコミット。just の組み立てで git から渡し、Mac の Host と iPad アプリの組み立てがずれたら知らせる。Xcode から組み立てたときは比べない
+PADBRIDGE_COMMIT = unknown

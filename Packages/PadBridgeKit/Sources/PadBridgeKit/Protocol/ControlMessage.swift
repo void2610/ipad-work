@@ -115,6 +115,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case releaseHeldInput
     /// Mac から iPad へ。Mac の文字入力が英数とかなのどちらか。接続したときと変わったときに知らせる。
     case macInputMode(MacInputMode)
+    /// 互いに、組み立てたコミットを知らせる (`BuildCommit`)。Host は iPad がつないだとき、iPad は welcome を受けたときに送る。
+    case buildCommit(String)
     /// Mac から iPad へ。Mac の画面がロックされているか。接続したときにロックされていれば送り、変わったときにも送る。
     case macScreenLocked(Bool)
     // 以下は Mac の中で、Host と補助アプリ「PadBridge マイク」がやり取りする

@@ -22,6 +22,8 @@ final class HostController {
     private(set) var shownDisplayOnPad: String?
     /// iPad に送っている映像の状態 (2 秒ごと)。映像を送っていなければ nil。
     private(set) var videoStatsOnPad: VideoStats?
+    /// つないでいる iPad アプリの組み立てが、この Host と違うときの iPad 側のコミット。
+    private(set) var mismatchedPadCommit: String?
     /// ログインしたときに Host を起動するか。蓋を閉じた Mac では、再起動のあと Host を手で開けないため。
     private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -130,6 +132,9 @@ final class HostController {
             },
             onVideoStatsChange: { [weak self] stats in
                 Task { @MainActor in self?.videoStatsOnPad = stats }
+            },
+            onBuildMismatch: { [weak self] padCommit in
+                Task { @MainActor in self?.mismatchedPadCommit = padCommit }
             }
         )
         server.start()

@@ -1,4 +1,6 @@
 derived_data := "build/DerivedData"
+# Mac の Host と iPad アプリの組み立てがずれたら知らせるため、組み立てたコミットを渡す
+commit := `git describe --always --dirty 2>/dev/null || echo unknown`
 
 # project.yml から PadBridge.xcodeproj を作る
 generate:
@@ -22,7 +24,7 @@ test-ios simulator="iPad Air 11-inch (M4)":
 
 # Mac 側の常駐アプリをビルドする
 build-host: generate
-    xcodebuild -project PadBridge.xcodeproj -scheme PadBridgeHost -configuration Debug -derivedDataPath {{derived_data}} -allowProvisioningUpdates build
+    xcodebuild -project PadBridge.xcodeproj -scheme PadBridgeHost -configuration Debug -derivedDataPath {{derived_data}} -allowProvisioningUpdates PADBRIDGE_COMMIT={{commit}} build
 
 # Mac 側の常駐アプリをビルドして起動する
 run-host: build-host
@@ -34,7 +36,7 @@ deploy-host: build-host
 
 # iPad アプリを実機向けにビルドする
 build-pad: generate
-    xcodebuild -project PadBridge.xcodeproj -scheme PadBridge -configuration Debug -destination generic/platform=iOS -derivedDataPath {{derived_data}} -allowProvisioningUpdates build
+    xcodebuild -project PadBridge.xcodeproj -scheme PadBridge -configuration Debug -destination generic/platform=iOS -derivedDataPath {{derived_data}} -allowProvisioningUpdates PADBRIDGE_COMMIT={{commit}} build
 
 # iPad アプリをシミュレータ向けにビルドする (署名なし)
 build-pad-simulator: generate

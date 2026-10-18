@@ -27,6 +27,10 @@ struct SessionView: View {
         .statusBarHidden()
     }
 
+    private var buildNotice: String? {
+        session.mismatchedHostCommit.map { "Mac の PadBridge Host と iPad アプリの組み立てが違います (Mac: \($0)、iPad: \(BuildCommit.current() ?? "?"))。片方だけ古いと、動きが食い違うことがあります。" }
+    }
+
     // ロック中は macOS が画面の取り込みとロック画面への合成の入力を制限するので、黒いまま止まった理由を出す
     private var lockNotice: String? {
         session.isMacScreenLocked ? "Mac の画面がロックされています。ロック中は映像が止まり、iPad からの入力が届かないことがあります。" : nil
@@ -35,7 +39,7 @@ struct SessionView: View {
     @ViewBuilder
     private var statusOverlay: some View {
         VStack {
-            ForEach([permissionNotice, relayNotice, session.microphoneNotice, lockNotice].compactMap(\.self), id: \.self) { notice in
+            ForEach([permissionNotice, relayNotice, session.microphoneNotice, lockNotice, buildNotice].compactMap(\.self), id: \.self) { notice in
                 Label(notice, systemImage: "exclamationmark.triangle.fill")
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
