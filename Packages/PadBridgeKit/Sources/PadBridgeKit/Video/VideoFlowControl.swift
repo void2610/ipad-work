@@ -94,6 +94,9 @@ public struct BitRateController: Sendable {
     static let calmWindowsToProbe = 6
     // 天井は、見積もった回線の速さのこの割合
     static let ceilingShare = 0.95
+    // 上限のこの割合より下げたら「画質を下げた」、この割合まで戻したら「戻した」とする。境目で揺れて知らせが何度も出ないよう、2 つを離す
+    static let reducedBelow = 0.7
+    static let restoredAtOrAbove = 0.85
     // 見積もった回線の速さのうち、映像に使う割合。残りは揺れと Mac の音に回す
     static let capacityShare = 0.85
     // 回線が埋まっていた時間がこれより短いと、速さを見積もらない
@@ -106,6 +109,8 @@ public struct BitRateController: Sendable {
     public let maximum: Int
     public let minimum: Int
     public private(set) var current: Int
+    /// 回線に合わせて、上限より大きく下げているか。iPad に画質を下げたことを知らせるのに使う。
+    public private(set) var isReduced = false
     private var windowStart: TimeInterval?
     private var offered = 0
     private var dropped = 0
@@ -120,6 +125,7 @@ public struct BitRateController: Sendable {
         self.maximum = maximum
         self.minimum = min(minimum, maximum)
         current = min(max(initial ?? maximum, self.minimum), maximum)
+        updateReduced()
     }
 
     /// 返事が来るたびに呼ぶ。回線が埋まっていた間に届いた量から、回線の速さを見積もる。
@@ -145,6 +151,7 @@ public struct BitRateController: Sendable {
         let previous = current
         if !isStale, offered >= Self.minimumFramesToJudge {
             judge()
+            updateReduced()
         }
         begin(at: time, isDropped: isDropped)
         return current == previous ? nil : current
@@ -173,6 +180,14 @@ public struct BitRateController: Sendable {
             raiseIfCalm()
         } else {
             calmWindows = 0
+        }
+    }
+
+    private mutating func updateReduced() {
+        if !isReduced, Double(current) < Double(maximum) * Self.reducedBelow {
+            isReduced = true
+        } else if isReduced, Double(current) >= Double(maximum) * Self.restoredAtOrAbove {
+            isReduced = false
         }
     }
 

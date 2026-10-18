@@ -36,8 +36,8 @@ struct SessionView: View {
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
             }
-            if let notice = session.displayNotice {
-                Label(notice, systemImage: "display")
+            if let notice = session.notice {
+                Label(notice.text, systemImage: notice.systemImage)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
@@ -46,7 +46,7 @@ struct SessionView: View {
             Spacer()
         }
         .padding()
-        .animation(.easeInOut(duration: 0.2), value: session.displayNotice)
+        .animation(.easeInOut(duration: 0.2), value: session.notice)
         switch session.phase {
         case .connecting:
             connectingView("\(session.host.name) に接続中…")

@@ -20,6 +20,7 @@ struct WireMessageTests {
         .macAudioCodec(.opus),
         .acknowledgeVideoFrames,
         .videoFrameReceived(presentationTimeMicros: 123_456_789),
+        .videoQuality(isReduced: true),
         .displays([RemoteDisplay(id: 15, name: "名前のない画面", placement: .left), RemoteDisplay(id: 16, name: "VG258", placement: .main)], shownID: 15),
         .selectDisplay(id: 16),
         .moveFrontWindow(toDisplay: 15),

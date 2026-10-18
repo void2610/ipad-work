@@ -84,6 +84,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case acknowledgeVideoFrames
     /// iPad から Mac へ、映像用の接続で。このフレームを受け取った。Mac は返事の来ていないフレームの数で、次を送るかを決める。
     case videoFrameReceived(presentationTimeMicros: Int64)
+    /// Mac から iPad へ。回線が遅いので映像の画質 (ビットレート) を大きく下げているか。変わったときに知らせる。
+    case videoQuality(isReduced: Bool)
     /// iPad から Mac へ。映像として送ってほしい画面の範囲。拡大している間は見えている範囲だけを高い解像度で送ってもらう。
     case videoRegion(VideoRegion)
     /// iPad から Mac へ。Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らさない。

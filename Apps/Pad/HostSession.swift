@@ -50,9 +50,9 @@ final class HostSession {
     private(set) var shownDisplayID: UInt32?
     /// Mac の文字入力が英数とかなのどちらか。古い Host からは届かないので nil のままになる。
     private(set) var macInputMode: MacInputMode?
-    /// 映す画面が替わったときに、少しの間だけ出す知らせ。前に出たウィンドウを追って Mac が替えたときも、何が起きたか分かるように。
-    private(set) var displayNotice: String?
-    private var displayNoticeTask: Task<Void, Never>?
+    /// 映す画面が替わったときや、回線に合わせて画質を変えたときに、少しの間だけ出す知らせ。Mac が自分で替えたときも、何が起きたか分かるように。
+    private(set) var notice: TransientNotice?
+    private var noticeTask: Task<Void, Never>?
 
     /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
     @ObservationIgnored var microphoneLevel: Float {
@@ -181,12 +181,16 @@ final class HostSession {
 
     private func announceDisplay(_ id: UInt32) {
         guard let display = displays.first(where: { $0.id == id }) else { return }
-        displayNotice = "\(display.label) を映しています"
-        displayNoticeTask?.cancel()
-        displayNoticeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+        showNotice(TransientNotice(text: "\(display.label) を映しています", systemImage: "display"))
+    }
+
+    private func showNotice(_ notice: TransientNotice, for duration: Duration = .seconds(2)) {
+        self.notice = notice
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
-            self?.displayNotice = nil
+            self?.notice = nil
         }
     }
 
@@ -424,6 +428,12 @@ final class HostSession {
             showDisplay(shownID)
         case let .macInputMode(mode):
             macInputMode = mode
+        case let .videoQuality(isReduced):
+            // 映像がぼやけたり戻ったりした理由が分かるように
+            let notice = isReduced
+                ? TransientNotice(text: "回線が遅いため、画質を下げています", systemImage: "wifi.exclamationmark")
+                : TransientNotice(text: "画質を戻しました", systemImage: "wifi")
+            showNotice(notice, for: .seconds(3))
         case let .voiceInputState(isActive):
             isVoiceInputActive = isActive
             if !isActive {
@@ -500,4 +510,10 @@ enum HIDUsage {
     static let escape = 0x29
     static let backspace = 0x2A
     static let tab = 0x2B
+}
+
+/// 画面の上に少しの間だけ出す知らせ。
+struct TransientNotice: Equatable {
+    var text: String
+    var systemImage: String
 }

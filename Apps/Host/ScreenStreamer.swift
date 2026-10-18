@@ -44,6 +44,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let flow: Mutex<VideoFlowControl>
     private let bitRateController = Mutex<BitRateController?>(nil)
     private let initialBitRate: Int?
+    private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
     private var region = VideoRegion.full
     private var configuration: SCStreamConfiguration?
@@ -54,8 +55,13 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
     /// `isAcknowledged` と `initialBitRate` は、同じ映像の接続で作り直す前の取り込みから引き継ぐ。
-    init(channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion, isAcknowledged: Bool = false, initialBitRate: Int? = nil) {
+    /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。取り込みのキューから呼ばれる。
+    init(
+        channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion,
+        isAcknowledged: Bool = false, initialBitRate: Int? = nil, onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)? = nil
+    ) {
         self.channel = channel
+        self.onQualityChange = onQualityChange
         flow = Mutex(VideoFlowControl(isAcknowledged: isAcknowledged))
         self.initialBitRate = initialBitRate
         self.displayID = displayID
@@ -209,9 +215,14 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         // 回線に入りきらない間は符号化する前に捨て、遅延が積み上がらないようにする
         let (canSendNow, isWaitingForKeyFrame) = flow.withLock { ($0.canSend(at: now), $0.isWaitingForKeyFrame) }
         let canSend = channel.pendingSendCount < 4 && canSendNow
-        if !isWaitingForKeyFrame, let newBitRate = bitRateController.withLock({ $0?.record(isDropped: !canSend, at: now) }) {
-            encoder.setAverageBitRate(newBitRate)
-            Self.logger.notice("回線に合わせて映像のビットレートを \(String(format: "%.1f", Double(newBitRate) / 1_000_000), privacy: .public) Mbps にした")
+        let change = isWaitingForKeyFrame ? nil : bitRateController.withLock { controller -> (rate: Int, isReduced: Bool)? in
+            guard let rate = controller?.record(isDropped: !canSend, at: now), let controller else { return nil }
+            return (rate, controller.isReduced)
+        }
+        if let change {
+            encoder.setAverageBitRate(change.rate)
+            Self.logger.notice("回線に合わせて映像のビットレートを \(String(format: "%.1f", Double(change.rate) / 1_000_000), privacy: .public) Mbps にした")
+            onQualityChange?(change.isReduced)
         }
         guard canSend else { return }
         let forceKeyFrame = keyFrameRequested.exchange(false, ordering: .relaxed)

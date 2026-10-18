@@ -53,6 +53,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var microphone: MicrophoneRelay?
     // iPad が頼んでいる間だけ、Mac で鳴っている音を iPad へ送る
     private var macAudio: MacAudioCapture?
+    // iPad に知らせた、回線に合わせて画質を下げているか。同じことを何度も知らせない
+    private var isVideoQualityReduced = false
     // iPad が求めた Mac の音の形式。求めない古い iPad アプリには無圧縮で送る
     private var macAudioCodec = MacAudio.Codec.pcm
     // 今の聞き取りで、既定の入力を iPad のマイクにしたか
@@ -431,7 +433,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         case .mouseMove, .mouseButton, .scroll, .key:
             Self.logger.debug("操作を受信: \(String(describing: message), privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
-        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
+        case .hello, .welcome, .hostStatus, .voiceInputState, .displays, .macInputMode, .acknowledgeVideoFrames, .videoFrameReceived, .videoQuality, .microphoneRelayHello, .microphoneRelay, .microphoneRelayReady, .microphoneRelayStatus, .microphoneRelayFinish, .microphoneRelayFinished:
             break
         }
     }
@@ -506,6 +508,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         closeSession()
         control = channel
         macAudioCodec = .pcm
+        isVideoQualityReduced = false
         // つなぎ直しの原因を後から追えるよう、どの経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信 awdl か) かも記録する
         let interface = channel.connection.currentPath?.availableInterfaces.first?.name ?? "不明"
         Self.logger.notice("接続: \(deviceName, privacy: .public) (\(interface, privacy: .public))")
@@ -553,7 +556,10 @@ nonisolated final class HostServer: @unchecked Sendable {
         let displayID = selection.shownID ?? CGMainDisplayID()
         let streamer = ScreenStreamer(
             channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion,
-            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate
+            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate,
+            onQualityChange: { [weak self] isReduced in
+                self?.queue.async { self?.videoQualityChanged(isReduced) }
+            }
         )
         self.streamer = streamer
         streamedDisplay = DisplayLayout(of: displayID)
@@ -576,6 +582,13 @@ nonisolated final class HostServer: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    private func videoQualityChanged(_ isReduced: Bool) {
+        guard isReduced != isVideoQualityReduced else { return }
+        isVideoQualityReduced = isReduced
+        Self.logger.notice("回線に合わせて画質を\(isReduced ? "下げた" : "戻した", privacy: .public)と iPad に知らせる")
+        control?.send(.control(.videoQuality(isReduced: isReduced)))
     }
 
     private func channelClosed(_ channel: MessageChannel) {

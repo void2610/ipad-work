@@ -166,6 +166,22 @@ struct BitRateControllerTests {
         #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_250_000, nil, nil, nil, 4_750_000, nil, nil, nil, nil, nil, 5_225_000])
     }
 
+    /// 上限の 7 割より下げたら「下げた」とし、8.5 割まで戻すまでは「下げた」のままにする (境目で揺れて知らせが何度も出ないように)。
+    @Test func reportsReducedQualityWithHysteresis() {
+        var controller = BitRateController(maximum: 20_000_000, minimum: 4_000_000)
+        var states: [Bool] = []
+        for (window, dropped) in [60, 0, 0, 0, 0, 0, 0, 0].enumerated() {
+            if feed(&controller, window: window, dropped: dropped) != nil {
+                states.append(controller.isReduced)
+            }
+        }
+        // 12 Mbps (6 割) で下げたとし、15 Mbps (7.5 割) ではまだ下げたまま、18.75 Mbps (9.4 割) で戻す
+        #expect(states == [true, true, false])
+        #expect(controller.current == 18_750_000)
+        #expect(BitRateController(maximum: 20_000_000, initial: 6_000_000).isReduced)
+        #expect(!BitRateController(maximum: 20_000_000).isReduced)
+    }
+
     /// 作り直す前のビットレートから始める。上限と下限の中に収める。
     @Test func startsFromCarriedRate() {
         #expect(BitRateController(maximum: 20_000_000, initial: 6_000_000).current == 6_000_000)
