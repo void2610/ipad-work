@@ -15,6 +15,14 @@ struct PreferredFrameRateTests {
         #expect(PreferredFrameRate.choose(isLowPowerMode: isLowPowerMode, thermalState: thermalState) == expected)
     }
 
+    /// 減らしたあとは、熱さが fair に下がっただけでは戻さず、nominal まで冷えたら戻す。熱さの境の揺れで頼み直し続けない。
+    @Test func returnsToNormalOnlyWhenCool() {
+        let saving = PreferredFrameRate.saving
+        #expect(PreferredFrameRate.choose(isLowPowerMode: false, thermalState: .fair, current: saving) == saving)
+        #expect(PreferredFrameRate.choose(isLowPowerMode: false, thermalState: .serious, current: saving) == saving)
+        #expect(PreferredFrameRate.choose(isLowPowerMode: false, thermalState: .nominal, current: saving) == PreferredFrameRate.normal)
+    }
+
     /// 頼んだ枚数は操作用の接続で送り、状態には取り込みの枚数が入る。
     @Test func frameRateTravelsOnTheWire() throws {
         let messages: [ControlMessage] = [
