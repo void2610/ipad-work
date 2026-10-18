@@ -170,7 +170,7 @@ final class HostSession {
     }
 
     func showDock() {
-        RemoteKeys.focusDock().forEach(send)
+        send(.showDock)
     }
 
     /// Command+Tab のアプリ切り替え。タップのたびに次のアプリへ進み、1 秒タップがなければ確定する。

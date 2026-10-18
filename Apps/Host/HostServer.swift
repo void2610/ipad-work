@@ -332,6 +332,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             selectDisplay(id)
         case let .moveFrontWindow(id):
             moveFrontWindow(to: id)
+        case .showDock:
+            showDock()
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
@@ -530,6 +532,17 @@ nonisolated final class HostServer: @unchecked Sendable {
                 guard isMoved else { return }
                 self.switchDisplay(to: id, reason: "手前のウィンドウを移した画面を映す", movesPointer: true)
             }
+        }
+    }
+
+    /// Dock を出してキーボードで選べるようにする。映していない画面に出ると iPad では見えないまま Dock に入力が移るので、先に Dock のある画面を映す。
+    private func showDock() {
+        let bounds = Dictionary(uniqueKeysWithValues: displays.map { ($0.id, CGDisplayBounds($0.id)) })
+        if displays.count > 1, let id = DisplayCatalog.dockDisplay(in: bounds), id != shownDisplayID {
+            switchDisplay(to: id, reason: "Dock のある画面を映す", movesPointer: false)
+        }
+        inputQueue.async { [injector] in
+            RemoteKeys.focusDock().forEach(injector.handle)
         }
     }
 

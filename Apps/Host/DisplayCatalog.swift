@@ -98,6 +98,19 @@ enum DisplayCatalog {
         }
     }
 
+    /// Dock のある画面。Dock のウィンドウ (Dock の層にある Dock のもの) は、隠れている間も載っている画面全体の大きさで置かれている。
+    nonisolated static func dockDisplay(in displays: [UInt32: CGRect]) -> UInt32? {
+        let dockLevel = Int(CGWindowLevelForKey(.dockWindow))
+        let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        for window in windows where window[kCGWindowOwnerName as String] as? String == "Dock" && window[kCGWindowLayer as String] as? Int == dockLevel {
+            guard let bounds = (window[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { continue }
+            if let id = RemoteDisplay.showing(window: bounds, displays: displays) {
+                return id
+            }
+        }
+        return nil
+    }
+
     nonisolated static func frame(of window: AXUIElement) -> CGRect? {
         var position = CGPoint.zero
         var size = CGSize.zero
