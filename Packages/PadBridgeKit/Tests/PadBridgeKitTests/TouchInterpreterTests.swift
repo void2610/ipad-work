@@ -341,6 +341,24 @@ struct ScreenZoomTests {
         #expect(ScreenZoom().rect(fitted: fitted, in: area) == fitted)
     }
 
+    /// 指を大きく開いた位置から始めたピンチは 1 回ごとの倍率が小さい。それでも、少しずつ広げ続ければ拡大が始まる。
+    @Test func slowWidePinchStartsZooming() {
+        var zoom = ScreenZoom()
+        for _ in 0 ..< 10 {
+            zoom.apply(scale: 1.02, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
+        }
+        #expect(zoom.isZoomed)
+        #expect(abs(zoom.scale - pow(1.02, 10)) < 0.001)
+    }
+
+    /// 縮めて等倍の近くまで戻したときは、ぴったり等倍に戻す。
+    @Test func shrinkingNearOneSnapsBack() {
+        var zoom = ScreenZoom()
+        zoom.apply(scale: 1.5, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
+        zoom.apply(scale: 1.03 / 1.5, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
+        #expect(zoom == ScreenZoom())
+    }
+
     /// 指の中心の下にある映像の位置が、拡大しても動かないこと。
     @Test func zoomKeepsPointUnderFingers() {
         var zoom = ScreenZoom()
