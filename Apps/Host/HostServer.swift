@@ -58,6 +58,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var typelessCannotReadPadMicrophone = false
     private var typelessUsesOtherMicrophone = false
     private var didOpenAudioCaptureSettings = false
+    // Typeless のマイクの設定は Typeless を終了させるので、同時に 2 つ走らせない
+    private var isSettingUpTypelessMicrophone = false
     // iPad から届いた音声入力の要求。古い要求の続きで Typeless を押したり、その結果を知らせたりしないようにする
     private var voiceInputRequests = VoiceInputRequests()
 
@@ -247,14 +249,31 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// Typeless が聞き取っていない間に、Typeless のマイクを「PadBridge iPad マイク」にする (自動検出のときだけ。Typeless を起動し直す)。
     private func setUpTypelessMicrophone(after delay: TimeInterval) {
+        guard !isSettingUpTypelessMicrophone else { return }
+        isSettingUpTypelessMicrophone = true
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
-            // 聞き取りの途中で Typeless を終了させない
-            for _ in 0 ..< 300 where TypelessMonitor.isRecording() {
+            // 聞き取りの途中や、止めたあとで文字にして貼り付けている間 (数秒かかる) に Typeless を終了させない。8 秒続けて聞き取っていないときだけ進める
+            var quietSince: TimeInterval?
+            var isQuiet = false
+            for _ in 0 ..< 600 {
+                let now = ProcessInfo.processInfo.systemUptime
+                if TypelessMonitor.isRecording() {
+                    quietSince = nil
+                } else if quietSince == nil {
+                    quietSince = now
+                }
+                if let quietSince, now - quietSince >= 8 {
+                    isQuiet = true
+                    break
+                }
                 Thread.sleep(forTimeInterval: 0.2)
             }
-            let result = TypelessMicrophoneSetup.selectPadMicrophone(deviceName: PadMicrophoneDevice.name)
+            let result = isQuiet
+                ? TypelessMicrophoneSetup.selectPadMicrophone(deviceName: PadMicrophoneDevice.name)
+                : .skipped("Typeless が 2 分のあいだ聞き取りを続けていたので、終了させない")
             guard let self else { return }
             queue.async {
+                self.isSettingUpTypelessMicrophone = false
                 switch result {
                 case .configured, .alreadySelected:
                     if self.typelessUsesOtherMicrophone {
