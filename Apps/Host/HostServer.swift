@@ -31,6 +31,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var streamedDisplay: DisplayLayout?
     // 映せる画面。名前はメインスレッドでしか読めないので、そこで読んだものを持っておく
     private var displays: [RemoteDisplay] = []
+    // 画面ごとの、メニューバーと Dock を除いた範囲。手前のウィンドウを移す先を決めるのに使う
+    private var usableAreas: [UInt32: CGRect] = [:]
     // iPad に映している画面。iPad で選ばれた画面がつながっていればそれ、なければメインディスプレイ
     private var shownDisplayID: CGDirectDisplayID?
     private static let preferredDisplayKey = "preferredDisplayUUID"
@@ -326,6 +328,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             setMacAudio(isEnabled, on: channel)
         case let .selectDisplay(id):
             selectDisplay(id)
+        case let .moveFrontWindow(id):
+            moveFrontWindow(to: id)
         case let .desktopSwipe(direction):
             Self.logger.info("3 本指スワイプ: \(direction.rawValue, privacy: .public)")
             inputQueue.async { [injector] in injector.handle(message) }
@@ -470,16 +474,18 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func refreshDisplays() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let displays = MainActor.assumeIsolated { DisplayCatalog.current() }
-            queue.async { self.displaysChanged(displays) }
+            let snapshot = MainActor.assumeIsolated { DisplayCatalog.current() }
+            queue.async { self.displaysChanged(snapshot) }
         }
     }
 
     /// 選ばれた画面が外れたらメインディスプレイを映し、つなぎ直されたらまた選ばれた画面を映す。
     /// 取り込みは始めたときの画面の大きさのまま続き、触った位置とずれるので、映す画面やその解像度・置き場所が変わったら作り直す。
-    private func displaysChanged(_ newDisplays: [RemoteDisplay]) {
+    private func displaysChanged(_ snapshot: DisplayCatalog.Snapshot) {
+        let newDisplays = snapshot.displays
         let previous = (displays, shownDisplayID)
         displays = newDisplays
+        usableAreas = snapshot.usableAreas
         let shown = RemoteDisplay.shown(preferred: preferredDisplayID(), in: newDisplays)
         if shown != shownDisplayID {
             show(shown)
@@ -495,6 +501,22 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func selectDisplay(_ id: CGDirectDisplayID) {
         switchDisplay(to: id, reason: "映す画面を選んだ", movesPointer: true)
+    }
+
+    /// 手前のウィンドウを選ばれた画面へ移し、その画面を映す。画面をまたいでドラッグできない代わり。
+    private func moveFrontWindow(to id: CGDirectDisplayID) {
+        guard displays.contains(where: { $0.id == id }) else { return }
+        let usableAreas = usableAreas
+        // アクセシビリティの操作は相手のアプリの応答を待つので、サーバーのキューの外で行う
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let isMoved = DisplayCatalog.moveFrontWindow(to: id, usableAreas: usableAreas)
+            guard let self else { return }
+            queue.async {
+                Self.logger.notice("手前のウィンドウを画面 \(id) へ: \(isMoved ? "移した" : "移せない", privacy: .public)")
+                guard isMoved else { return }
+                self.switchDisplay(to: id, reason: "手前のウィンドウを移した画面を映す", movesPointer: true)
+            }
+        }
     }
 
     /// 前に出たアプリのウィンドウが別の画面にあれば、その画面を映す。iPad のアプリ切替で選んだアプリが、映していない画面にあって見えないままにならないように。
