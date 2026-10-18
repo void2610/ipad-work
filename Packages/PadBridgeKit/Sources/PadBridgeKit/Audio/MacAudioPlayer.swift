@@ -45,8 +45,8 @@ public final class MacAudioPlayer: @unchecked Sendable {
     /// 鳴らすのをやめたときに、ためている音を捨てる。
     public func reset() {
         state.lock.withLock { state.buffer.removeAll() }
-        // 次に鳴らすときは前の音の続きではないので、戻す側も作り直す
-        decoderLock.withLock { decoder = MacAudioDecoder() }
+        // 次に鳴らすときは前の音の続きではないので戻す側も作り直すが、作れなければ前のものを使う (Mac にはもう Opus を頼んでいて、なくすと無音になる)
+        decoderLock.withLock { decoder = MacAudioDecoder() ?? decoder }
     }
 
     private static func renderBlock(state: State) -> AVAudioSourceNodeRenderBlock {
