@@ -192,7 +192,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     }
 
     private func key(usage: Int, isDown: Bool, modifiers: KeyModifiers) {
-        guard let keyEvent = MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers) else { return }
+        guard let keyEvent = heldModifiers.keyEvent(usage: usage, isDown: isDown, modifiers: modifiers) else { return }
         heldModifiers.apply(keyEvent)
         if isDown {
             pressedKeys.insert(keyEvent.keyCode)
