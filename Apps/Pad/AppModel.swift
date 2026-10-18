@@ -43,6 +43,10 @@ final class AppModel {
         session?.setForeground(isForeground)
     }
 
+    func releaseHeldInput() {
+        session?.send(.releaseHeldInput)
+    }
+
     private func connect(to host: DiscoveredHost) {
         session?.close()
         isAutoConnectSuppressed = false

@@ -18,7 +18,9 @@ struct PadBridgeApp: App {
                 switch phase {
                 case .active: model.setForeground(true)
                 case .background: model.setForeground(false)
-                default: break
+                // コントロールセンターや Spotlight を出すと、押していたキーを離した知らせがこのアプリに届かない
+                case .inactive: model.releaseHeldInput()
+                @unknown default: break
                 }
             }
         }
