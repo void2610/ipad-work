@@ -516,4 +516,5 @@
 - Mac の Host と iPad アプリの組み立てがずれたら、iPad の上と Mac のメニューに知らせる (2026-10-18)。`just` の組み立てが `git describe --always --dirty` を組み立ての設定 `PADBRIDGE_COMMIT` で渡し、Info.plist の `PadBridgeCommit` に入れる。つないだときに互いに `buildCommit` で知らせて比べる。Xcode から組み立てたとき (`unknown`) は比べない。
   - 最初は組み立ての最後のスクリプトで Info.plist に書き込んだが、iOS ではその前に署名が済んでいて、iPad アプリの署名が「Info.plist が変わった」で無効になった (`codesign --verify` で見つけ、iPad には入れていない)。Info.plist の値に組み立ての設定を書く形なら、処理の途中で置き換わるので署名は正しい (Host・iPad アプリとも `codesign --verify` で確かめた)。
   - シミュレータで、代わりの Host が違うコミットを知らせると知らせが出て、同じコミットなら出ないことを確かめた。
+  - ずれていないときも、どの組み立てが動いているかを見られるよう、Host のメニューの下と、iPad の「接続の状態」(iPad と Mac の両方) にコミットを出す。
 - 変更を入れたら、利用者が使っている Host と iPad アプリの両方を入れ替える。片方だけ入れ替えると、古い側の動作を見て誤った原因を立ててしまう (3 本指スワイプで一度起きた)。
