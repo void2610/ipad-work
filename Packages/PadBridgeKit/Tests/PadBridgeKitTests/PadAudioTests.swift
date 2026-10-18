@@ -42,6 +42,16 @@ struct PadAudioTests {
         #expect(played[4] == 0)
     }
 
+    /// 止めたときにたまりきっていなければ、残りをそのまま鳴らす (iPad を裏に回した直後に止めたときなど)。
+    @Test func playRemainingStartsBelowThreshold() {
+        var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 4)
+        buffer.write(encode([0.5, -0.5]))
+        #expect(read(&buffer, count: 2) == [0, 0])
+        buffer.playRemaining()
+        #expect(read(&buffer, count: 3).map { ($0 * 100).rounded() } == [50, -50, 0])
+        #expect(buffer.consumed == 2)
+    }
+
     /// 途切れたら、またたまるまで待つ。
     @Test func underrunWaitsForThresholdAgain() {
         var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 2)

@@ -164,7 +164,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     /// iPad で止めたときに呼ぶ。止めたところまでの声を流し終えたら `done` を呼ぶ。そのあとで Typeless を止めれば、話し終わりが切れない。
     func finishListening(done: @escaping @Sendable () -> Void) {
         queue.asyncAfter(deadline: .now() + Self.inFlightDelay) { [self] in
-            let target = renderLock.withLock { buffer.written }
+            // iPad はもう送ってこないので、鳴らし始めのたまり具合に届いていなくても残りを鳴らす。待つと話し終わりが鳴らないまま、7 秒の時間切れまで Typeless が聞き取り続ける
+            let target = renderLock.withLock {
+                buffer.playRemaining()
+                return buffer.written
+            }
             waitUntilPlayed(target, deadline: .now() + 7, done: done)
         }
     }

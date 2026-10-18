@@ -145,6 +145,14 @@ public struct PCMJitterBuffer: Sendable {
         }
     }
 
+    /// もう続きが届かないので、たまりきっていなくても残りを鳴らし始める。
+    /// 鳴らし始めのたまり具合に届かないまま止められると、残りは鳴らないまま、鳴らし終えるのを待つ側が時間切れまで待ち続ける。
+    public mutating func playRemaining() {
+        if count >= channelCount {
+            isPlaying = true
+        }
+    }
+
     /// ためている音を捨て、数え直す。
     public mutating func removeAll() {
         readIndex = 0
