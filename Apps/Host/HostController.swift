@@ -33,13 +33,14 @@ final class HostController {
 
     init() {
         refreshPermissions()
-        // 初回起動で許可が足りなければ、メニューを開かなくても macOS の許可ダイアログを出す
+        // 初回起動で許可が足りなければ、メニューを開かなくても macOS の許可ダイアログを出す。システム設定は開かない (ログイン時に起動するたびに前に出てくるので、メニューのボタンからだけ開く)
         if !canCaptureScreen {
-            requestScreenCapture()
+            _ = CGRequestScreenCaptureAccess()
         }
         if !canControlInput {
-            requestAccessibility()
+            _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         }
+        refreshPermissions()
         startServer()
         // システム設定で許可が変わっても通知が来ないので、表示用に定期的に読み直す
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
@@ -50,6 +51,9 @@ final class HostController {
     func refreshPermissions() {
         canCaptureScreen = CGPreflightScreenCaptureAccess()
         canControlInput = AXIsProcessTrusted()
+        // システム設定で許可したり、ログイン項目から外したりしても知らせは来ないので、ほかの表示と一緒に読み直す。まだ尋ねていないときは、確かめる前と同じく足りているとみなす
+        canRelayMicrophone = AudioCapturePermission.current() != .denied
+        launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     func requestScreenCapture() {
