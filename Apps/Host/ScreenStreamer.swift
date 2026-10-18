@@ -4,8 +4,6 @@ import Foundation
 import os
 import PadBridgeKit
 import ScreenCaptureKit
-import Synchronization
-import VideoToolbox
 
 enum ScreenStreamerError: Error {
     case displayNotFound
@@ -27,24 +25,21 @@ nonisolated struct DisplayLayout: Equatable {
     }
 }
 
-/// 画面を 1 台取り込み、HEVC (作れなければ H.264) にして映像用の接続へ流す。
+/// 画面を 1 台取り込み、`VideoSender` で符号化して映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let channel: MessageChannel
     private let displayID: CGDirectDisplayID
     private let maxWidth: Int
     private let maxHeight: Int
     private let sampleQueue = DispatchQueue(label: "dev.void2610.padbridge.host.capture")
-    // SCStream と VideoEncoder は Sendable でないため、Mutex ではなく NSLock で守る
+    // SCStream は Sendable でないため、Mutex ではなく NSLock で守る
     private let lock = NSLock()
     private var stream: SCStream?
-    private var encoder: VideoEncoder?
+    private var sender: VideoSender?
     private var isStopped = false
-    private let keyFrameRequested = Atomic(true)
-    private let sentFrames = Atomic(0)
-    private let flow: Mutex<VideoFlowControl>
-    private let bitRateController = Mutex<BitRateController?>(nil)
-    private let roundTrip: Mutex<TimeInterval?>
+    private let initialAcknowledged: Bool
     private let initialBitRate: Int?
+    private let initialRoundTrip: TimeInterval?
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
     private let frameRate: Int
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
@@ -52,8 +47,6 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var configuration: SCStreamConfiguration?
     private var outputSize = (width: 0, height: 0)
     private var nativeSize = (width: 0, height: 0)
-    private var transferSession: VTPixelTransferSession?
-    private var outputPool: CVPixelBufferPool?
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
     /// `isAcknowledged` と `initialBitRate` は、同じ映像の接続で作り直す前の取り込みから引き継ぐ。
@@ -65,10 +58,10 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     ) {
         self.channel = channel
         self.frameRate = frameRate
-        roundTrip = Mutex(initialRoundTrip)
-        self.onQualityChange = onQualityChange
-        flow = Mutex(VideoFlowControl(isAcknowledged: isAcknowledged))
+        initialAcknowledged = isAcknowledged
         self.initialBitRate = initialBitRate
+        self.initialRoundTrip = initialRoundTrip
+        self.onQualityChange = onQualityChange
         self.displayID = displayID
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
@@ -98,131 +91,104 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         configuration.queueDepth = 4
 
         let bitRate = CaptureSize.bitRate(width: size.width, height: size.height)
-        let output: VideoEncoder.OutputHandler = { [channel, weak self] format, frame in
-            // 止めたあとにエンコーダから遅れて出たフレームを、同じ接続で作り直した取り込みの映像に混ぜない
-            guard let self, !lock.withLock({ isStopped }) else { return }
-            if let format {
-                channel.send(.videoFormat(format))
-            }
-            flow.withLock { $0.sent(presentationTimeMicros: frame.presentationTimeMicros, isKeyFrame: frame.isKeyFrame, bytes: frame.data.count, at: ProcessInfo.processInfo.systemUptime) }
-            channel.send(.videoFrame(frame))
-            let count = sentFrames.add(1, ordering: .relaxed).newValue
-            if count == 1 || count.isMultiple(of: 600) {
-                Self.logger.info("映像を送信: \(count) フレーム目 (\(frame.data.count) バイト)")
-            }
-        }
-        // HEVC は同じビットレートで文字がにじみにくい (流れる文字の輝度の PSNR で H.264 の 27dB に対し 40dB)。作れない Mac では H.264 にする
-        let encoder: VideoEncoder
-        do {
-            encoder = try VideoEncoder(codec: .hevc, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: frameRate, output: output)
-        } catch {
-            Self.logger.notice("HEVC のエンコーダを作れないので H.264 にする: \(error, privacy: .public)")
-            encoder = try VideoEncoder(codec: .h264, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: frameRate, output: output)
-        }
+        let sender = try VideoSender(
+            width: size.width, height: size.height, maximumBitRate: bitRate, frameRate: frameRate, region: initialRegion,
+            isAcknowledged: initialAcknowledged, initialBitRate: initialBitRate, initialRoundTrip: initialRoundTrip,
+            transmit: { [channel] in channel.send($0) }, pendingSendCount: { [channel] in channel.pendingSendCount },
+            onQualityChange: onQualityChange
+        )
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
 
-        var transferSession: VTPixelTransferSession?
-        VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &transferSession)
-        if let transferSession {
-            // 切り出しは、元のフレームに付けた clean aperture の範囲だけを使わせて行う (切り出す範囲を直接指定する項目はない)
-            VTSessionSetProperty(transferSession, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_CropSourceToCleanAperture)
-        }
-        var pool: CVPixelBufferPool?
-        let poolAttributes: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferWidthKey: size.width,
-            kCVPixelBufferHeightKey: size.height,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
-        ]
-        CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, poolAttributes as CFDictionary, &pool)
-
-        bitRateController.withLock { [initialBitRate] in $0 = BitRateController(maximum: bitRate, initial: initialBitRate) }
-        let shouldStart = lock.withLock {
-            guard !isStopped else { return false }
+        let latestRegion: VideoRegion? = lock.withLock {
+            guard !isStopped else { return nil }
             self.stream = stream
-            self.encoder = encoder
+            self.sender = sender
             self.configuration = configuration
             self.outputSize = size
             self.nativeSize = native
-            self.transferSession = transferSession
-            self.outputPool = pool
-            return true
+            return region
         }
-        guard shouldStart else { return }
+        guard let latestRegion else {
+            sender.stop()
+            return
+        }
+        // 取り込みを用意している間に範囲が変わっていたら、それに合わせる
+        if latestRegion != initialRegion {
+            sender.setRegion(latestRegion)
+            if latestRegion.isFull != initialRegion.isFull {
+                updateCaptureSize(stream: stream, configuration: configuration, isFull: latestRegion.isFull)
+            }
+        }
         try await stream.startCapture()
         // 始めている途中で止められたときは、止める処理がまだ始まっていない取り込みに効かず、取り込みが動き続ける。始め終えたところで止め直す
         if lock.withLock({ isStopped }) {
             try? await stream.stopCapture()
             return
         }
-        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(encoder.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
+        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(sender.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
     }
 
     func stop() {
-        let stream = lock.withLock {
+        // 送る側は手放さない。作り直すときに、止めたこの取り込みから返事の有無とビットレートを読んで引き継ぐ
+        let (stream, sender) = lock.withLock {
             isStopped = true
-            encoder = nil
             defer { self.stream = nil }
-            return self.stream
+            return (self.stream, self.sender)
         }
+        sender?.stop()
         stream?.stopCapture { _ in }
     }
 
     func requestKeyFrame() {
-        keyFrameRequested.store(true, ordering: .relaxed)
+        lock.withLock { sender }?.requestKeyFrame()
     }
 
     /// iPad が受け取りの返事を返すと分かったか。
     var isAcknowledged: Bool {
-        flow.withLock { $0.isAcknowledged }
+        lock.withLock { sender }?.isAcknowledged ?? initialAcknowledged
     }
 
     /// 回線に合わせて決めた今のビットレート。取り込みを始める前は nil。
     var currentBitRate: Int? {
-        bitRateController.withLock { $0?.current }
+        lock.withLock { sender }?.currentBitRate
     }
 
     /// ならした往復の遅れ。同じ映像の接続で作り直すときに引き継ぐ。
     var currentRoundTrip: TimeInterval? {
-        roundTrip.withLock { $0 }
+        guard let sender = lock.withLock({ sender }) else { return initialRoundTrip }
+        return sender.currentRoundTrip
     }
 
     /// iPad の「接続の状態」に出す、今の映像の状態。取り込みを始める前は nil。
     var stats: VideoStats? {
-        let (codec, size) = lock.withLock { (encoder?.codec, outputSize) }
-        guard let codec, let rates = bitRateController.withLock({ $0.map { (current: $0.current, maximum: $0.maximum) } }) else { return nil }
-        let roundTrip = roundTrip.withLock { $0 }
-        return VideoStats(
-            codec: codec, width: size.width, height: size.height, bitRate: rates.current, maximumBitRate: rates.maximum,
-            roundTripMillis: roundTrip.map { Int(($0 * 1000).rounded()) }, frameRate: frameRate
-        )
+        lock.withLock { sender }?.stats
     }
 
     /// iPad がこのフレームを受け取った。
     func frameReceived(presentationTimeMicros: Int64) {
-        let delivery = flow.withLock { $0.received(presentationTimeMicros: presentationTimeMicros, at: ProcessInfo.processInfo.systemUptime) }
-        bitRateController.withLock { $0?.delivered(delivery) }
-        if let sample = delivery.roundTrip {
-            roundTrip.withLock { $0 = VideoStats.smoothed($0, with: sample) }
-        }
+        lock.withLock { sender }?.frameReceived(presentationTimeMicros: presentationTimeMicros)
     }
 
     /// iPad が見ている範囲を変える。拡大している間だけ、画面を元の解像度で取り込む (等倍のときは iPad の解像度で十分なので、取り込みを軽くする)。
     func setRegion(_ newRegion: VideoRegion) {
-        let update: (SCStream, SCStreamConfiguration)? = lock.withLock {
-            guard region != newRegion else { return nil }
+        let (sender, update): (VideoSender?, (SCStream, SCStreamConfiguration)?) = lock.withLock {
+            guard region != newRegion else { return (nil, nil) }
             let wasFull = region.isFull
             region = newRegion
-            guard wasFull != newRegion.isFull, let stream, let configuration else { return nil }
-            let size = newRegion.isFull ? outputSize : nativeSize
-            configuration.width = size.width
-            configuration.height = size.height
-            return (stream, configuration)
+            guard wasFull != newRegion.isFull, let stream, let configuration else { return (self.sender, nil) }
+            return (self.sender, (stream, configuration))
         }
-        // 範囲が変わったら、差分ではなくキーフレームから描かせる
-        requestKeyFrame()
-        guard let (stream, configuration) = update else { return }
+        sender?.setRegion(newRegion)
+        if let (stream, configuration) = update {
+            updateCaptureSize(stream: stream, configuration: configuration, isFull: newRegion.isFull)
+        }
+    }
+
+    private func updateCaptureSize(stream: SCStream, configuration: SCStreamConfiguration, isFull: Bool) {
+        let size = lock.withLock { isFull ? outputSize : nativeSize }
+        configuration.width = size.width
+        configuration.height = size.height
         stream.updateConfiguration(configuration) { error in
             if let error {
                 Self.logger.error("取り込みの設定を変えられない: \(error, privacy: .public)")
@@ -232,52 +198,9 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer), let pixelBuffer = sampleBuffer.imageBuffer,
-              let (encoder, region, outputSize, transferSession, pool) = lock.withLock({ () -> (VideoEncoder, VideoRegion, (width: Int, height: Int), VTPixelTransferSession?, CVPixelBufferPool?)? in
-                  guard let encoder else { return nil }
-                  return (encoder, self.region, self.outputSize, self.transferSession, self.outputPool)
-              })
+              let sender = lock.withLock({ sender })
         else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        // 回線に入りきらない間は符号化する前に捨て、遅延が積み上がらないようにする
-        let (canSendNow, isWaitingForKeyFrame) = flow.withLock { ($0.canSend(at: now), $0.isWaitingForKeyFrame) }
-        let canSend = channel.pendingSendCount < 4 && canSendNow
-        let change = isWaitingForKeyFrame ? nil : bitRateController.withLock { controller -> (rate: Int, isReduced: Bool)? in
-            guard let rate = controller?.record(isDropped: !canSend, at: now), let controller else { return nil }
-            return (rate, controller.isReduced)
-        }
-        if let change {
-            encoder.setAverageBitRate(change.rate)
-            Self.logger.notice("回線に合わせて映像のビットレートを \(String(format: "%.1f", Double(change.rate) / 1_000_000), privacy: .public) Mbps にした")
-            onQualityChange?(change.isReduced)
-        }
-        guard canSend else { return }
-        let forceKeyFrame = keyFrameRequested.exchange(false, ordering: .relaxed)
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        if region.isFull, width == outputSize.width, height == outputSize.height {
-            encoder.encode(pixelBuffer, presentationTime: sampleBuffer.presentationTimeStamp, forceKeyFrame: forceKeyFrame)
-            return
-        }
-        // 範囲を切り出し、送る大きさに縮める。取り込みの設定を変えている途中の古い大きさのフレームも、その大きさに合わせて切り出す
-        guard let transferSession, let pool, let output = Self.crop(pixelBuffer, region: region, session: transferSession, pool: pool) else { return }
-        encoder.encode(output, presentationTime: sampleBuffer.presentationTimeStamp, forceKeyFrame: forceKeyFrame, region: region)
-    }
-
-    private static func crop(_ source: CVPixelBuffer, region: VideoRegion, session: VTPixelTransferSession, pool: CVPixelBufferPool) -> CVPixelBuffer? {
-        var output: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &output) == kCVReturnSuccess, let output else { return nil }
-        let width = CGFloat(CVPixelBufferGetWidth(source))
-        let height = CGFloat(CVPixelBufferGetHeight(source))
-        let crop = region.rect(in: CGRect(x: 0, y: 0, width: width, height: height)).integral
-        // 範囲は、画面の中心からのずれで指定する (右と下が正)。四隅を塗り分けたフレームで向きを確かめた
-        let aperture: [CFString: Any] = [
-            kCVImageBufferCleanApertureWidthKey: crop.width,
-            kCVImageBufferCleanApertureHeightKey: crop.height,
-            kCVImageBufferCleanApertureHorizontalOffsetKey: crop.midX - width / 2,
-            kCVImageBufferCleanApertureVerticalOffsetKey: crop.midY - height / 2,
-        ]
-        CVBufferSetAttachment(source, kCVImageBufferCleanApertureKey, aperture as CFDictionary, .shouldNotPropagate)
-        return VTPixelTransferSessionTransferImage(session, from: source, to: output) == noErr ? output : nil
+        sender.send(pixelBuffer, presentationTime: sampleBuffer.presentationTimeStamp)
     }
 
     func stream(_: SCStream, didStopWithError _: any Error) {
