@@ -31,7 +31,12 @@ nonisolated enum TypelessMicrophoneSetup {
         case .select:
             break
         }
+        // 利用者が自分で終了させていた Typeless を、設定のために勝手に起動しない
+        let wasRunning = TypelessApp.isRunning
         guard terminateTypeless() else { return .skipped("Typeless を終了できない") }
+        func launchTypeless() {
+            if wasRunning { Self.launchTypeless() }
+        }
         // 終了するときに Typeless が設定を書き出すので、終わってから読み直し、改めて決めてから書き換える
         guard var latest = readSettings() else {
             launchTypeless()
