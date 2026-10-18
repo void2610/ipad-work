@@ -37,6 +37,8 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     init(session: HostSession) {
         self.session = session
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 52), inputViewStyle: .keyboard)
+        // 列の後ろは Mac の画面の外の黒い背景なので、ライトモードの黒い文字だとキーの上でほとんど読めない。いつもダークの見た目にする
+        overrideUserInterfaceStyle = .dark
         allowsSelfSizing = true
         buildKeys()
         observeModifiers()
