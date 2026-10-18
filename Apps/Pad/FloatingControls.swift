@@ -23,6 +23,7 @@ struct FloatingControls: View {
     @Binding var isTyping: Bool
     @AppStorage("floatingControlsCorner") private var cornerName = Corner.bottomTrailing.rawValue
     @State private var dragOffset = CGSize.zero
+    @State private var isShowingGuide = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -99,6 +100,7 @@ struct FloatingControls: View {
                     }
                 }
                 Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
+                Button("操作の一覧", systemImage: "hand.tap") { isShowingGuide = true }
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {
                 Image(systemName: "ellipsis")
@@ -107,6 +109,9 @@ struct FloatingControls: View {
                     .contentShape(Circle())
             }
             .accessibilityLabel("その他")
+            .sheet(isPresented: $isShowingGuide) {
+                GestureGuideView()
+            }
         }
         .foregroundStyle(.primary)
         .padding(4)
