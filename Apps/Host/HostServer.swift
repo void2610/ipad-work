@@ -38,6 +38,8 @@ nonisolated final class HostServer: @unchecked Sendable {
     private static let preferredDisplayKey = "preferredDisplayUUID"
     private var screenObserver: (any NSObjectProtocol)?
     private var activationObserver: (any NSObjectProtocol)?
+    // アプリが前に出るたびに増やす。続けて切り替えたときに、前のアプリの問い合わせが後から返っても使わない
+    private var activationCount = 0
     private var displayChange: DispatchWorkItem?
     // iPad に画面を映している間は、操作せず見ているだけでも Mac の画面が眠って映らなくならないようにする
     private var displayAssertion: IOPMAssertionID?
@@ -446,8 +448,17 @@ nonisolated final class HostServer: @unchecked Sendable {
                 try await streamer.start()
             } catch {
                 Self.logger.error("画面の取り込みを開始できない: \(error, privacy: .public)")
+                let isDisplayMissing = (error as? ScreenStreamerError) == .displayNotFound
                 self.queue.async {
-                    if self.streamer === streamer { self.stopVideo() }
+                    guard self.streamer === streamer else { return }
+                    // ScreenCaptureKit の一覧にない画面 (CoreGraphics には見えていても取り込めないもの) で黒いまま繰り返さないよう、メインディスプレイを映す
+                    if isDisplayMissing, displayID != CGMainDisplayID(), let video = self.video {
+                        self.show(CGMainDisplayID())
+                        self.sendDisplays()
+                        self.startStreamer(on: video)
+                    } else {
+                        self.stopVideo()
+                    }
                 }
             }
         }
@@ -505,7 +516,10 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// 手前のウィンドウを選ばれた画面へ移し、その画面を映す。画面をまたいでドラッグできない代わり。
     private func moveFrontWindow(to id: CGDirectDisplayID) {
-        guard displays.contains(where: { $0.id == id }) else { return }
+        guard displays.contains(where: { $0.id == id }) else {
+            sendDisplays()
+            return
+        }
         let usableAreas = usableAreas
         // アクセシビリティの操作は相手のアプリの応答を待つので、サーバーのキューの外で行う
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -521,11 +535,16 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// 前に出たアプリのウィンドウが別の画面にあれば、その画面を映す。iPad のアプリ切替で選んだアプリが、映していない画面にあって見えないままにならないように。
     private func applicationActivated(_ pid: pid_t) {
+        activationCount += 1
+        let count = activationCount
         guard video != nil, displays.count > 1, pid != ProcessInfo.processInfo.processIdentifier else { return }
         // 前に出てからウィンドウが手前に来るまで少しかかる。アクセシビリティの問い合わせは相手の応答を待つので、サーバーのキューの外で行う
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let frame = DisplayCatalog.focusedWindowFrame(of: pid), let self else { return }
-            queue.async { self.followWindow(at: frame) }
+            queue.async {
+                guard count == self.activationCount else { return }
+                self.followWindow(at: frame)
+            }
         }
     }
 
@@ -538,7 +557,11 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// 画面を覚えて映す。外したあとでつなぎ直しても、その画面を映す。
     private func switchDisplay(to id: CGDirectDisplayID, reason: String, movesPointer: Bool) {
-        guard let display = displays.first(where: { $0.id == id }) else { return }
+        guard let display = displays.first(where: { $0.id == id }) else {
+            // メニューを開いている間に外れた画面が選ばれた。iPad は選んだ画面を先に映したことにしているので、今の画面を知らせ直す
+            sendDisplays()
+            return
+        }
         Self.logger.notice("\(reason, privacy: .public): \(display.label, privacy: .public)")
         if let uuid = DisplayCatalog.uuid(of: id) {
             UserDefaults.standard.set(uuid, forKey: Self.preferredDisplayKey)
