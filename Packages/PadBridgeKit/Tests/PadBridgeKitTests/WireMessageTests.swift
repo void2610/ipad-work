@@ -50,7 +50,7 @@ struct WireMessageTests {
         }
     }
 
-    /// Mac の音は、無圧縮も Opus も中身をそのまま運ぶ。
+    /// Mac の音声は、無圧縮も Opus も中身をそのまま運ぶ。
     @Test func macAudioMessagesRoundTrip() throws {
         for message in [WireMessage.macAudio(Data([1, 0, 2, 0])), .macAudioOpus(Data([0xFC, 0xFF, 0xFE]))] {
             let encoded = try message.encoded()
@@ -80,7 +80,7 @@ struct WireMessageTests {
         }
     }
 
-    /// 範囲の外の値で送られてきても、読み取るときに丸める。
+    /// 範囲外の値で送られてきても、デコード時に丸める。
     @Test func decodedNormalizedPointIsClamped() throws {
         let json = Data(#"{"mouseMove":{"_0":{"x":-0.2,"y":1.7}}}"#.utf8)
         #expect(try JSONDecoder().decode(ControlMessage.self, from: json) == .mouseMove(NormalizedPoint(x: 0, y: 1)))

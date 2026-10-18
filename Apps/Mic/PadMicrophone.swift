@@ -3,10 +3,10 @@ import CoreAudio
 import os
 import PadBridgeKit
 
-/// iPad のマイクの音を、iPad がつながっている間だけ Mac の入力デバイス「PadBridge iPad マイク」として見せる。
+/// iPad のマイク音声を、iPad が接続されている間だけ Mac の入力デバイス「PadBridge iPad マイク」として見せる。
 /// Mac は蓋を閉じると内蔵マイクをハードウェアで切り離すので、閉じたままでも Mac の Typeless で話せるようにするため。
-/// 届いた音を自分で鳴らし、その出力をプロセスタップで取り出して集約デバイスの入力にする。タップが出力をミュートするので、スピーカーからは鳴らない。
-/// Typeless にはこのデバイスを選ばせているので、iPad から話していない間に読まれたら Mac の既定の入力の音を流し、Mac で直接話しても聞き取れるようにする。
+/// 届いた音声を自分で再生し、その出力をプロセスタップでキャプチャして機器セットの入力にする。タップが出力をミュートするので、スピーカーからは再生されない。
+/// Typeless にはこのデバイスを選択させているので、iPad から話していない間に読み取られたら Mac の既定の入力の音声を流し、Mac で直接話しても音声入力できるようにする。
 nonisolated final class PadMicrophone: @unchecked Sendable {
     static let deviceName = "PadBridge iPad マイク"
     private static let deviceUID = "dev.void2610.padbridge.ipad-mic"
@@ -18,44 +18,44 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     private let onAuthorizationChange: @Sendable (Bool) -> Void
     private let engine = AVAudioEngine()
     private let renderLock = NSLock()
-    // iPad の音は 100ms ごとの塊で届く (AVAudioNode のタップは 100〜400ms ごとに渡す) ので、塊の揺れを吸収できるよう 150ms たまってから鳴らす。
-    // Typeless が読み始めるまでは鳴らさずにためておき、話し始めを落とさない。Typeless は前の聞き取りを貼り付け終えるまで数秒始まらないことがあるので、6 秒までためる
+    // iPad の音声は 100ms ごとのチャンクで届く (AVAudioNode のタップは 100〜400ms ごとに渡す) ので、チャンクのジッターを吸収できるよう 150ms 分バッファしてから再生する。
+    // Typeless が読み取りを始めるまでは再生せずにバッファしておき、話し始めを欠けさせない。Typeless は前の音声入力を貼り付け終えるまで数秒開始しないことがあるので、6 秒までバッファする
     private var buffer = PCMJitterBuffer(capacity: PadAudio.sampleRate * 6, startThreshold: PadAudio.sampleRate * 15 / 100)
-    // 止める直前の声は、iPad のタップの塊に入って止めた知らせより最大 100ms ほど遅れて届くので、その分を待つ
+    // 停止直前の音声は、iPad のタップのチャンクに入って停止通知より最大 100ms ほど遅れて届くので、その分を待つ
     private static let inFlightDelay: TimeInterval = 0.2
-    // 鳴らした音が、タップと集約デバイスを通って Typeless に届くまでの分
+    // 再生した音声が、タップと機器セットを通って Typeless に届くまでの分
     private static let deliveryDelay: TimeInterval = 0.05
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
-    // iPad から聞き取りを始めている間 (許可を確かめたあと) だけ、届いた音を鳴らす。それ以外は、Mac のマイクの音を流していなければ無音を流し続ける。
-    // 止めるとタップだけの集約デバイスは入力を持たなくなり、Typeless (Chromium) がマイクとして数えない。
+    // iPad から音声入力を開始している間 (許可を確認したあと) だけ、届いた音声を再生する。それ以外は、Mac のマイクの音声を流していなければ無音を流し続ける。
+    // 停止するとタップのみの機器セットは入力を持たなくなり、Typeless (Chromium) がマイクとして認識しない。
     // 許可がないとタップのミュートが効かないが、そのときは無音しか流さないので何も聞こえない
     private var isListening = false
-    // ほかのアプリ (Typeless) がこのデバイスを読んでいるか。読まれていない間に鳴らした音は誰にも届かない
+    // ほかのアプリ (Typeless) がこのデバイスを読み取っているか。読み取られていない間に再生した音声は誰にも届かない
     private var isRead = false
     private var listeningBeganAt: TimeInterval = 0
-    // iPad から聞き取りを始めてから Typeless が読み始めるまでの秒数。話し始めをためておく長さの目安として記録に出す
+    // iPad から音声入力を開始してから Typeless が読み取りを始めるまでの秒数。話し始めをバッファする長さの目安としてログに出す
     private var readDelay: TimeInterval?
-    // 聞き取りの間に iPad から届いた音のバイト数。届いていないのか Typeless が読めていないのかを見分けるために記録に出す
+    // 音声入力の間に iPad から届いた音声のバイト数。届いていないのか Typeless が読み取れていないのかを判別するためにログに出す
     private var receivedBytes = 0
-    // 経路の点検のときだけ鳴らす、聞こえない高さの小さな音の位相。点検していないときは nil
+    // 経路のチェックのときだけ再生する、聞こえない高さの小さな音の位相。チェックしていないときは nil
     private var checkPhase: Double?
-    // 聞き取りの間に鳴らした音の最大の振れ幅。どこで音が消えたかを記録に出して見分ける
+    // 音声入力の間に再生した音声の最大振幅。どこで音声が消えたかを判別するためにログに出す
     private var playedPeak: Float = 0
-    // 許可がないとタップのミュートが効かず、iPad の声が Mac のスピーカーから流れてしまう。確かめるまでは鳴らさない
+    // 許可がないとタップのミュートが効かず、iPad の音声が Mac のスピーカーから流れてしまう。確認するまでは再生しない
     private var isAuthorized = false
     private let authorizationLock = NSLock()
     private var reportedAuthorization: Bool?
-    // iPad から話していない間に読まれているときだけ、Mac の既定の入力の音をこのデバイスに流す
+    // iPad から話していない間に読み取られているときだけ、Mac の既定の入力の音声をこのデバイスに流す
     private var isPassingThrough = false
     private var passThroughEngine: AVAudioEngine?
-    // Mac のマイクの音は同じ Mac の中で約 10ms ごとに届き、揺れが小さいので、少しだけためて鳴らす。Typeless が止めたときに切れる話し終わりを短くする
+    // Mac のマイクの音声は同じ Mac の中で約 10ms ごとに届き、ジッターが小さいので、少しだけバッファして再生する。Typeless が停止したときに切れる話し終わりを短くする
     private var passThroughBuffer = PCMJitterBuffer(capacity: PadAudio.sampleRate / 2, startThreshold: PadAudio.sampleRate * 3 / 100)
     private var passThroughGate = PassThroughGate()
     private var readingListener: AudioObjectPropertyListenerBlock?
     private var configurationObserver: (any NSObjectProtocol)?
 
-    /// `onAuthorizationChange` は、システムオーディオの録音の許可があるかが分かるたび (変わったときだけ) に呼ばれる。
+    /// `onAuthorizationChange` は、システムオーディオ録音の許可の有無が判明するたび (変わったときだけ) に呼ばれる。
     init(onAuthorizationChange: @escaping @Sendable (Bool) -> Void) {
         self.onAuthorizationChange = onAuthorizationChange
         let format = AVAudioFormat(standardFormatWithSampleRate: Double(PadAudio.sampleRate), channels: 1)!
@@ -65,7 +65,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             if let self {
                 renderLock.withLock {
                     if var phase = checkPhase {
-                        // 経路の点検の音。タップがミュートするので鳴らないが、万一のときもほとんどの人に聞こえない高さと大きさにする
+                        // 経路のチェック用の音。タップがミュートするので再生されないが、万一のときもほとんどの人に聞こえない高さと大きさにする
                         for index in output.indices {
                             output[index] = Float(sin(phase)) * 0.01
                             phase += 2 * Double.pi * 20_000 / Double(PadAudio.sampleRate)
@@ -87,7 +87,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: format)
-        // 既定の出力の機器が変わり、チャンネル数やサンプルレートが変わると、エンジンは自分で止まる。止まったままだとタップが無音になり、iPad で話しても Typeless に何も届かない
+        // 既定の出力デバイスが変わり、チャンネル数やサンプルレートが変わると、エンジンは自動で停止する。停止したままだとタップが無音になり、iPad で話しても Typeless に何も届かない
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             guard let self else { return }
             queue.async { self.restartEngineAfterConfigurationChange() }
@@ -98,24 +98,24 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         guard deviceID != kAudioObjectUnknown, !engine.isRunning else { return }
         do {
             try engine.start()
-            Self.logger.notice("出力の機器が変わって止まった、音を鳴らすエンジンを動かし直した")
+            Self.logger.notice("出力デバイスが変わって停止した、再生用エンジンを再起動した")
         } catch {
-            Self.logger.error("出力の機器が変わったあと、音を鳴らすエンジンを動かし直せない: \(error, privacy: .public)")
+            Self.logger.error("出力デバイスが変わったあと、再生用エンジンを再起動できない: \(error, privacy: .public)")
         }
     }
 
-    /// 許可がないと分かっているか。まだ確かめていなければ false。
+    /// 許可がないと判明しているか。まだ確認していなければ false。
     var isKnownUnauthorized: Bool {
         authorizationLock.withLock { reportedAuthorization == false }
     }
 
-    /// デバイスを作り、許可があるかを確かめる。Host につながったときに呼ぶ。
+    /// デバイスを作成し、許可があるかを確認する。Host に接続したときに呼ぶ。
     func start() {
         queue.async { [self] in
             Self.removeLeftovers()
             createDevice()
             checkAuthorization()
-            // 話している最中にダイアログが出ないよう、つながったときに尋ねておく
+            // 話している最中にダイアログが出ないよう、接続したときに確認しておく
             if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     Self.logger.notice("PadBridge Host のマイクの許可: \(granted ? "あり" : "なし", privacy: .public)")
@@ -124,7 +124,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// デバイスを消す。Host との接続が切れたときに呼ぶ。消し終えるまで待つ (このあとすぐ終わっても Mac に残らないように)。
+    /// デバイスを削除する。Host との接続が切れたときに呼ぶ。削除が完了するまで待つ (このあとすぐ終了しても Mac に残らないように)。
     func stop() {
         queue.sync { [self] in
             engine.stop()
@@ -132,13 +132,13 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// iPad から聞き取りを始めるときに呼ぶ。iPad の声をこのデバイスに流せるかを `ready` に渡す。
-    /// このデバイスは Mac の既定の入力になれない (タップだけの集約デバイスは CanBeDefaultDevice が 0) ので、
-    /// Typeless のマイクの設定でこのデバイスを選ぶ (Host が一度だけ自動で行う)。既定の入力は切り替えない。
+    /// iPad から音声入力を開始するときに呼ぶ。iPad の音声をこのデバイスに流せるかを `ready` に渡す。
+    /// このデバイスは Mac の既定の入力になれない (タップのみの機器セットは CanBeDefaultDevice が 0) ので、
+    /// Typeless のマイク設定でこのデバイスを選択する (Host が一度だけ自動で行う)。既定の入力は切り替えない。
     func beginListening(ready: @escaping @Sendable (Bool) -> Void) {
         queue.async { [self] in
             if !isAuthorized {
-                // システム設定であとから許可された場合に気づけるよう、その都度確かめ直す
+                // システム設定であとから許可された場合に気づけるよう、その都度確認し直す
                 setAuthorized(AudioCapturePermission.current() == .authorized)
             }
             let isUsingPadMicrophone = isAuthorized && deviceID != kAudioObjectUnknown
@@ -147,7 +147,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             stopPassThrough()
             passThroughGate.padListeningBegan()
             let isAlreadyRead = renderLock.withLock {
-                // 止めた直後にまた始めたときは、Typeless が聞き取りを続けているので、まだ鳴らしていない声を捨てない
+                // 停止直後にまた開始したときは、Typeless が音声入力を続けているので、まだ再生していない音声を破棄しない
                 if !isListening {
                     buffer.removeAll()
                     receivedBytes = 0
@@ -161,10 +161,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// iPad で止めたときに呼ぶ。止めたところまでの声を流し終えたら `done` を呼ぶ。そのあとで Typeless を止めれば、話し終わりが切れない。
+    /// iPad で停止したときに呼ぶ。停止時点までの音声を流し終えたら `done` を呼ぶ。そのあとで Typeless を停止すれば、話し終わりが切れない。
     func finishListening(done: @escaping @Sendable () -> Void) {
         queue.asyncAfter(deadline: .now() + Self.inFlightDelay) { [self] in
-            // iPad はもう送ってこないので、鳴らし始めのたまり具合に届いていなくても残りを鳴らす。待つと話し終わりが鳴らないまま、7 秒の時間切れまで Typeless が聞き取り続ける
+            // iPad はもう送ってこないので、再生開始のバッファ量に届いていなくても残りを再生する。待つと話し終わりが再生されないまま、7 秒のタイムアウトまで Typeless が音声入力を続ける
             let target = renderLock.withLock {
                 buffer.playRemaining()
                 return buffer.written
@@ -175,7 +175,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     private func waitUntilPlayed(_ target: Int, deadline: DispatchTime, done: @escaping @Sendable () -> Void) {
         let (remaining, isPlaying) = renderLock.withLock { (target - buffer.consumed, isListening && isRead) }
-        // 読まれていなければ、待っても流れない (Typeless が自分で止めたときなど)
+        // 読み取られていなければ、待っても流れない (Typeless が自分で停止したときなど)
         guard remaining > 0, isPlaying, DispatchTime.now() < deadline else {
             queue.asyncAfter(deadline: .now() + Self.deliveryDelay) { done() }
             return
@@ -186,7 +186,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// 聞き取りが終わったら、届いた音を鳴らすのをやめる。
+    /// 音声入力が終了したら、届いた音声の再生を停止する。
     func endListening() {
         queue.async { [self] in
             let (wasListening, received, played, underruns) = renderLock.withLock {
@@ -198,8 +198,8 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             }
             if wasListening {
                 let seconds = Double(received) / 2 / Double(PadAudio.sampleRate)
-                let wait = readDelay.map { String(format: "%.2f 秒", $0) } ?? "読まれなかった"
-                Self.logger.notice("iPad から届いた音: \(String(format: "%.1f", seconds), privacy: .public) 秒分、Typeless が読み始めるまで \(wait, privacy: .public)、鳴らした音の最大 \(String(format: "%.4f", played), privacy: .public)、途切れた回数 \(underruns)")
+                let wait = readDelay.map { String(format: "%.2f 秒", $0) } ?? "読み取られなかった"
+                Self.logger.notice("iPad から届いた音声: \(String(format: "%.1f", seconds), privacy: .public) 秒分、Typeless が読み取りを始めるまで \(wait, privacy: .public)、再生した音声の最大振幅 \(String(format: "%.4f", played), privacy: .public)、途切れた回数 \(underruns)")
             }
             deviceReadingChanged()
         }
@@ -214,11 +214,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    /// 前に Host が落ちて残ったデバイスとタップを消す。作ったプロセスが終わっても、HAL からは消えないため。
+    /// 以前 Host が落ちて残ったデバイスとタップを削除する。作成したプロセスが終了しても、HAL からは消えないため。
     static func removeLeftovers() {
         if let device = device(uid: deviceUID) {
             AudioHardwareDestroyAggregateDevice(device)
-            logger.notice("前に残った \(deviceName, privacy: .public) を消した")
+            logger.notice("以前から残っていた \(deviceName, privacy: .public) を削除した")
         }
         for tap in objects(kAudioHardwarePropertyTapList) where tapName(tap) == deviceName {
             AudioHardwareDestroyProcessTap(tap)
@@ -227,15 +227,15 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     // MARK: - デバイス
 
-    /// 自分の出力をタップが本当に運んでいるかを、点検専用の非公開の集約デバイスで確かめて記録に出す。
-    /// 「PadBridge iPad マイク」を自分で読むにはマイクの許可も要るが、非公開の集約デバイスならシステムオーディオの録音の許可だけで読める。
-    /// 出力デバイスを含める形と、「PadBridge iPad マイク」と同じタップだけの形の両方で測り、違いがあるかを見る。
+    /// 自分の出力をタップが実際に運んでいるかを、チェック専用の非公開の機器セットで確認してログに出す。
+    /// 「PadBridge iPad マイク」を自分で読み取るにはマイクの許可も必要だが、非公開の機器セットならシステムオーディオ録音の許可だけで読み取れる。
+    /// 出力デバイスを含める形と、「PadBridge iPad マイク」と同じタップのみの形の両方で測定し、違いがあるかを見る。
     private func checkTapCarriesSound() {
         for includesOutput in [true, false] {
             let peak = measureTap(includingOutputDevice: includesOutput)
-            Self.logger.notice("タップの点検 (出力デバイスを\(includesOutput ? "含む" : "含まない", privacy: .public)): 最大 \(peak.map { String(format: "%.4f", $0) } ?? "測れない", privacy: .public) (鳴らした音は 0.0100)")
+            Self.logger.notice("タップのチェック (出力デバイスを\(includesOutput ? "含む" : "含まない", privacy: .public)): 最大 \(peak.map { String(format: "%.4f", $0) } ?? "測定不可", privacy: .public) (再生した音声は 0.0100)")
         }
-        // Typeless が読むのと同じ「PadBridge iPad マイク」そのものも測る。読むにはマイクの許可も要る
+        // Typeless が読み取るのと同じ「PadBridge iPad マイク」自体も測定する。読み取るにはマイクの許可も必要
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, deviceID != kAudioObjectUnknown else { return }
         let peak = PeakMeter()
         var procID: AudioDeviceIOProcID?
@@ -252,7 +252,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         AudioDeviceStop(deviceID, procID)
         AudioDeviceDestroyIOProcID(deviceID, procID)
         renderLock.withLock { checkPhase = nil }
-        Self.logger.notice("\(Self.deviceName, privacy: .public) の点検: 開始=\(started) 最大 \(String(format: "%.4f", peak.value), privacy: .public) (鳴らした音は 0.0100)")
+        Self.logger.notice("\(Self.deviceName, privacy: .public) のチェック: 開始=\(started) 最大 \(String(format: "%.4f", peak.value), privacy: .public) (再生した音声は 0.0100)")
     }
 
     private func measureTap(includingOutputDevice: Bool) -> Float? {
@@ -260,14 +260,14 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         guard process != kAudioObjectUnknown, let output = Self.defaultOutputDevice(), let outputUID = Self.uid(of: output) else { return nil }
         let description = CATapDescription(stereoMixdownOfProcesses: [process])
         description.uuid = UUID()
-        description.name = "\(Self.deviceName) の点検"
+        description.name = "\(Self.deviceName) のチェック"
         description.muteBehavior = .muted
         description.isPrivate = true
         var tap = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(description, &tap) == noErr else { return nil }
         defer { AudioHardwareDestroyProcessTap(tap) }
         var aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "\(Self.deviceName) の点検",
+            kAudioAggregateDeviceNameKey: "\(Self.deviceName) のチェック",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
@@ -303,17 +303,17 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         do {
             try engine.start()
         } catch {
-            Self.logger.error("音を鳴らすエンジンを動かせない: \(error, privacy: .public)")
+            Self.logger.error("再生用エンジンを起動できない: \(error, privacy: .public)")
             return
         }
-        // タップで取り出すには自分のプロセスのオブジェクトが要る。出力を始めてから HAL に現れるまで少し待つ
+        // タップでキャプチャするには自分のプロセスのオブジェクトが必要。出力を開始してから HAL に現れるまで少し待つ
         var process = AudioObjectID(kAudioObjectUnknown)
         for _ in 0 ..< 20 {
             process = Self.ownProcessObject()
             if process != kAudioObjectUnknown { break }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        // 出力を止めたままタップを作ると、タップだけの集約デバイスは入力を持たないまま固まる。無音を流したままにする
+        // 出力を停止したままタップを作成すると、タップのみの機器セットは入力を持たないまま固まる。無音を流したままにする
         guard process != kAudioObjectUnknown else {
             Self.logger.error("自分のプロセスのオーディオオブジェクトが見つからない")
             return
@@ -322,14 +322,14 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         tapDescription.uuid = UUID()
         tapDescription.name = Self.deviceName
         tapDescription.muteBehavior = .muted
-        // 既定の非公開のタップは作ったプロセスにしか見えず、ほかのアプリからは集約デバイスに入力がないように見える
+        // 既定の非公開のタップは作成したプロセスにしか見えず、ほかのアプリからは機器セットに入力がないように見える
         tapDescription.isPrivate = false
         var tap = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(tapDescription, &tap) == noErr, tap != kAudioObjectUnknown else {
-            Self.logger.error("プロセスタップを作れない")
+            Self.logger.error("プロセスタップを作成できない")
             return
         }
-        // 出力のサブデバイスを入れると出力デバイスとしても一覧に出てしまうので、タップだけの入力デバイスにする
+        // 出力のサブデバイスを入れると出力デバイスとしても一覧に出てしまうので、タップのみの入力デバイスにする
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: Self.deviceName,
             kAudioAggregateDeviceUIDKey: Self.deviceUID,
@@ -339,13 +339,13 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         ]
         var device = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateAggregateDevice(description as CFDictionary, &device) == noErr, device != kAudioObjectUnknown else {
-            Self.logger.error("集約デバイスを作れない")
+            Self.logger.error("機器セットを作成できない")
             AudioHardwareDestroyProcessTap(tap)
             return
         }
         tapID = tap
         deviceID = device
-        Self.logger.notice("\(Self.deviceName, privacy: .public) を作った")
+        Self.logger.notice("\(Self.deviceName, privacy: .public) を作成した")
         var address = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.deviceReadingChanged() }
         if AudioObjectAddPropertyListenerBlock(device, &address, queue, listener) == noErr {
@@ -370,11 +370,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         }
     }
 
-    // MARK: - Mac のマイクの音を流す
+    // MARK: - Mac のマイクの音声を流す
 
-    /// このデバイスが読まれ始めたか、読まれなくなった。読まれ始めた通知はすぐ届く。
-    /// 自分で読むのは点検 (キューを占めたまま終える) のときだけなので、それ以外で読まれていればほかのアプリ (Typeless) が読んでいる。
-    /// iPad から話していない間に読まれていれば、Mac の既定の入力の音を流す。
+    /// このデバイスが読み取られ始めたか、読み取られなくなった。読み取り開始の通知はすぐ届く。
+    /// 自分で読み取るのはチェック (キューを占有したまま終える) のときだけなので、それ以外で読み取られていればほかのアプリ (Typeless) が読み取っている。
+    /// iPad から話していない間に読み取られていれば、Mac の既定の入力の音声を流す。
     private func deviceReadingChanged() {
         let isRead = deviceID != kAudioObjectUnknown && Self.isRunningSomewhere(deviceID)
         let isListening = renderLock.withLock {
@@ -393,24 +393,24 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
 
     private func startPassThrough() {
         guard passThroughEngine == nil else { return }
-        // 録音の許可がないとタップのミュートが効かず、Mac のマイクの音がそのままスピーカーから流れてしまう
+        // 録音の許可がないとタップのミュートが効かず、Mac のマイクの音声がそのままスピーカーから流れてしまう
         guard isAuthorized, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            Self.logger.notice("\(Self.deviceName, privacy: .public) が読まれたが、許可がないので Mac のマイクの音を流さない")
+            Self.logger.notice("\(Self.deviceName, privacy: .public) が読み取られたが、許可がないので Mac のマイクの音声を流さない")
             return
         }
-        // 鳴らしている方のエンジンで入力を使うと出力が組み直されて途切れるので、取り込みは別のエンジンで行う
+        // 再生中のエンジンで入力を使うと出力が再構成されて途切れるので、キャプチャは別のエンジンで行う
         let engine = AVAudioEngine()
         let format = engine.inputNode.outputFormat(forBus: 0)
         guard let converter = PadAudioConverter(from: format) else {
-            Self.logger.notice("\(Self.deviceName, privacy: .public) が読まれたが、Mac に使えるマイクがない")
+            Self.logger.notice("\(Self.deviceName, privacy: .public) が読み取られたが、Mac に使えるマイクがない")
             return
         }
-        // タップは 100ms ごとにしか音を渡さない。シンクなら入力の 1 回ごと (この Mac では 512 フレーム、約 10ms) に受け取れる
+        // タップは 100ms ごとにしか音声を渡さない。シンクなら入力の 1 回ごと (この Mac では 512 フレーム、約 10ms) に受け取れる
         let isSendFormat = format.sampleRate == Double(PadAudio.sampleRate) && format.commonFormat == .pcmFormatFloat32 && !format.isInterleaved
         let sink = AVAudioSinkNode { [weak self] _, frameCount, inputData in
             guard let self else { return noErr }
             if isSendFormat, let data = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)).first?.mData {
-                // Mac のマイクは送る形と同じ 48kHz のことが多いので、そのときは変換せず先頭のチャンネルを流す
+                // Mac のマイクは送信するフォーマットと同じ 48kHz のことが多いので、そのときは変換せず先頭のチャンネルを流す
                 let samples = UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: Int(frameCount))
                 renderLock.withLock {
                     if isPassingThrough {
@@ -436,11 +436,11 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             try engine.start()
         } catch {
             renderLock.withLock { isPassingThrough = false }
-            Self.logger.error("Mac のマイクを始められない: \(error, privacy: .public)")
+            Self.logger.error("Mac のマイクを開始できない: \(error, privacy: .public)")
             return
         }
         passThroughEngine = engine
-        Self.logger.notice("iPad から話していない間に読まれたので、Mac のマイクの音を流す")
+        Self.logger.notice("iPad から話していない間に読み取られたので、Mac のマイクの音声を流す")
     }
 
     private func stopPassThrough() {
@@ -451,10 +451,10 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             isPassingThrough = false
             passThroughBuffer.removeAll()
         }
-        Self.logger.notice("Mac のマイクの音を流すのをやめた")
+        Self.logger.notice("Mac のマイクの音声を流すのを停止した")
     }
 
-    /// システムオーディオの録音の許可を確かめ、まだ尋ねていなければ尋ねる。
+    /// システムオーディオ録音の許可を確認し、まだ要求していなければ要求する。
     private func checkAuthorization() {
         switch AudioCapturePermission.current() {
         case .authorized:
@@ -471,7 +471,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
         checkAuthorizationLater()
     }
 
-    /// システム設定で許可されたらすぐに iPad の知らせを消せるよう、許可がない間は確かめ続ける。
+    /// システム設定で許可されたらすぐに iPad の通知を消せるよう、許可がない間は確認し続ける。
     private func checkAuthorizationLater() {
         guard !isAuthorized else { return }
         queue.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -492,7 +492,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
             return reportedAuthorization != authorized
         }
         if changed {
-            Self.logger.notice("システムオーディオの録音の許可: \(authorized ? "あり" : "なし", privacy: .public)")
+            Self.logger.notice("システムオーディオ録音の許可: \(authorized ? "あり" : "なし", privacy: .public)")
             onAuthorizationChange(authorized)
         }
     }
@@ -565,7 +565,7 @@ nonisolated final class PadMicrophone: @unchecked Sendable {
     }
 }
 
-/// 入力の最大の振れ幅を、オーディオのスレッドから受け取って記録する。
+/// 入力の最大振幅を、オーディオスレッドから受け取って記録する。
 private nonisolated final class PeakMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var peak: Float = 0

@@ -39,7 +39,7 @@ struct ModifierLatchTests {
 }
 
 struct HeldModifiersTests {
-    /// ハードウェアキーボードで ⌘ を押したままタップすると、クリックに ⌘ が載ること。
+    /// ハードウェアキーボードで ⌘ を押したままタップすると、クリックに ⌘ が付くこと。
     @Test func heldCommandIsAppliedToMouseEvents() {
         var held = HeldModifiers()
         held.apply(MacKeyEvent(usage: 0xE3, isDown: true, modifiers: [.command])!)
@@ -49,7 +49,7 @@ struct HeldModifiersTests {
         #expect(held.mouseEventFlags == 0x100)
     }
 
-    /// iPadOS が ⌘ を外して渡した ⌘. も、押している ⌘ を載せて送る。修飾キーそのもののイベントは変えない。
+    /// iPadOS が ⌘ を外して渡した ⌘. も、押している ⌘ を付与して送る。修飾キーそのもののイベントは変えない。
     @Test func heldModifiersAreAddedToOrdinaryKeys() {
         var held = HeldModifiers()
         held.apply(MacKeyEvent(usage: 0xE3, isDown: true, modifiers: [.command])!)
@@ -90,7 +90,7 @@ struct TypedTextTests {
         #expect(RemoteKeys.typed("@あ#x") == [.insertText("@あ#")] + tap(0x1B))
     }
 
-    /// US と JIS で位置が同じ記号は、Mac の日本語入力が「ー」「、」「。」に変えられるようキーとして送ること。
+    /// US と JIS で位置が同じ記号は、Mac の日本語入力が「ー」「、」「。」に変換できるようキーとして送ること。
     @Test func layoutIndependentSymbolsAreSentAsKeys() {
         #expect(RemoteKeys.typed("-,./") == tap(0x2D) + tap(0x36) + tap(0x37) + tap(0x38))
         #expect(RemoteKeys.typed("?") == RemoteKeys.withModifiers([.shift], tap(0x38)))
@@ -136,7 +136,7 @@ struct PointerModifierHoldTests {
         #expect(result.messages == [.mouseMove(point), commandDown, click[1], click[2], commandUp])
     }
 
-    /// ドラッグは押すときと離すときが別の送信になるので、離すまで修飾キーを押したままにすること。
+    /// ドラッグは押下と解放が別の送信になるので、離すまで修飾キーを押したままにすること。
     @Test func dragKeepsModifiersUntilRelease() {
         var hold = PointerModifierHold()
         let down = hold.wrap([.mouseButton(.left, isDown: true, at: point), .mouseMove(point)], modifiers: [.command])

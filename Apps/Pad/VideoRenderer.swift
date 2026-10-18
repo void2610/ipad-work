@@ -2,20 +2,20 @@ import AVFoundation
 import CoreMedia
 import PadBridgeKit
 
-/// 届いた H.264 を表示レイヤに流す。`handle` は映像用キューの上でだけ呼ぶ。
+/// 受信した H.264 を表示レイヤに流す。`handle` は映像用キュー上でのみ呼ぶ。
 nonisolated final class VideoRenderer: @unchecked Sendable {
     let displayLayer = AVSampleBufferDisplayLayer()
-    /// 映像を始める前に設定しておく。
+    /// 映像の開始前に設定しておく。
     var onNeedsKeyFrame: (@Sendable () -> Void)?
     var onVideoSizeChange: (@Sendable (CGSize) -> Void)?
-    /// 届いたフレームに写っている Mac の画面の範囲が変わったときに呼ぶ。
+    /// 受信したフレームに写っている Mac のディスプレイの範囲が変わったときに呼ぶ。
     var onRegionChange: (@Sendable (VideoRegion) -> Void)?
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyFrame = true
     private var region = VideoRegion.full
 
-    /// 映像の接続を張り直すとき、前の接続の残りを捨ててキーフレームから描き直す。
+    /// 映像の接続を再確立するとき、前の接続の残りを破棄してキーフレームから描き直す。
     func reset() {
         displayLayer.sampleBufferRenderer.flush()
         formatDescription = nil
@@ -38,7 +38,7 @@ nonisolated final class VideoRenderer: @unchecked Sendable {
 
     private func enqueue(_ frame: VideoFrame) {
         let renderer = displayLayer.sampleBufferRenderer
-        // バックグラウンドに回ると表示レイヤが壊れる。戻ったら捨てて、キーフレームから描き直す
+        // バックグラウンドに移ると表示レイヤが壊れる。フォアグラウンドに戻ったら破棄して、キーフレームから描き直す
         if renderer.status == .failed {
             renderer.flush()
             restartFromKeyFrame()

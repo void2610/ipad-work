@@ -1,13 +1,13 @@
 import Foundation
 
-/// Mac 側で、3 本指で払った向きをトラックパッドと同じ操作に読み替えたもの。
+/// Mac 側で、3 本指スワイプの向きをトラックパッドと同じ操作に変換したもの。
 public enum DesktopAction: Equatable, Sendable {
-    /// 操作スペースを右隣 (true) か左隣 (false) へ切り替える。
+    /// スペースを右隣 (true) か左隣 (false) へ切り替える。
     case switchSpace(toRight: Bool)
     /// Control+矢印のショートカット。上は Mission Control、下はアプリケーションウインドウ。
     case controlArrow(usage: Int)
 
-    /// トラックパッドと同じく、左へ払うと右隣のスペースへ移る。
+    /// トラックパッドと同じく、左へスワイプすると右隣のスペースへ移る。
     public init(swipe direction: TouchInterpreter.SwipeDirection) {
         switch direction {
         case .left: self = .switchSpace(toRight: true)
@@ -34,8 +34,8 @@ public enum RemoteKeys {
         withControl(tap(usage: usage, modifiers: [.control]))
     }
 
-    /// macOS の「Dock にフォーカスを移動」(既定は Control+F3)。Dock を自動的に隠していても出てくる。
-    /// iPad の指ではカーソルを画面の下端に置いたままにできず、Dock を出せないため、こちらで出す。
+    /// macOS の「Dock にフォーカスを移動」(既定は Control+F3)。Dock を自動的に隠していても表示される。
+    /// iPad の指ではカーソルをディスプレイの下端に置いたままにできず、Dock を表示できないため、こちらで表示する。
     public static func focusDock() -> [ControlMessage] {
         withControl(tap(usage: f3, modifiers: [.control]))
     }
@@ -48,7 +48,7 @@ public enum RemoteKeys {
 }
 
 /// Command+Tab のアプリ切り替え。タップのたびに Command を押したまま Tab を送り、一定時間タップがなければ Command を離して確定する。
-/// iPadOS がハードウェアキーボードの Command+Tab を先に受け取ってしまうため、ボタンで代わりにする。
+/// iPadOS がハードウェアキーボードの Command+Tab を先に処理してしまうため、ボタンで代替する。
 public struct AppSwitcher: Sendable {
     public static let commitDelay: TimeInterval = 1
     private var lastTap: TimeInterval?
@@ -69,7 +69,7 @@ public struct AppSwitcher: Sendable {
         return commit()
     }
 
-    /// 裏に回るときなど、待たずに確定させる。
+    /// バックグラウンドに移るときなど、待たずに確定させる。
     public mutating func commit() -> [ControlMessage] {
         guard lastTap != nil else { return [] }
         lastTap = nil

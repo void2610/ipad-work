@@ -1,6 +1,6 @@
 import Foundation
 
-/// 連続したクリックを数える。合成したマウスイベントには macOS がクリック回数を付けてくれないため、自前で数える。
+/// 連続したクリックを数える。合成したマウスイベントには macOS がクリック回数を付与しないため、自前で数える。
 public struct ClickCounter: Sendable {
     private struct Press: Sendable {
         var button: MouseButton

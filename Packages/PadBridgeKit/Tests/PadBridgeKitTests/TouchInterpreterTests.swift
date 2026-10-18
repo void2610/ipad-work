@@ -29,13 +29,13 @@ struct TouchInterpreterTests {
         #expect(interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 150), time: 0.15) == [.scroll(dx: 0, dy: 20)])
         let end = interpreter.ended(touch: 1, at: CGPoint(x: 100, y: 150), time: 0.17)
         guard case let .scrollEnded(_, velocityY) = end.first else {
-            Issue.record("慣性の速さが出ない: \(end)")
+            Issue.record("慣性の速度が得られない: \(end)")
             return
         }
         #expect(velocityY > 0)
     }
 
-    /// 3 本指で払うとき、1 本目が先に動いても、他の指を待つ間はスクロールを送らないこと。
+    /// 3 本指でスワイプするとき、1 本目が先に動いても、他の指を待つ間はスクロールを送らないこと。
     @Test func firstFingerMovingBeforeOthersLandDoesNotScroll() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
@@ -48,7 +48,7 @@ struct TouchInterpreterTests {
         #expect(actions == [.threeFingerSwipe(.left)])
     }
 
-    /// 画面の下端から上へ払うと、スクロールではなく Dock を出す操作になること。
+    /// 画面の下端から上へスワイプすると、スクロールではなく Dock を表示する操作になること。
     @Test func swipeUpFromBottomEdgeShowsDock() {
         var interpreter = TouchInterpreter()
         interpreter.bottomEdge = 800
@@ -59,7 +59,7 @@ struct TouchInterpreterTests {
         #expect(interpreter.ended(touch: 1, at: CGPoint(x: 405, y: 600), time: 0.12).isEmpty)
     }
 
-    /// 下端の近くでも、タップと横への払いはいつもどおりクリックとスクロールになること。
+    /// 下端付近でも、タップと横スワイプは通常どおりクリックとスクロールになること。
     @Test func tapAndSideSwipeNearBottomEdgeStayNormal() {
         var interpreter = TouchInterpreter()
         interpreter.bottomEdge = 800
@@ -70,7 +70,7 @@ struct TouchInterpreterTests {
         #expect(interpreter.moved(touch: 2, to: CGPoint(x: 440, y: 785), time: 1.1) == [.move(point), .scroll(dx: 40, dy: -5)])
     }
 
-    /// 下端から離れたところで上へ払ったら、いつもどおりスクロールになること。
+    /// 下端から離れた位置で上へスワイプしたら、通常どおりスクロールになること。
     @Test func swipeUpAwayFromBottomEdgeScrolls() {
         var interpreter = TouchInterpreter()
         interpreter.bottomEdge = 800
@@ -132,7 +132,7 @@ struct TouchInterpreterTests {
         #expect(interpreter.ended(touch: 2, at: CGPoint(x: 200, y: 130), time: 0.5) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
-    /// 1 本指でスクロール中に 2 本目が触れても、重心の飛びをスクロール量にしないこと。
+    /// 1 本指でスクロール中に 2 本目が触れても、重心のジャンプをスクロール量にしないこと。
     @Test func addingFingerDuringScrollDoesNotJump() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)
@@ -157,7 +157,7 @@ struct TouchInterpreterTests {
         #expect(interpreter.ended(touch: 2, at: CGPoint(x: 120, y: 140), time: 1.0).isEmpty)
     }
 
-    /// ドラッグ中に触れた別の指だけが取り消されても (手のひらや画面の端のシステムのジェスチャー)、ドラッグしている指を離せば左ボタンを離す。
+    /// ドラッグ中に触れた別の指だけがキャンセルされても (手のひらや画面端のシステムジェスチャー)、ドラッグ中の指を離せば左ボタンを離す。
     @Test func cancellingOtherFingerKeepsDragReleasable() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)
@@ -250,7 +250,7 @@ struct ThreeFingerSwipeTests {
         #expect(interpreter.began(touch: 3, at: CGPoint(x: 200, y: 300), time: 0.12) == [.scrollEnded(velocityX: 0, velocityY: 0)])
     }
 
-    /// 2 本指でしばらくスクロールしてから親指が触れても、3 本指の払いにせずスクロールを続ける。
+    /// 2 本指でしばらくスクロールしてから親指が触れても、3 本指のスワイプにせずスクロールを続ける。
     @Test func lateThirdFingerDuringTwoFingerScrollKeepsScrolling() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: CGPoint(x: 100, y: 300), time: 0)
@@ -258,7 +258,7 @@ struct ThreeFingerSwipeTests {
         _ = interpreter.moved(touch: 1, to: CGPoint(x: 100, y: 330), time: 0.1)
         _ = interpreter.moved(touch: 2, to: CGPoint(x: 150, y: 330), time: 0.1)
         #expect(interpreter.began(touch: 3, at: CGPoint(x: 400, y: 600), time: 0.6).isEmpty)
-        // 3 本で動かしても払いにならず、重心の動いた分だけスクロールする
+        // 3 本で動かしてもスワイプにならず、重心が動いた分だけスクロールする
         let actions = [(1, CGFloat(100)), (2, 150), (3, 400)].flatMap { id, x in
             interpreter.moved(touch: id, to: CGPoint(x: x, y: (id == 3 ? 600 : 330) - 90), time: 0.7)
         }
@@ -266,7 +266,7 @@ struct ThreeFingerSwipeTests {
         #expect(actions.contains { if case .scroll = $0 { true } else { false } })
     }
 
-    /// 左へ払うと右隣のスペースへ移る、トラックパッドと同じ向きにすること。
+    /// 左へスワイプすると右隣のスペースへ移る、トラックパッドと同じ向きにすること。
     @Test func directionsMapToTrackpadActions() {
         #expect(DesktopAction(swipe: .left) == .switchSpace(toRight: true))
         #expect(DesktopAction(swipe: .right) == .switchSpace(toRight: false))
@@ -298,7 +298,7 @@ struct PinchTests {
         #expect(translation.dx == 35)
     }
 
-    /// 間隔を保ったまま 2 本指で払うと、これまでどおりスクロールになること。
+    /// 間隔を保ったまま 2 本指でスワイプすると、従来どおりスクロールになること。
     @Test func movingTwoFingersTogetherScrolls() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: CGPoint(x: 400, y: 300), time: 0)
@@ -312,7 +312,7 @@ struct PinchTests {
         #expect(!actions.contains { if case .zoom = $0 { true } else { false } })
     }
 
-    /// 2 本指で軽く触れて離すだけなら、これまでどおり 2 本の指の中ほどで右クリックになること。
+    /// 2 本指で軽くタップするだけなら、従来どおり 2 本の指の中点で右クリックになること。
     @Test func twoFingerTapStillRightClicks() {
         var interpreter = TouchInterpreter()
         let middle = CGPoint(x: 450, y: 300)
@@ -349,7 +349,7 @@ struct ScreenZoomTests {
         #expect(abs(zoom.scale - 1.02) < 0.001)
     }
 
-    /// 縮めて等倍の近くまで戻したときは、ぴったり等倍に戻す。
+    /// 縮小して等倍付近まで戻したときは、ちょうど等倍に戻す。
     @Test func shrinkingNearOneSnapsBack() {
         var zoom = ScreenZoom()
         zoom.apply(scale: 1.5, center: CGPoint(x: 500, y: 400), translation: .zero, fitted: fitted, area: area)
@@ -357,7 +357,7 @@ struct ScreenZoomTests {
         #expect(zoom == ScreenZoom())
     }
 
-    /// 指の中心の下にある映像の位置が、拡大しても動かないこと。
+    /// 指の中心にある映像の位置が、拡大しても動かないこと。
     @Test func zoomKeepsPointUnderFingers() {
         var zoom = ScreenZoom()
         let center = CGPoint(x: 300, y: 400)
@@ -369,7 +369,7 @@ struct ScreenZoomTests {
         #expect(abs(after.minX + normalizedX * after.width - center.x) < 0.001)
     }
 
-    /// 端に余白が出るほど外へ寄せても、画面の端で止まること。
+    /// 端に余白が出るほど動かしても、映像の端で止まること。
     @Test func zoomedRectStaysOverArea() {
         var zoom = ScreenZoom()
         zoom.apply(scale: 2, center: CGPoint(x: 500, y: 400), translation: CGVector(dx: 5000, dy: 5000), fitted: fitted, area: area)
@@ -379,7 +379,7 @@ struct ScreenZoomTests {
         #expect(rect.maxX >= area.maxX)
     }
 
-    /// 縮めてほぼ等倍に戻したら、ぴったり元に戻ること。
+    /// 縮小してほぼ等倍に戻したら、元の位置にぴったり戻ること。
     @Test func pinchingBackResets() {
         var zoom = ScreenZoom()
         zoom.apply(scale: 2, center: CGPoint(x: 200, y: 200), translation: .zero, fitted: fitted, area: area)

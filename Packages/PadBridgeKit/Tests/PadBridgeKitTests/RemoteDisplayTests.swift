@@ -5,7 +5,7 @@ import Testing
 struct RemoteDisplayTests {
     private let main = RemoteDisplay.Source(id: 16, name: "VG258", bounds: CGRect(x: 0, y: 0, width: 1920, height: 1080), isMain: true, isMirror: false)
 
-    /// この Mac と同じく、名前を持たない 2 台目がメインの左にある。
+    /// この Mac と同じく、名前のない 2 台目がメインディスプレイの左にある。
     @Test func listsDisplaysLeftToRightAndNamesUnnamedOnes() {
         let left = RemoteDisplay.Source(id: 15, name: "", bounds: CGRect(x: -1920, y: 0, width: 1920, height: 1080), isMain: false, isMirror: false)
         let displays = RemoteDisplay.list([main, left])
@@ -16,7 +16,7 @@ struct RemoteDisplayTests {
         #expect(displays.map(\.label) == ["名称不明のディスプレイ (メインディスプレイの左)", "VG258 (メインディスプレイ)"])
     }
 
-    /// 同じ機種を 2 台ともメインの右に並べても、左から番号を付けて見分けられる。
+    /// 同じ機種を 2 台ともメインディスプレイの右に並べても、左から番号を付けて区別できる。
     @Test func numbersDisplaysWithSameNameAndPlacement() {
         let near = RemoteDisplay.Source(id: 2, name: "DELL U2720Q", bounds: CGRect(x: 1920, y: 0, width: 2560, height: 1440), isMain: false, isMirror: false)
         let far = RemoteDisplay.Source(id: 3, name: "DELL U2720Q", bounds: CGRect(x: 4480, y: 0, width: 2560, height: 1440), isMain: false, isMirror: false)
@@ -28,7 +28,7 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.list([mirror, main]).map(\.id) == [16])
     }
 
-    /// 縦に積んだ画面は上下、ずらして置いた画面はずれの大きい向きで決める。
+    /// 縦に積んだディスプレイは上下、ずらして置いたディスプレイはずれの大きい向きで決める。
     @Test(arguments: [
         (CGRect(x: 1920, y: 200, width: 2560, height: 1440), RemoteDisplay.Placement.right),
         (CGRect(x: 0, y: -1440, width: 2560, height: 1440), .above),
@@ -39,7 +39,7 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.placement(of: bounds, from: main.bounds) == placement)
     }
 
-    /// 前に出たウィンドウの画面を映す。またいでいれば重なりの大きい方、どこにも重ならなければ追わない。
+    /// 最前面のウィンドウのディスプレイを表示する。複数にまたがっていれば重なりの大きい方、どこにも重ならなければ追従しない。
     @Test func findsDisplayShowingWindow() {
         let displays: [UInt32: CGRect] = [15: CGRect(x: -1920, y: 0, width: 1920, height: 1080), 16: main.bounds]
         #expect(RemoteDisplay.showing(window: CGRect(x: -1500, y: 100, width: 800, height: 600), displays: displays) == 15)
@@ -49,7 +49,7 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.showing(window: CGRect(x: -100, y: 0, width: 200, height: 100), displays: displays) == 15)
     }
 
-    /// 移した先でも、元の画面での寄せ方 (左上・中央・右下) を保つ。
+    /// 移動先でも、元のディスプレイでの寄せ方 (左上・中央・右下) を維持する。
     @Test func movedWindowKeepsItsPlaceOnTheOtherDisplay() {
         let main = CGRect(x: 0, y: 33, width: 1920, height: 1047)
         let left = CGRect(x: -1920, y: 33, width: 1920, height: 1047)
@@ -58,7 +58,7 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.moved(window: CGRect(x: 1120, y: 480, width: 800, height: 600), from: main, to: left) == CGRect(x: -800, y: 480, width: 800, height: 600))
     }
 
-    /// 大きな画面いっぱいのウィンドウは、移す先の小さな画面に収まるよう縮める。
+    /// 大きなディスプレイいっぱいのウィンドウは、移動先の小さなディスプレイに収まるよう縮小する。
     @Test func movedWindowShrinksToFitSmallerDisplay() {
         let large = CGRect(x: 0, y: 25, width: 2560, height: 1415)
         let small = CGRect(x: 2560, y: 33, width: 1512, height: 949)
@@ -66,7 +66,7 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.moved(window: CGRect(x: 100, y: 25, width: 2000, height: 700), from: large, to: small) == CGRect(x: 2560, y: 33, width: 1512, height: 700))
     }
 
-    /// 外した画面に残ってどの画面にも重ならないウィンドウは、移す先を元の範囲として計算すると、移す先の画面の中に寄る (Host が回収するときの計算)。
+    /// 取り外したディスプレイに残ってどのディスプレイにも重ならないウィンドウは、移動先を元の範囲として計算すると、移動先のディスプレイ内に収まる (Host が回収するときの計算)。
     @Test func offscreenWindowIsPulledIntoDestination() {
         let left = CGRect(x: -1920, y: 33, width: 1920, height: 1047)
         let usable: [UInt32: CGRect] = [16: main.bounds, 15: left]
@@ -77,7 +77,7 @@ struct RemoteDisplayTests {
         #expect(moved.size == offscreen.size)
     }
 
-    /// 選んだ画面が外れたらメインを映し、つなぎ直されたらまた選んだ画面を映す。
+    /// 選択したディスプレイが外れたらメインディスプレイを表示し、再接続されたらまた選択したディスプレイを表示する。
     @Test func showsPreferredDisplayWhileConnectedElseMain() {
         let both = [RemoteDisplay(id: 15, name: "A", placement: .left), RemoteDisplay(id: 16, name: "B", placement: .main)]
         #expect(RemoteDisplay.shown(preferred: 15, in: both) == 15)

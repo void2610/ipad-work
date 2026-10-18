@@ -13,7 +13,7 @@ nonisolated enum TextInserter {
 
     private static func insertViaAccessibility(_ text: String) -> Bool {
         let systemWide = AXUIElementCreateSystemWide()
-        // 応答しないアプリで、入力の列 (マウス・キー) ごと何秒も止まらないようにする
+        // 応答しないアプリで、入力のキュー (マウス・キー) ごと何秒も止まらないようにする
         AXUIElementSetMessagingTimeout(systemWide, 0.5)
         var focusedValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedValue) == .success,
@@ -29,12 +29,12 @@ nonisolated enum TextInserter {
         let before = value(of: element)
         let rangeBefore = selectedRange(of: element)
         guard AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success else { return false }
-        // 成功を返しても実際には反映しないアプリ (Electron 製など) があるため、値か選択の位置が変わったかで確かめる。選んだ文字を同じ文字で置き換えると値は変わらない
+        // 成功を返しても実際には反映しないアプリ (Electron 製など) があるため、値か選択位置が変わったかで確認する。選択した文字を同じ文字で置き換えると値は変わらない
         guard let before, let after = value(of: element) else { return true }
         return before != after || rangeBefore != selectedRange(of: element)
     }
 
-    /// 選択の位置と長さ。読めなければ nil。
+    /// 選択位置と長さ。取得できなければ nil。
     private static func selectedRange(of element: AXUIElement) -> [Int]? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
@@ -55,7 +55,7 @@ nonisolated enum TextInserter {
         let units = Array(text.utf16)
         var start = 0
         while start < units.count {
-            // 1 イベントに載せられる文字数には上限があるため、小分けにして送る
+            // 1 イベントに載せられる文字数には上限があるため、分割して送る
             var end = min(start + 16, units.count)
             if end < units.count, UTF16.isLeadSurrogate(units[end - 1]) {
                 end -= 1

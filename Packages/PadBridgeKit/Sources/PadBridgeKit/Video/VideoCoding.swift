@@ -58,7 +58,7 @@ extension VideoFormat {
         guard parameterSets.count >= (codec == .h264 ? 2 : 3), !parameterSets.contains(where: \.isEmpty) else {
             throw VideoCodingError.missingParameterSets
         }
-        // CoreMedia は呼んでいる間だけポインタを読むので、写しを取って呼び終えたら放す
+        // CoreMedia は呼び出し中だけポインタを読むので、コピーを取って呼び終えたら解放する
         let buffers = parameterSets.map { data -> UnsafeMutableBufferPointer<UInt8> in
             let buffer = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: data.count)
             _ = buffer.initialize(from: data)
@@ -99,7 +99,7 @@ extension VideoFrame {
         self.init(isKeyFrame: !notSync, presentationTimeMicros: Self.presentationTimeMicros(of: sampleBuffer.presentationTimeStamp), data: data)
     }
 
-    /// 符号化に渡した時刻を、送るフレームの時刻 (マイクロ秒) にする。
+    /// エンコードに渡した時刻を、送るフレームの時刻 (マイクロ秒) にする。
     public static func presentationTimeMicros(of time: CMTime) -> Int64 {
         time.isNumeric ? Int64(time.seconds * 1_000_000) : 0
     }

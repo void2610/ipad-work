@@ -3,7 +3,7 @@ import Network
 import Testing
 
 struct LocalNetworkAccessTests {
-    /// TN3179 にある値 (-65570) で止まったときだけ、許可がないとみなす。
+    /// TN3179 に記載の値 (-65570) で失敗したときだけ、許可がないとみなす。
     @Test func onlyPolicyDeniedMeansNoAccess() {
         #expect(kDNSServiceErr_PolicyDenied == -65570)
         #expect(LocalNetworkAccess.isDenied(.waiting(.dns(-65570))))

@@ -2,19 +2,19 @@
 import Testing
 
 struct PassThroughGateTests {
-    /// (ほかのアプリが読んでいるか, iPad から聞き取っているか) を順に渡し、流すかの答えを並べる。
+    /// (ほかのアプリが読み取っているか, iPad から音声入力中か) を順に渡し、パススルーするかの結果を並べる。
     private func decisions(_ gate: inout PassThroughGate, _ states: [(isRead: Bool, isPadListening: Bool)]) -> [Bool] {
         states.map { gate.shouldPassThrough(isRead: $0.isRead, isPadListening: $0.isPadListening) }
     }
 
-    /// iPad から話していない間に読まれたら Mac のマイクを流し、読まれなくなったらやめる。
+    /// iPad から話していない間に読み取られたら Mac のマイクをパススルーし、読み取られなくなったらやめる。
     @Test func passesThroughOnlyWhileRead() {
         var gate = PassThroughGate()
         let result = decisions(&gate, [(false, false), (true, false), (false, false)])
         #expect(result == [false, true, false])
     }
 
-    /// iPad から聞き取っている間は、iPad の声だけを流す。
+    /// iPad から音声入力している間は、iPad の音声だけをパススルーする。
     @Test func padListeningWins() {
         var gate = PassThroughGate()
         let before = decisions(&gate, [(true, false)])
@@ -24,7 +24,7 @@ struct PassThroughGateTests {
         #expect(during == [false])
     }
 
-    /// iPad からの聞き取りが終わっても Typeless が読み終えるまでは流さず、次に読まれたら流す。
+    /// iPad からの音声入力が終わっても Typeless が読み取りを終えるまではパススルーせず、次に読み取られたらパススルーする。
     @Test func waitsUntilReadingStopsAfterPadListening() {
         var gate = PassThroughGate()
         gate.padListeningBegan()
@@ -32,7 +32,7 @@ struct PassThroughGateTests {
         #expect(result == [false, false, false, true])
     }
 
-    /// 自分で読んでいる間 (iPad から聞き取り中) に読まれなくなっても、聞き取りが終わるまでは区切りにしない。
+    /// 自分で読み取っている間 (iPad から音声入力中) に読み取られなくなっても、音声入力が終わるまでは区切りにしない。
     @Test func readingStopWhileListeningDoesNotRelease() {
         var gate = PassThroughGate()
         gate.padListeningBegan()

@@ -1,15 +1,15 @@
 @preconcurrency import AVFAudio
 import Foundation
 
-/// Mac から届いた音を鳴らす `AVAudioSourceNode`。届く間隔の揺れで途切れないよう、少したまってから鳴らす。
-/// iPad のマイクで聞き取っている間は鳴らさず、Mac の音を Typeless に拾わせない。
+/// Mac から届いたサウンドを再生する `AVAudioSourceNode`。到着間隔のジッターで途切れないよう、少しバッファしてから再生する。
+/// iPad のマイクで音声入力している間は再生せず、Mac のサウンドを Typeless に拾わせない。
 public final class MacAudioPlayer: @unchecked Sendable {
     public let node: AVAudioSourceNode
     public let format = AVAudioFormat(standardFormatWithSampleRate: Double(MacAudio.sampleRate), channels: AVAudioChannelCount(MacAudio.channelCount))!
     private let state = State()
     private let decoderLock = NSLock()
     private var decoder = MacAudioDecoder()
-    /// Opus を戻せるか。戻せなければ、Mac に無圧縮で送ってもらう。
+    /// Opus をデコードできるか。できなければ、Mac に無圧縮で送ってもらう。
     public var canDecodeOpus: Bool {
         decoderLock.withLock { decoder != nil }
     }
@@ -26,7 +26,7 @@ public final class MacAudioPlayer: @unchecked Sendable {
         }
     }
 
-    /// Opus の 1 パケットを戻して鳴らす。戻すのは鳴らすスレッドとは別に、届いたキューの上で行う。
+    /// Opus の 1 パケットをデコードして再生する。デコードは再生スレッドとは別に、受信したキューの上で行う。
     public func feedOpus(_ packet: Data) {
         guard let samples = decoderLock.withLock({ decoder?.decode(packet) }) else { return }
         feed(samples)
@@ -42,10 +42,10 @@ public final class MacAudioPlayer: @unchecked Sendable {
         }
     }
 
-    /// 鳴らすのをやめたときに、ためている音を捨てる。
+    /// 再生を停止したときに、バッファしているサウンドを破棄する。
     public func reset() {
         state.lock.withLock { state.buffer.removeAll() }
-        // 次に鳴らすときは前の音の続きではないので戻す側も作り直すが、作れなければ前のものを使う (Mac にはもう Opus を頼んでいて、なくすと無音になる)
+        // 次に再生するときは前の音の続きではないのでデコーダも作り直すが、作れなければ前のものを使う (Mac にはもう Opus を要求していて、なくすと無音になる)
         decoderLock.withLock { decoder = MacAudioDecoder() ?? decoder }
     }
 
@@ -62,7 +62,7 @@ public final class MacAudioPlayer: @unchecked Sendable {
 
     private final class State: @unchecked Sendable {
         let lock = NSLock()
-        // Wi-Fi の直接通信 (awdl) は数十 ms 届かないことがあるので 100ms たまってから鳴らし、0.5 秒より遅れたら 100ms まで古い音を捨てる
+        // Wi-Fi のピアツーピア通信 (awdl) は数十 ms 届かないことがあるので 100ms バッファしてから再生し、0.5 秒より遅れたら 100ms まで古い音を破棄する
         var buffer = PCMJitterBuffer(capacity: MacAudio.sampleRate / 2, startThreshold: MacAudio.sampleRate / 10, channelCount: MacAudio.channelCount, trimsOnOverflow: true)
         var isSuppressed = false
     }

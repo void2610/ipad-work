@@ -1,8 +1,8 @@
 import Foundation
 
-/// iPad から届いたスクロールの量 (画面の幅・高さに対する割合) を、Mac のホイールのピクセルにする。
+/// iPad から届いたスクロール量 (ディスプレイの幅・高さに対する割合) を、Mac のホイールのピクセル数にする。
 public struct ScrollWheel: Sendable {
-    /// 1 回に送る量の上限。極端な値が届いても、Int32 に収まらずに Host が止まらないように (ペアリングなしで、同じ LAN の誰でも送れる)
+    /// 1 回に送る量の上限。極端な値が届いても、Int32 に収まらずに Host がクラッシュしないように (ペアリングなしで、同じ LAN の誰でも送れる)
     public static let maxPixels: Double = 10_000
 
     private var remainderX = 0.0
@@ -10,7 +10,7 @@ public struct ScrollWheel: Sendable {
 
     public init() {}
 
-    /// ホイールの量 (ピクセル)。1 ピクセル未満の端数は持ち越し、ゆっくり動かしたときの移動を消さない。動かす量がなければ nil。
+    /// ホイールの量 (ピクセル)。1 ピクセル未満の端数は持ち越し、ゆっくり動かしたときの移動量が失われないようにする。動かす量がなければ nil。
     public mutating func pixels(dx: Double, dy: Double, width: Double, height: Double) -> (x: Int32, y: Int32)? {
         guard dx.isFinite, dy.isFinite, width.isFinite, height.isFinite else { return nil }
         remainderX = Self.clamp(remainderX + dx * width)

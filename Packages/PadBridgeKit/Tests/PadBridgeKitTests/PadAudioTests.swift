@@ -19,7 +19,7 @@ struct PadAudioTests {
         #expect(values == [0, Int16.max, -Int16.max, Int16.max])
     }
 
-    /// -50dB 以下は 0、-10dB 以上は 1、その間はまっすぐ割り当てること。
+    /// -50dB 以下は 0、-10dB 以上は 1、その間は線形に割り当てること。
     @Test(arguments: [(Float(0), Float(0)), (0.00316, 0), (0.0316, 0.5), (0.316, 1), (1, 1)])
     func levelMapsDecibelsToZeroOne(peak: Float, expected: Float) {
         #expect(abs(PadAudio.level(peak: peak) - expected) < 0.01)
@@ -31,7 +31,7 @@ struct PadAudioTests {
         #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
     }
 
-    /// たまるまでは無音を出し、たまったら届いた順に出す。
+    /// バッファが溜まるまでは無音を出力し、溜まったら届いた順に出力する。
     @Test func waitsForThresholdThenPlaysInOrder() {
         var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 4)
         buffer.write(encode([0.5, 0.5]))
@@ -42,7 +42,7 @@ struct PadAudioTests {
         #expect(played[4] == 0)
     }
 
-    /// 止めたときにたまりきっていなければ、残りをそのまま鳴らす (iPad を裏に回した直後に止めたときなど)。
+    /// 停止時にバッファが溜まりきっていなければ、残りをそのまま再生する (iPad をバックグラウンドにした直後に停止したときなど)。
     @Test func playRemainingStartsBelowThreshold() {
         var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 4)
         buffer.write(encode([0.5, -0.5]))
@@ -52,7 +52,7 @@ struct PadAudioTests {
         #expect(buffer.consumed == 2)
     }
 
-    /// 途切れたら、またたまるまで待つ。
+    /// 途切れたら、再びバッファが溜まるまで待つ。
     @Test func underrunWaitsForThresholdAgain() {
         var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 2)
         buffer.write(encode([0.5, 0.5]))
@@ -61,7 +61,7 @@ struct PadAudioTests {
         #expect(read(&buffer, count: 1) == [0])
     }
 
-    /// 書き込んだ数と、鳴らしたか捨てた数を数え、どこまで鳴らし終えたかを見分けられる。
+    /// 書き込んだ数と、再生した数・破棄した数を数え、どこまで再生し終えたかを判別できる。
     @Test func countsWrittenAndConsumedSamples() {
         var buffer = PCMJitterBuffer(capacity: 3, startThreshold: 1)
         buffer.write(encode([0.1, 0.2, 0.3, 0.4]))
@@ -75,7 +75,7 @@ struct PadAudioTests {
         #expect(buffer.written == 0 && buffer.consumed == 0)
     }
 
-    /// 鳴らしている途中で足りなくなったときだけ、途切れたと数える。たまるのを待っている間は数えない。
+    /// 再生中に不足したときだけ、途切れとして数える。バッファが溜まるのを待っている間は数えない。
     @Test func countsUnderrunsOnlyWhilePlaying() {
         var buffer = PCMJitterBuffer(capacity: 100, startThreshold: 2)
         buffer.write(encode([0.5]))
@@ -88,14 +88,14 @@ struct PadAudioTests {
         #expect(buffer.underruns == 1)
     }
 
-    /// 浮動小数の音もそのまま書き込め、範囲外は切り詰める。
+    /// 浮動小数のサンプルもそのまま書き込め、範囲外はクリップする。
     @Test func writesFloatSamples() {
         var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 1)
         [Float(0.5), -0.25, 2].withUnsafeBufferPointer { buffer.write($0) }
         #expect(read(&buffer, count: 3).map { ($0 * 100).rounded() } == [50, -25, 100])
     }
 
-    /// あふれたら古い音から捨て、遅れがたまらないようにする。
+    /// あふれたら古い音声から破棄し、遅延が溜まらないようにする。
     @Test func overflowDropsOldestSamples() {
         var buffer = PCMJitterBuffer(capacity: 3, startThreshold: 1)
         buffer.write(encode([0.1, 0.2, 0.3, 0.4]))

@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Mac の Typeless の push-to-talk を iPad から押すボタン。押している間だけ聞き取らせ、短く押した場合はもう一度押すまで押しっぱなしにする。
+/// Mac の Typeless の push-to-talk を iPad から押すボタン。押している間だけ音声入力し、短く押した場合はもう一度押すまで押しっぱなしにする。
 struct TypelessButton: UIViewRepresentable {
     let session: HostSession
 
@@ -21,14 +21,14 @@ struct TypelessButton: UIViewRepresentable {
     }
 }
 
-/// SwiftUI のジェスチャーは、システムに押下を奪われたキャンセルと指を離したことを区別できず、聞き取りが一瞬で切れる。
-/// UIControl の追跡なら区別できるので、キャンセルされたときは押しっぱなしに切り替えて聞き取りを続ける。
+/// SwiftUI のジェスチャーは、システムに押下を奪われたキャンセルと指を離したことを区別できず、音声入力が一瞬で切れる。
+/// UIControl のトラッキングなら区別できるので、キャンセルされたときは押しっぱなしに切り替えて音声入力を続ける。
 final class PushToTalkButton: UIButton {
     var onActiveChange: ((Bool) -> Void)?
-    /// iPad のマイクで拾っている声の大きさ (0...1)。聞き取りの間、ボタンの周りの輪で見せる。
+    /// iPad のマイクで拾っている音量 (0...1)。音声入力中、ボタンの周りのリングで表示する。
     var levelProvider: (() -> Float)?
 
-    /// Mac 側の実際の状態。裏に回ったときなど、ボタン以外の理由で離されたらここで知らされる。
+    /// Mac 側の実際の状態。バックグラウンドに移ったときなど、ボタン以外の理由で解除されたらここで通知される。
     var isVoiceInputActive = false {
         didSet {
             if !isVoiceInputActive {
@@ -39,7 +39,7 @@ final class PushToTalkButton: UIButton {
         }
     }
 
-    // 声の大きさの輪。iPad のマイクが声を拾っているかを、話しながら確かめられるようにする
+    // 音量のリング。iPad のマイクが声を拾っているかを、話しながら確認できるようにする
     private let levelRing = CAShapeLayer()
     private var levelLink: CADisplayLink?
     private var shownLevel: CGFloat = 0
@@ -128,7 +128,7 @@ final class PushToTalkButton: UIButton {
 
     override func cancelTracking(with event: UIEvent?) {
         super.cancelTracking(with: event)
-        // 指はまだ画面にあるかもしれないので、聞き取りは止めずに押しっぱなしへ切り替える
+        // 指はまだ画面上にあるかもしれないので、音声入力は止めずに押しっぱなしへ切り替える
         if !isReleasingLatch, pressStartedAt != nil {
             isLatched = true
         }

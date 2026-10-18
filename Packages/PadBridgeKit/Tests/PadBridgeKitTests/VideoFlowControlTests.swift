@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct VideoFlowControlTests {
-    /// 返事が来るまでは、送り待ちの数で間引く側に任せる (返事を返さない古い iPad アプリで止まらない)。
+    /// ACK が来るまでは、送信待ち数による破棄の判断に任せる (ACK を返さない古い iPad アプリで止まらない)。
     @Test func sendsFreelyUntilFirstAcknowledgement() {
         var flow = VideoFlowControl()
         var allowed: [Bool] = []
@@ -14,10 +14,10 @@ struct VideoFlowControlTests {
         #expect(allowed == Array(repeating: true, count: 10))
     }
 
-    /// 返事がいつもの往復より遅れ続けている (回線に詰まっている) ときは、返事を待つフレームが 3 枚で止め、返事が来たら送る。
+    /// ACK がベースの往復遅延より遅れ続けている (回線が輻輳している) ときは、ACK 待ちのフレームが 3 フレームで送信を止め、ACK が来たら送る。
     @Test func waitsForAcknowledgementWhileQueueing() {
         var flow = VideoFlowControl()
-        // いつもの往復は 20ms。そのあと返事が 200ms かかるようになる
+        // ベースの往復遅延は 20ms。そのあと ACK が 200ms かかるようになる
         flow.sent(presentationTimeMicros: 1, at: 0)
         flow.received(presentationTimeMicros: 1, at: 0.02)
         for pts in Int64(2) ... 20 {
@@ -36,14 +36,14 @@ struct VideoFlowControlTests {
         #expect(flow.inFlightCount == 2)
     }
 
-    /// 往復が長いだけの回線 (ここでは 100ms) では、返事を待つフレームが 3 枚を超えても送る。枚数で止めると毎秒 30 枚しか送れない。
+    /// 往復遅延が大きいだけの回線 (ここでは 100ms) では、ACK 待ちのフレームが 3 フレームを超えても送る。フレーム数で止めると毎秒 30 フレームしか送れない。
     @Test func keepsSendingOnLongRoundTrip() {
         var flow = VideoFlowControl()
         var allowed: [Bool] = []
         var maxInFlight = 0
         for index in 0 ..< 600 {
             let time = Double(index) / 60
-            // 6 枚前のフレームの返事が、いま届く (往復 100ms)
+            // 6 フレーム前のフレームの ACK が、いま届く (往復遅延 100ms)
             if index >= 6 {
                 flow.received(presentationTimeMicros: Int64(index - 6), at: time)
             }
@@ -56,14 +56,14 @@ struct VideoFlowControlTests {
         #expect(abs((flow.baseRoundTrip ?? 0) - 0.1) < 1e-9)
     }
 
-    /// Wi-Fi の揺れで 1 枚の返事だけが大きく遅れても、直近の往復の最小値はいつもの往復に近いので捨てない。
+    /// Wi-Fi のジッターで 1 フレームの ACK だけが大きく遅れても、直近の往復遅延の最小値はベースの往復遅延に近いので破棄しない。
     @Test func toleratesJitterSpike() {
         var flow = VideoFlowControl()
         for pts in Int64(0) ..< 30 {
             flow.sent(presentationTimeMicros: pts, at: Double(pts) / 60)
             flow.received(presentationTimeMicros: pts, at: Double(pts) / 60 + 0.03)
         }
-        // 次の返事が 250ms 来ない
+        // 次の ACK が 250ms 来ない
         var allowed: [Bool] = []
         for pts in Int64(30) ..< 45 {
             let time = 0.5 + Double(pts - 30) / 60
@@ -73,7 +73,7 @@ struct VideoFlowControlTests {
         #expect(allowed.allSatisfy { $0 })
     }
 
-    /// 返事が途切れたら、途切れる前の往復で詰まっていないとみなさず、0.3 秒ほどで止める (直す前は途切れた 1 秒に 31 枚を送った)。
+    /// ACK が途切れたら、途切れる前の往復遅延で輻輳していないとみなさず、0.3 秒ほどで止める (修正前は途切れた 1 秒に 31 フレームを送った)。
     @Test func stopsSoonAfterAcknowledgementsStop() {
         var flow = VideoFlowControl()
         for pts in Int64(0) ..< 60 {
@@ -88,10 +88,10 @@ struct VideoFlowControlTests {
                 sent += 1
             }
         }
-        #expect(sent <= 20, "途切れた 1 秒に \(sent) 枚")
+        #expect(sent <= 20, "途切れた 1 秒に \(sent) フレーム")
     }
 
-    /// キーフレームは送るだけで時間がかかるので、その返事の往復をいつもの往復に混ぜない。
+    /// キーフレームは送信だけで時間がかかるので、その ACK の往復遅延をベースの往復遅延に混ぜない。
     @Test func ignoresKeyFrameRoundTrip() {
         var flow = VideoFlowControl()
         flow.sent(presentationTimeMicros: 1, isKeyFrame: true, at: 0)
@@ -103,7 +103,7 @@ struct VideoFlowControlTests {
         #expect(abs((flow.baseRoundTrip ?? 0) - 0.02) < 1e-9)
     }
 
-    /// 往復が長い回線でも、返事を待つフレームは 30 枚で止める。
+    /// 往復遅延が大きい回線でも、ACK 待ちのフレームは 30 フレームで止める。
     @Test func capsFramesInFlight() {
         var flow = VideoFlowControl()
         flow.sent(presentationTimeMicros: 0, at: 0)
@@ -116,7 +116,7 @@ struct VideoFlowControlTests {
         #expect(sent == VideoFlowControl.maxInFlightOnSlowRoundTrip)
     }
 
-    /// 返事は届いた順に来るので、あとのフレームの返事で、それより前のフレームも届いたとみなす。
+    /// ACK は届いた順に来るので、後のフレームの ACK で、それより前のフレームも到達したとみなす。
     @Test func acknowledgementCoversEarlierFrames() {
         var flow = VideoFlowControl()
         for pts in Int64(1) ... 3 {
@@ -126,7 +126,7 @@ struct VideoFlowControlTests {
         #expect(flow.inFlightCount == 1)
     }
 
-    /// 取り込みを作り直す前のフレームの返事は、新しいフレームを届いたことにしない。
+    /// キャプチャを再作成する前のフレームの ACK は、新しいフレームを到達したことにしない。
     @Test func ignoresAcknowledgementOfEarlierCapture() {
         var flow = VideoFlowControl()
         flow.sent(presentationTimeMicros: 500, at: 0)
@@ -134,27 +134,27 @@ struct VideoFlowControlTests {
         #expect(flow.inFlightCount == 1)
     }
 
-    /// 前の返事のときにもう送っていたフレームは、前の返事からの時間で届いたとして、回線の速さの見積もりに渡す。
+    /// 前の ACK の時点でもう送信済みだったフレームは、前の ACK からの経過時間で到達したものとして、回線速度の推定に渡す。
     @Test func measuresDeliveryWhileLinkIsBusy() {
         var flow = VideoFlowControl()
         flow.sent(presentationTimeMicros: 1, bytes: 50_000, at: 0)
         flow.sent(presentationTimeMicros: 2, bytes: 40_000, at: 0.01)
         let first = flow.received(presentationTimeMicros: 1, at: 0.08)
         let second = flow.received(presentationTimeMicros: 2, at: 0.144)
-        // 回線が空いてから送ったフレームは、空いていた時間が入るので見積もりに使わない
+        // 回線が空いてから送ったフレームは、空いていた時間が含まれるので推定に使わない
         flow.sent(presentationTimeMicros: 3, bytes: 40_000, at: 0.5)
         let third = flow.received(presentationTimeMicros: 3, at: 0.56)
         #expect(first.bytes == 50_000 && first.busyDuration == nil)
         #expect(second.bytes == 40_000)
         #expect(abs((second.busyDuration ?? 0) - 0.064) < 1e-9)
         #expect(third.bytes == 40_000 && third.busyDuration == nil)
-        // 往復の遅れは、届いたフレームを送ってから返事が届くまで
+        // 往復遅延は、到達したフレームを送信してから ACK が届くまで
         #expect(abs((first.roundTrip ?? 0) - 0.08) < 1e-9)
         #expect(abs((second.roundTrip ?? 0) - 0.134) < 1e-9)
         #expect(abs((third.roundTrip ?? 0) - 0.06) < 1e-9)
     }
 
-    /// キーフレームの返事を待つ間だけ、待っていると答える。
+    /// キーフレームの ACK を待つ間だけ、待機中と答える。
     @Test func tellsWhileKeyFrameIsInFlight() {
         var flow = VideoFlowControl(isAcknowledged: true)
         flow.sent(presentationTimeMicros: 1, isKeyFrame: true, at: 0)
@@ -165,7 +165,7 @@ struct VideoFlowControlTests {
         #expect(!flow.isWaitingForKeyFrame)
     }
 
-    /// 返事を返さない古い iPad アプリでも、覚えておくフレームは増え続けず、覚えたキーフレームでビットレートの見直しを止めない。
+    /// ACK を返さない古い iPad アプリでも、保持するフレームは増え続けず、保持したキーフレームでビットレートの見直しを止めない。
     @Test func remembersBoundedFramesWithoutAcknowledgement() {
         var flow = VideoFlowControl()
         for pts in Int64(0) ..< 1000 {
@@ -175,7 +175,7 @@ struct VideoFlowControlTests {
         #expect(!flow.isWaitingForKeyFrame)
     }
 
-    /// 同じ iPad への取り込みを作り直したときは、最初の返事を待たずに間引く。
+    /// 同じ iPad へのキャプチャを再作成したときは、最初の ACK を待たずに破棄する。
     @Test func carriedAcknowledgementGatesFromTheStart() {
         var flow = VideoFlowControl(isAcknowledged: true)
         var allowed: [Bool] = []
@@ -187,7 +187,7 @@ struct VideoFlowControlTests {
         #expect(flow.isWaitingForKeyFrame)
     }
 
-    /// 返事が来ないまま 2 秒たったら、待つのをやめて送る。
+    /// ACK が来ないまま 2 秒たったら、待つのをやめて送信する。
     @Test func stopsWaitingAfterStall() {
         var flow = VideoFlowControl(isAcknowledged: true)
         for pts in Int64(2) ... 4 {
@@ -201,13 +201,13 @@ struct VideoFlowControlTests {
     }
 }
 
-/// 間引きとビットレートの見直しを、決めた帯域・往復・揺れの回線で 60 秒動かす (帯域は送った順に使い、返事は届いた順に来る)。
+/// 破棄判断とビットレートの見直しを、指定した帯域・往復遅延・ジッターの回線で 60 秒動かす (帯域は送信順に消費し、ACK は到達順に来る)。
 struct VideoLinkSimulationTests {
     struct Link: CustomStringConvertible, Sendable {
         var bandwidth: Double
         var roundTrip: TimeInterval
         var jitter: TimeInterval = 0
-        var description: String { "帯域 \(Int(bandwidth / 1e6)) Mbps、往復 \(Int(roundTrip * 1000))ms、揺れ \(Int(jitter * 1000))ms" }
+        var description: String { "帯域 \(Int(bandwidth / 1e6)) Mbps、往復遅延 \(Int(roundTrip * 1000))ms、ジッター \(Int(jitter * 1000))ms" }
     }
 
     struct Result {
@@ -235,7 +235,7 @@ struct VideoLinkSimulationTests {
             while let first = acks.first, first.time <= time {
                 acks.removeFirst()
                 controller.delivered(flow.received(presentationTimeMicros: first.pts, at: first.time))
-                // 落ち着いたあとの 20 秒目から測る
+                // 安定したあとの 20 秒目から測る
                 if first.time > 20 { delays.append(first.time - first.sentAt) }
             }
             let canSend = flow.canSend(at: time)
@@ -257,41 +257,41 @@ struct VideoLinkSimulationTests {
         )
     }
 
-    /// 帯域に余裕があれば、往復が長くても揺れがあっても、捨てずに上限のビットレートのまま送る。
-    /// 返事を待つのを 3 枚までにしていたときは、往復 80ms で 4 割、40ms と揺れ 20ms で 4 割弱を捨て、どれも下限の 1.5 Mbps まで下げていた。
-    /// 往復をならした平均で詰まりを見ていたときも、往復 80ms と揺れ 30ms では 1 割を捨てて下限まで下げた。
+    /// 帯域に余裕があれば、往復遅延が大きくてもジッターがあっても、破棄せず上限のビットレートのまま送る。
+    /// ACK 待ちを 3 フレームまでにしていたときは、往復遅延 80ms で 4 割、40ms とジッター 20ms で 4 割弱を破棄し、どれも下限の 1.5 Mbps まで下げていた。
+    /// 往復遅延を平滑化した平均で輻輳を判定していたときも、往復遅延 80ms とジッター 30ms では 1 割を破棄して下限まで下げた。
     @Test(arguments: [
         Link(bandwidth: 50e6, roundTrip: 0.08), Link(bandwidth: 50e6, roundTrip: 0.12),
         Link(bandwidth: 50e6, roundTrip: 0.04, jitter: 0.02), Link(bandwidth: 50e6, roundTrip: 0.08, jitter: 0.03),
     ])
     func keepsQualityWhenOnlyRoundTripIsLong(link: Link) {
         let result = run(link)
-        #expect(result.droppedShare < 0.01, "\(link): 捨てた割合 \(result.droppedShare)")
+        #expect(result.droppedShare < 0.01, "\(link): 破棄した割合 \(result.droppedShare)")
         #expect(result.finalBitRate == 14_500_000, "\(link): \(result.finalBitRate)")
     }
 
-    /// 帯域が足りず揺れもある回線では、帯域の近くまでは下げるが、揺れで捨てた分で下限まで下げ続けない (平均で見ていたときは 1.5 Mbps まで下げた)。
+    /// 帯域が足りずジッターもある回線では、帯域付近までは下げるが、ジッターによる破棄で下限まで下げ続けない (平均で判定していたときは 1.5 Mbps まで下げた)。
     @Test(arguments: [Link(bandwidth: 10e6, roundTrip: 0.04, jitter: 0.03), Link(bandwidth: 5e6, roundTrip: 0.08, jitter: 0.02)])
     func staysNearBandwidthOnJitteryLink(link: Link) {
         let result = run(link)
         #expect(Double(result.finalBitRate) >= link.bandwidth * 0.6, "\(link): \(result.finalBitRate)")
-        // 天井を超えて 1.1 倍だけ試してから戻すので、試している最中なら帯域を少し超える
+        // 推定帯域の上限を超えて 1.1 倍だけ試してから戻すので、試している最中なら帯域を少し超える
         #expect(Double(result.finalBitRate) <= link.bandwidth * 1.25, "\(link): \(result.finalBitRate)")
     }
 
-    /// 帯域が足りない回線では、これまでどおり捨ててビットレートを帯域まで下げ、遅れを積み上げない。
+    /// 帯域が足りない回線では、従来どおり破棄してビットレートを帯域まで下げ、遅延を積み上げない。
     @Test(arguments: [Link(bandwidth: 10e6, roundTrip: 0.01), Link(bandwidth: 5e6, roundTrip: 0.01), Link(bandwidth: 10e6, roundTrip: 0.08)])
     func boundsDelayWhenBandwidthIsShort(link: Link) {
         let result = run(link)
         #expect(Double(result.finalBitRate) <= link.bandwidth * 1.1, "\(link): \(result.finalBitRate)")
-        // 送ってから返事が届くまでは、往復のほかに 1 枚を送る時間と、いつもの往復を超えて許す 50ms ほどに収まる
+        // 送信してから ACK が届くまでは、往復遅延のほかに 1 フレームの送信時間と、ベースの往復遅延を超えて許容する 50ms ほどに収まる
         #expect(result.maxDelay < link.roundTrip + 0.13, "\(link): 最大 \(result.maxDelay)")
         #expect(result.meanDelay < link.roundTrip + 0.07, "\(link): 平均 \(result.meanDelay)")
     }
 }
 
 struct BitRateControllerTests {
-    /// 見直す窓 1 つ (2 秒) の間に、60fps で取り込み、そのうち先頭の `dropped` 枚を捨てたとして渡す。その間に変わった値を返す。
+    /// 見直しの窓 1 つ (2 秒) の間に、60fps でキャプチャし、そのうち先頭の `dropped` フレームを破棄したとして渡す。その間に変化した値を返す。
     private func feed(_ controller: inout BitRateController, window: Int, dropped: Int, frames: Int = 120) -> Int? {
         var changed: Int?
         for index in 0 ..< frames {
@@ -303,20 +303,20 @@ struct BitRateControllerTests {
         return changed
     }
 
-    /// 捨てる割合が 1 割を超えた窓のあと、6 割に下げる。下限より下げない。
+    /// 破棄率が 1 割を超えた窓のあと、6 割に下げる。下限より下げない。
     @Test func lowersWhenFramesAreDropped() {
         var controller = BitRateController(maximum: 20_000_000, minimum: 4_000_000)
         let changes = (0 ..< 6).map { feed(&controller, window: $0, dropped: 60) }
         #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_000_000, nil])
     }
 
-    /// 回線が運べる速さを見積もれたら、その 85% より下げない。それ以上縮まない映像で、枚数ばかり減らさないため。
+    /// 回線が運べる速度を推定できたら、その 85% より下げない。それ以上縮まない映像で、フレーム数ばかり減らさないため。
     @Test func lowersNoFurtherThanMeasuredCapacity() {
         var controller = BitRateController(maximum: 20_000_000)
         var changes: [Int?] = []
         for window in 0 ..< 6 {
             changes.append(feed(&controller, window: window, dropped: 60))
-            // 5 Mbps の回線: その窓のうちに、39KB のフレームが 1 枚あたり約 62ms で届いた
+            // 5 Mbps の回線: その窓のうちに、39KB のフレームが 1 フレームあたり約 62ms で届いた
             for _ in 0 ..< 20 {
                 controller.delivered(VideoFlowControl.Delivery(bytes: 39_000, busyDuration: 0.0624))
             }
@@ -324,12 +324,12 @@ struct BitRateControllerTests {
         #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_250_000, nil])
     }
 
-    /// 見積もった回線の速さの 95% を天井にし、そこまでは上げるが、超えるのは捨てない窓が 6 つ続いてから 1.1 倍だけ試す。
-    /// 天井がないと、限界の 1.06 倍へ 8 秒ごとに上げては詰まり、周期的にカクつく。
+    /// 推定した回線速度の 95% を上限とし、そこまでは上げるが、超えるのは破棄のない窓が 6 つ続いてから 1.1 倍だけ試す。
+    /// 上限がないと、限界の 1.06 倍へ 8 秒ごとに上げては輻輳し、周期的にカクつく。
     @Test func raisesUpToCeilingThenProbesCautiously() {
         var controller = BitRateController(maximum: 20_000_000)
         var changes: [Int?] = []
-        // 2 つの窓で詰まり、5 Mbps と見積もって 4.25 Mbps まで下げる (天井は 4.75 Mbps)
+        // 2 つの窓で輻輳し、5 Mbps と推定して 4.25 Mbps まで下げる (上限は 4.75 Mbps)
         for window in 0 ..< 5 {
             changes.append(feed(&controller, window: window, dropped: 60))
             for _ in 0 ..< 20 {
@@ -342,7 +342,7 @@ struct BitRateControllerTests {
         #expect(changes == [nil, 12_000_000, 7_200_000, 4_320_000, 4_250_000, nil, nil, nil, 4_750_000, nil, nil, nil, nil, nil, 5_225_000])
     }
 
-    /// 上限の 7 割より下げたら「下げた」とし、8.5 割まで戻すまでは「下げた」のままにする (境目で揺れて知らせが何度も出ないように)。
+    /// 上限の 7 割より下げたら「低下中」とし、8.5 割まで戻すまでは「低下中」のままにする (境界でちらついて通知が何度も出ないように)。
     @Test func reportsReducedQualityWithHysteresis() {
         var controller = BitRateController(maximum: 20_000_000, minimum: 4_000_000)
         var states: [Bool] = []
@@ -351,28 +351,28 @@ struct BitRateControllerTests {
                 states.append(controller.isReduced)
             }
         }
-        // 12 Mbps (6 割) で下げたとし、15 Mbps (7.5 割) ではまだ下げたまま、18.75 Mbps (9.4 割) で戻す
+        // 12 Mbps (6 割) で低下とし、15 Mbps (7.5 割) ではまだ低下のまま、18.75 Mbps (9.4 割) で復帰する
         #expect(states == [true, true, false])
         #expect(controller.current == 18_750_000)
         #expect(BitRateController(maximum: 20_000_000, initial: 6_000_000).isReduced)
         #expect(!BitRateController(maximum: 20_000_000).isReduced)
     }
 
-    /// 作り直す前のビットレートから始める。上限と下限の中に収める。
+    /// 再作成前のビットレートから始める。上限と下限の範囲に収める。
     @Test func startsFromCarriedRate() {
         #expect(BitRateController(maximum: 20_000_000, initial: 6_000_000).current == 6_000_000)
         #expect(BitRateController(maximum: 8_000_000, initial: 12_000_000).current == 8_000_000)
         #expect(BitRateController(maximum: 8_000_000, minimum: 2_000_000, initial: 500_000).current == 2_000_000)
     }
 
-    /// 窓を切り替えたときなどの大きな 1 枚を送る間に捨てた分 (5 Mbps で約 9 枚) では下げない。
+    /// ウィンドウの切り替えなどで大きな 1 フレームを送る間に破棄した分 (5 Mbps で約 9 フレーム) では下げない。
     @Test func keepsRateForSingleLargeFrame() {
         var controller = BitRateController(maximum: 20_000_000)
         let changes = (0 ..< 4).map { feed(&controller, window: $0, dropped: 9) }
         #expect(changes.allSatisfy { $0 == nil })
     }
 
-    /// 捨てない窓が 3 つ続いたら 1.25 倍に上げ、上限で止める。少しでも捨てた窓があれば数え直す。
+    /// 破棄のない窓が 3 つ続いたら 1.25 倍に上げ、上限で止める。少しでも破棄した窓があればカウントし直す。
     @Test func raisesAfterCalmWindows() {
         var controller = BitRateController(maximum: 20_000_000, minimum: 4_000_000)
         let drops = [60, 0, 0, 3, 0, 0, 0, 0]
@@ -380,7 +380,7 @@ struct BitRateControllerTests {
         #expect(changes == [nil, 12_000_000, nil, nil, nil, nil, nil, 15_000_000])
     }
 
-    /// 回線が速く一度も捨てなければ、上限のまま変えない。
+    /// 回線が速く一度も破棄しなければ、上限のまま変えない。
     @Test func keepsMaximumOnFastLink() {
         var controller = BitRateController(maximum: 20_000_000)
         let changes = (0 ..< 10).map { feed(&controller, window: $0, dropped: 0) }
@@ -388,7 +388,7 @@ struct BitRateControllerTests {
         #expect(controller.current == 20_000_000)
     }
 
-    /// 画面がほとんど動かない窓の数枚や、間が空いたあとの数え方では決めない。
+    /// ほとんど動かないディスプレイの窓の数フレームや、間が空いたあとのカウントでは決めない。
     @Test func ignoresSparseFramesAndGaps() {
         var controller = BitRateController(maximum: 20_000_000)
         var changes = [feed(&controller, window: 0, dropped: 5, frames: 10), feed(&controller, window: 1, dropped: 5, frames: 10)]
@@ -402,13 +402,13 @@ struct BitRateControllerTests {
 struct VideoAcknowledgerTests {
     private let frame = VideoFrame(isKeyFrame: false, presentationTimeMicros: 42, data: Data([1, 2, 3]))
 
-    /// 返事を知らない古い Mac には、知らないメッセージを送らない。
+    /// ACK を知らない古い Mac には、未知のメッセージを送らない。
     @Test func staysQuietUntilRequested() {
         let acknowledger = VideoAcknowledger()
         #expect(acknowledger.reply(to: .videoFrame(frame)) == nil)
     }
 
-    /// 求められたあとは、フレームごとにその時刻で返事をし、ほかのメッセージには返さない。
+    /// 要求されたあとは、フレームごとにその時刻で ACK を返し、ほかのメッセージには返さない。
     @Test func acknowledgesFramesAfterRequest() {
         let acknowledger = VideoAcknowledger()
         #expect(acknowledger.reply(to: .control(.acknowledgeVideoFrames)) == nil)

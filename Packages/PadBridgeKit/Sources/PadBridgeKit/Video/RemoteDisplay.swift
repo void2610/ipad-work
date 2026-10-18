@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// Mac につながっている画面のうち、iPad に映せるもの。
+/// Mac に接続されているディスプレイのうち、iPad に表示できるもの。
 public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
-    /// メインディスプレイから見た置き場所。名前を持たない画面や、同じ名前の画面を見分けるのに使う。
+    /// メインディスプレイから見た位置。名前を持たないディスプレイや、同じ名前のディスプレイを見分けるのに使う。
     public enum Placement: String, Codable, Sendable {
         case main
         case left
@@ -12,14 +12,14 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         case below
     }
 
-    /// Mac の画面を読み取った値。
+    /// Mac のディスプレイ情報から読み取った値。
     public struct Source: Sendable, Equatable {
         public var id: UInt32
         public var name: String
-        /// Mac の画面の座標 (メインディスプレイの左上が原点、下が正)。
+        /// Mac のグローバル座標 (メインディスプレイの左上が原点、下が正)。
         public var bounds: CGRect
         public var isMain: Bool
-        /// 別の画面と同じものを映している (ミラーリングの 2 台目以降)。
+        /// 別のディスプレイと同じ内容を表示している (ミラーリングの 2 台目以降)。
         public var isMirror: Bool
 
         public init(id: UInt32, name: String, bounds: CGRect, isMain: Bool, isMirror: Bool) {
@@ -44,7 +44,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         self.placement = placement
     }
 
-    /// iPad のメニューに出す名前。
+    /// iPad のメニューに表示する名前。
     public var label: String {
         let place = switch placement {
         case .main: "メインディスプレイ"
@@ -56,7 +56,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         return "\(name) (\(place))"
     }
 
-    /// 映せる画面を、Mac の配置どおり左から並べる。ミラーリングの 2 台目以降は同じものが映るので除く。
+    /// 表示できるディスプレイを、Mac の配置どおり左から並べる。ミラーリングの 2 台目以降は同じ内容なので除く。
     public static func list(_ sources: [Source]) -> [RemoteDisplay] {
         let shown = sources.filter { !$0.isMirror }
         guard let main = shown.first(where: \.isMain) ?? shown.first else { return [] }
@@ -69,7 +69,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
                     placement: source.id == main.id ? .main : placement(of: source.bounds, from: main.bounds)
                 )
             }
-        // 同じ機種を同じ側に並べると名前も置き場所も同じになるので、左から番号を付けて見分ける
+        // 同じ機種を同じ側に並べると名前も位置も同じになるので、左から番号を付けて見分ける
         let counts = Dictionary(displays.map { ($0.label, 1) }, uniquingKeysWith: +)
         var numbers: [String: Int] = [:]
         return displays.map { display in
@@ -82,7 +82,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
-    /// 映す画面。選ばれた画面がつながっていればそれを、なければメインディスプレイを映す。
+    /// 表示するディスプレイ。選択されたディスプレイが接続されていればそれを、なければメインディスプレイを表示する。
     public static func shown(preferred: UInt32?, in displays: [RemoteDisplay]) -> UInt32? {
         if let preferred, displays.contains(where: { $0.id == preferred }) {
             return preferred
@@ -90,7 +90,7 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         return (displays.first { $0.placement == .main } ?? displays.first)?.id
     }
 
-    /// ウィンドウが載っている画面。画面をまたいでいるときは、重なりの一番大きい画面にする。どの画面にも重ならなければ nil。
+    /// ウィンドウが載っているディスプレイ。複数にまたがっているときは、重なりが最大のディスプレイにする。どのディスプレイにも重ならなければ nil。
     public static func showing(window: CGRect, displays: [UInt32: CGRect]) -> UInt32? {
         let overlaps = displays.compactMap { id, bounds -> (id: UInt32, area: CGFloat)? in
             let shared = window.intersection(bounds)
@@ -100,8 +100,8 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         return overlaps.max { ($0.area, $1.id) < ($1.area, $0.id) }?.id
     }
 
-    /// ウィンドウを別の画面へ移すときの、新しい位置と大きさ。`source` と `destination` は、それぞれの画面のメニューバーと Dock を除いた範囲。
-    /// 元の画面の中での置き場所の割合 (左寄り・中央など) を保ち、移す先に収まらなければ縮める。
+    /// ウィンドウを別のディスプレイへ移すときの、新しい位置とサイズ。`source` と `destination` は、それぞれのディスプレイのメニューバーと Dock を除いた範囲。
+    /// 元のディスプレイ内での相対位置 (左寄り・中央など) を保ち、移動先に収まらなければ縮小する。
     public static func moved(window: CGRect, from source: CGRect, to destination: CGRect) -> CGRect {
         let size = CGSize(width: min(window.width, destination.width), height: min(window.height, destination.height))
         func place(_ origin: CGFloat, _ length: CGFloat, in from: (min: CGFloat, length: CGFloat), to: (min: CGFloat, length: CGFloat), newLength: CGFloat) -> CGFloat {

@@ -20,7 +20,7 @@ struct DisplaySelectionTests {
         #expect(self.selection([left, main], preferred: 15).shownID == 15)
     }
 
-    /// 選んだ画面を外すとメインを映し、つなぎ直すとまた選んだ画面を映す。
+    /// 選択したディスプレイを外すとメインディスプレイを表示し、再接続するとまた選択したディスプレイを表示する。
     @Test func fallsBackWhilePreferredIsUnpluggedAndReturns() {
         var selection = selection([left, main], preferred: 15)
         var result = selection.update([main], preferred: 15)
@@ -31,14 +31,14 @@ struct DisplaySelectionTests {
         #expect(selection.shownID == 15)
     }
 
-    /// 解像度だけが変わったときなど、一覧も映す画面も同じなら iPad に知らせ直さない。
+    /// 解像度だけが変わったときなど、一覧も表示中のディスプレイも同じなら iPad に再通知しない。
     @Test func sameListNeedsNoAnnouncement() {
         var selection = selection([left, main], preferred: nil)
         let result = selection.update([left, main], preferred: nil)
         #expect(result == .init(isShownChanged: false, needsAnnouncement: false))
     }
 
-    /// 映す画面はそのままで、ほかの画面がつながったときは一覧だけ知らせ直す。
+    /// 表示中のディスプレイはそのままで、ほかのディスプレイが接続されたときは一覧だけ再通知する。
     @Test func newDisplayIsAnnouncedWithoutSwitching() {
         var selection = selection([main], preferred: nil)
         let result = selection.update([left, main], preferred: nil)
@@ -56,7 +56,7 @@ struct DisplaySelectionTests {
         #expect(selection.shownID == 15)
     }
 
-    /// 取り込めない画面からはメインへ落とす。メインを映していれば落とす先はない。
+    /// キャプチャできないディスプレイからはメインディスプレイへ切り替える。メインディスプレイを表示中なら切り替え先はない。
     @Test func fallsBackToMainOnlyFromOtherDisplay() {
         var selection = selection([left, main], preferred: 15)
         let first = selection.fallBackToMain()

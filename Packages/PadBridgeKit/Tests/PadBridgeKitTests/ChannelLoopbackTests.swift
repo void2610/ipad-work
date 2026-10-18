@@ -3,7 +3,7 @@ import Network
 @testable import PadBridgeKit
 import Testing
 
-/// 実際のフレーミングを、ループバックの TCP で通して確かめる。
+/// 実際のフレーミングを、ループバックの TCP 経由で検証する。
 struct ChannelLoopbackTests {
     @Test func messagesRoundTripBothWays() async throws {
         let server = try await LoopbackServer()
@@ -23,7 +23,7 @@ struct ChannelLoopbackTests {
         #expect(await iterator.next() == .videoFrame(big))
     }
 
-    /// Mac と iPad の片方だけが新しいビルドのとき、知らないメッセージで接続を閉じてつなぎ直しを繰り返さない。
+    /// Mac と iPad の片方だけが新しいビルドのとき、未知のメッセージで接続を閉じて再接続を繰り返さない。
     @Test func skipsMessagesFromNewerBuild() async throws {
         let server = try await LoopbackServer()
         defer { server.stop() }
@@ -49,7 +49,7 @@ struct ChannelLoopbackTests {
         #expect(await iterator.next() == .control(.requestKeyFrame))
     }
 
-    /// 相手が閉じたら、こちらもすぐ閉じて切断に気づく (Mac はこれで iPad が離れたことを知る)。キープアライブで気づくのを待たない。
+    /// 相手が閉じたら、こちらもすぐ閉じて切断を検知する (Mac はこれで iPad の切断を知る)。キープアライブによる検知を待たない。
     @Test func closesWhenPeerCloses() async throws {
         let started = ContinuousClock.now
         let listener = try NWListener(using: .padBridge(), on: .any)
@@ -87,16 +87,16 @@ struct ChannelLoopbackTests {
 }
 
 private extension MessageChannel {
-    /// 新しいビルドが送るような、このビルドの知らないメッセージを送る。
+    /// 新しいビルドが送るような、このビルドにとって未知のメッセージを送る。
     func sendRaw(type: UInt32, payload: Data) {
         let context = NWConnection.ContentContext(identifier: "PadBridgeMessage", metadata: [NWProtocolFramer.Message(padBridgeMessageType: type)])
         connection.send(content: payload, contentContext: context, isComplete: true, completion: .idempotent)
     }
 }
 
-/// 受け取ったメッセージをそのまま送り返すサーバー。
+/// 受信したメッセージをそのまま返すサーバー。
 extension ChannelLoopbackTests {
-    /// 壊れた区切り (巨大な長さ) を受け取ったら、受け手は閉じたと分かる。黙って受け取るのをやめると、つながったまま何も届かなくなり、つなぎ直しも始まらない。
+    /// 不正なヘッダー (巨大な長さ) を受信したら、受信側は切断を検知できる。黙って受信を止めると、接続したまま何も届かなくなり、再接続も始まらない。
     @Test func closesOnMalformedFrame() async throws {
         let listener = try NWListener(using: .padBridge(), on: .any)
         let ready = AsyncStream.makeStream(of: NWListener.State.self)
@@ -121,7 +121,7 @@ extension ChannelLoopbackTests {
         }
         defer { listener.cancel() }
 
-        // 区切りのない素の TCP で、長さに上限を超える値を入れた見出しを送る
+        // フレーミングなしの素の TCP で、長さが上限を超える値のヘッダーを送る
         let raw = NWConnection(to: .hostPort(host: "127.0.0.1", port: listener.port!), using: .tcp)
         raw.start(queue: .global())
         defer { raw.cancel() }
@@ -140,7 +140,7 @@ extension ChannelLoopbackTests {
             group.cancelAll()
             return first
         }
-        #expect(result != nil, "3 秒たっても受け手が閉じたと分からない")
+        #expect(result != nil, "3 秒たっても受信側が切断を検知できない")
     }
 }
 

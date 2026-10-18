@@ -2,19 +2,19 @@ import AppKit
 import CoreGraphics
 import PadBridgeKit
 
-/// Mac につながっている画面を読む。
+/// Mac に接続されているディスプレイを読み取る。
 enum DisplayCatalog {
     nonisolated struct Snapshot: Sendable {
         var displays: [RemoteDisplay]
-        /// 画面ごとの、メニューバーと Dock を除いた範囲 (画面の座標)。ウィンドウを移す先を決めるのに使う。
+        /// ディスプレイごとの、メニューバーと Dock を除いた範囲 (ディスプレイ座標)。ウィンドウの移動先の決定に使う。
         var usableAreas: [UInt32: CGRect]
     }
 
-    /// 映せる画面の一覧。画面の名前と使える範囲は NSScreen からしか読めないので、メインスレッドで呼ぶ。
+    /// 表示できるディスプレイの一覧。名前と使用可能範囲は NSScreen からしか取得できないので、メインスレッドで呼ぶ。
     static func current() -> Snapshot {
         var names: [CGDirectDisplayID: String] = [:]
         var usableAreas: [UInt32: CGRect] = [:]
-        // AppKit の座標は、メインディスプレイの左下が原点で上が正。画面の座標 (左上が原点、下が正) に直す
+        // AppKit の座標は、メインディスプレイの左下が原点で上が正。ディスプレイ座標 (左上が原点、下が正) に変換する
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
         for screen in NSScreen.screens {
             if let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
@@ -35,7 +35,7 @@ enum DisplayCatalog {
         return Snapshot(displays: displays, usableAreas: usableAreas)
     }
 
-    /// 選ばれた画面を覚えておくための値。`CGDirectDisplayID` と違い、つなぎ直しても再起動しても同じ画面には同じ値が付く。
+    /// 選択されたディスプレイを保存するための値。`CGDirectDisplayID` と違い、再接続や再起動をしても同じディスプレイには同じ値が付く。
     nonisolated static func uuid(of id: CGDirectDisplayID) -> String? {
         guard let uuid = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() else { return nil }
         return CFUUIDCreateString(nil, uuid) as String
@@ -47,17 +47,17 @@ enum DisplayCatalog {
         return id == kCGNullDirectDisplay ? nil : id
     }
 
-    /// アプリの手前のウィンドウの位置と大きさ (画面の座標)。アクセシビリティの許可が要り、相手のアプリの応答を待つ。
+    /// アプリの最前面のウィンドウの位置とサイズ (ディスプレイ座標)。アクセシビリティの許可が必要で、相手アプリの応答を待つ。
     nonisolated static func focusedWindowFrame(of pid: pid_t) -> CGRect? {
         let app = AXUIElementCreateApplication(pid)
-        // 応答しないアプリで待ち続けない。待ち時間は要素ごとなので、ウィンドウの要素にも付ける
+        // 応答しないアプリで待ち続けない。タイムアウトは要素ごとなので、ウィンドウ要素にも設定する
         AXUIElementSetMessagingTimeout(app, 0.5)
         guard let window = axElement(app, kAXFocusedWindowAttribute) else { return nil }
         AXUIElementSetMessagingTimeout(window, 0.5)
         return frame(of: window)
     }
 
-    /// 手前のアプリの手前のウィンドウを、`destination` の画面へ移す。移せたら true。すでにその画面にあれば動かさずに true。
+    /// 最前面アプリの最前面のウィンドウを、`destination` のディスプレイへ移動する。移動できたら true。すでにそのディスプレイ上にあれば動かさずに true。
     nonisolated static func moveFrontWindow(to destination: UInt32, usableAreas: [UInt32: CGRect]) -> Bool {
         let systemWide = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(systemWide, 0.5)
@@ -72,16 +72,16 @@ enum DisplayCatalog {
         guard let frame = frame(of: window), let target = usableAreas[destination] else { return false }
         let source = RemoteDisplay.showing(window: frame, displays: usableAreas)
         guard source != destination else { return true }
-        // どの画面にも重ならない (外した画面に残った) ウィンドウは、移す先の画面の中へ寄せて回収する
+        // どのディスプレイとも重ならない (取り外したディスプレイに残った) ウィンドウは、移動先のディスプレイ内に寄せて回収する
         let sourceArea = source.flatMap { usableAreas[$0] } ?? target
         let moved = RemoteDisplay.moved(window: frame, from: sourceArea, to: target)
-        // 先に縮めてから動かす。大きいまま動かすと、移す先に収まらない分を macOS が押し戻す
+        // 先に縮小してから移動する。大きいまま移動すると、移動先に収まらない分を macOS が押し戻す
         var size = frame.size
         if moved.size != frame.size {
             setSize(moved.size, of: window)
             size = self.frame(of: window)?.size ?? frame.size
         }
-        // 大きさを変えられないウィンドウもあるので、実際の大きさで移す先に収める
+        // サイズを変更できないウィンドウもあるので、実際のサイズで移動先に収める
         var origin = CGPoint(
             x: max(target.minX, min(moved.minX, target.maxX - size.width)),
             y: max(target.minY, min(moved.minY, target.maxY - size.height))
@@ -102,8 +102,8 @@ enum DisplayCatalog {
         }
     }
 
-    /// Dock のある画面。ウィンドウサーバーが持つ Dock の範囲と、その範囲に一番合う画面を、yabai と同じ非公開の関数で読む。
-    /// 隠れている Dock の範囲は高さ 0 で画面の端に載るので、範囲の重なりでは決められない。読めなければ nil。
+    /// Dock があるディスプレイ。ウィンドウサーバーが持つ Dock の範囲と、その範囲に最も合うディスプレイを、yabai と同じ非公開関数で取得する。
+    /// 非表示の Dock の範囲は高さ 0 でディスプレイの端に載るため、範囲の重なりでは判定できない。取得できなければ nil。
     nonisolated static func dockDisplay() -> CGDirectDisplayID? {
         guard let skyLight = SkyLight.shared else { return nil }
         let connection = skyLight.mainConnection()
@@ -149,7 +149,7 @@ enum DisplayCatalog {
     }
 }
 
-/// Dock の位置を読むための SkyLight の非公開の関数。リンクせずに探し、見つからない macOS では使わない。
+/// Dock の位置を取得するための SkyLight の非公開関数。リンクせずに探索し、見つからない macOS では使わない。
 private nonisolated struct SkyLight: @unchecked Sendable {
     let mainConnection: @convention(c) () -> Int32
     let dockRect: @convention(c) (Int32, UnsafeMutablePointer<CGRect>, UnsafeMutablePointer<Int32>) -> Int32

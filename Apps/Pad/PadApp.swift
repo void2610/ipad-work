@@ -9,7 +9,7 @@ struct PadBridgeApp: App {
         WindowGroup {
             Group {
                 if let session = model.session {
-                    // 名前の変わった Mac を追うと、セッションが nil を挟まずに替わる。作り直さないと、映像のレイヤーと入力が前のセッションに結びついたまま残る
+                    // 名前の変わった Mac を追跡すると、セッションが nil を挟まずに入れ替わる。再生成しないと、映像のレイヤーと入力が前のセッションに結びついたまま残る
                     SessionView(model: model, session: session)
                         .id(ObjectIdentifier(session))
                 } else {
@@ -20,7 +20,7 @@ struct PadBridgeApp: App {
                 switch phase {
                 case .active: model.setForeground(true)
                 case .background: model.setForeground(false)
-                // コントロールセンターや Spotlight を出すと、押していたキーを離した知らせがこのアプリに届かない
+                // コントロールセンターや Spotlight を表示すると、押していたキーの離した通知がこのアプリに届かない
                 case .inactive: model.releaseHeldInput()
                 @unknown default: break
                 }

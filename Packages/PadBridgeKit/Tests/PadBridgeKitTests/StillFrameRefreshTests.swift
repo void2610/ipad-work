@@ -2,7 +2,7 @@
 import Testing
 
 struct StillFrameRefreshTests {
-    /// 画面が動いている間 (取り込むたびに) は送り直さず、止まってから少し待って送り直す。
+    /// 映像が動いている間 (キャプチャのたびに) は再送せず、静止してから少し待って再送する。
     @Test func waitsUntilScreenStops() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)
@@ -15,7 +15,7 @@ struct StillFrameRefreshTests {
         #expect(fired2)
     }
 
-    /// 絵が仕上がらなくても、決めた回数でやめる (止まった画面で送り続けない)。
+    /// 画質が仕上がらなくても、規定回数でやめる (静止した映像で送り続けない)。
     @Test func stopsAfterLimit() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)
@@ -32,7 +32,7 @@ struct StillFrameRefreshTests {
         #expect(refresh.deadline == nil)
     }
 
-    /// レート制御に落とされて出てこなかった送り直しは数えず、頼む回数の上限までは続ける。
+    /// レート制御に破棄されて出力されなかった再送は数えず、要求する回数の上限までは続ける。
     @Test func countsOnlyRefreshesThatCameOut() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)
@@ -42,7 +42,7 @@ struct StillFrameRefreshTests {
             micros += 1
             if refresh.fire(at: deadline, canSend: true, presentationTimeMicros: micros) {
                 attempts += 1
-                // 1 回おきに出てくる
+                // 1 回おきに出力される
                 if attempts.isMultiple(of: 2) {
                     refresh.encoded(presentationTimeMicros: micros, bytes: 50000)
                 }
@@ -61,13 +61,13 @@ struct StillFrameRefreshTests {
         #expect(withoutOutput == StillFrameRefresh.maxAttempts)
     }
 
-    /// 送り直したフレームが小さければ、もう仕上がっているのでやめる (上限のビットレートでは 1 回目で止まる)。
+    /// 再送したフレームが小さければ、すでに画質が仕上がっているのでやめる (上限のビットレートでは 1 回目で止まる)。
     @Test func stopsWhenRefreshIsSmall() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)
         let fired3 = refresh.fire(at: 0.25, canSend: true, presentationTimeMicros: 7)
         #expect(fired3)
-        // 送り直したものではないフレームの大きさでは決めない
+        // 再送ではないフレームのサイズでは判断しない
         refresh.encoded(presentationTimeMicros: 6, bytes: 10)
         let fired4 = refresh.fire(at: 0.35, canSend: true, presentationTimeMicros: 8)
         #expect(fired4)
@@ -78,7 +78,7 @@ struct StillFrameRefreshTests {
         #expect(refresh.deadline == nil)
     }
 
-    /// 回線が詰まっている間は回数を使わずに待ち、空いたら送る (捨てた最後の絵を必ず届ける)。
+    /// 回線が輻輳している間は回数を消費せずに待ち、空いたら送る (破棄した最後のフレームを必ず届ける)。
     @Test func waitsWhileLinkIsFull() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: false, at: 0)
@@ -93,7 +93,7 @@ struct StillFrameRefreshTests {
         #expect(fired7)
     }
 
-    /// 仕上がって止めたあとでも、キーフレームや範囲を頼まれたら 1 回送る。
+    /// 画質が仕上がって停止したあとでも、キーフレームや範囲を要求されたら 1 回送る。
     @Test func requestRefreshesSettledFrame() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)
@@ -109,13 +109,13 @@ struct StillFrameRefreshTests {
         let fired10 = refresh.fire(at: 5 + StillFrameRefresh.interval, canSend: true, presentationTimeMicros: 3)
         #expect(fired10)
         refresh.encoded(presentationTimeMicros: 3, bytes: 30000)
-        // キーフレームは大きいが、絵はもう仕上がっているので続けない
+        // キーフレームは大きいが、画質はすでに仕上がっているので続けない
         let deadline = refresh.deadline ?? 0
         let fired11 = refresh.fire(at: deadline, canSend: true, presentationTimeMicros: 4)
         #expect(!fired11)
     }
 
-    /// 頼まれたときにもう送り直しを待っていれば、早い方で送る。
+    /// 要求されたときにすでに再送待ちであれば、早い方で送る。
     @Test func requestDoesNotDelayPendingRefresh() {
         var refresh = StillFrameRefresh()
         refresh.captured(isSent: true, at: 0)

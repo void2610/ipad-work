@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct PreferredFrameRateTests {
-    /// ふだんは 60 枚、低電力モードか本体が熱い (serious 以上) ときは 30 枚を頼む。
+    /// 通常は 60 フレーム、低電力モードか本体が高温 (serious 以上) のときは 30 フレームを要求する。
     @Test(arguments: [
         (false, ProcessInfo.ThermalState.nominal, 60),
         (false, .fair, 60),
@@ -15,7 +15,7 @@ struct PreferredFrameRateTests {
         #expect(PreferredFrameRate.choose(isLowPowerMode: isLowPowerMode, thermalState: thermalState) == expected)
     }
 
-    /// 減らしたあとは、熱さが fair に下がっただけでは戻さず、nominal まで冷えたら戻す。熱さの境の揺れで頼み直し続けない。
+    /// 下げたあとは、温度状態が fair に下がっただけでは戻さず、nominal まで下がったら戻す。温度状態の境界でちらついて要求し直し続けない。
     @Test func returnsToNormalOnlyWhenCool() {
         let saving = PreferredFrameRate.saving
         #expect(PreferredFrameRate.choose(isLowPowerMode: false, thermalState: .fair, current: saving) == saving)
@@ -23,7 +23,7 @@ struct PreferredFrameRateTests {
         #expect(PreferredFrameRate.choose(isLowPowerMode: false, thermalState: .nominal, current: saving) == PreferredFrameRate.normal)
     }
 
-    /// 頼んだ枚数は操作用の接続で送り、状態には取り込みの枚数が入る。
+    /// 要求したフレームレートは操作用の接続で送り、状態にはキャプチャのフレームレートが入る。
     @Test func frameRateTravelsOnTheWire() throws {
         let messages: [ControlMessage] = [
             .videoFrameRate(30),
@@ -35,7 +35,7 @@ struct PreferredFrameRateTests {
         }
     }
 
-    /// 枚数の項目がない前の版の状態も読める。
+    /// フレームレートの項目がない旧版の状態も読める。
     @Test func decodesStatsWithoutFrameRate() throws {
         let json = Data(#"{"videoStats":{"_0":{"codec":1,"width":10,"height":10,"bitRate":1,"maximumBitRate":2}}}"#.utf8)
         let message = try JSONDecoder().decode(ControlMessage.self, from: json)

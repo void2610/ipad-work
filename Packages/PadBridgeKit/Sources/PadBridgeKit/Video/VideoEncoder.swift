@@ -33,7 +33,7 @@ public final class VideoEncoder: @unchecked Sendable {
             kVTCompressionPropertyKey_AllowFrameReordering: false,
             kVTCompressionPropertyKey_AverageBitRate: averageBitRate,
             kVTCompressionPropertyKey_ExpectedFrameRate: frameRate,
-            // 回復点は iPad が頼んだときに作る (受け取りの返事付きの TCP で、途中で失われるフレームはない)。大きなキーフレームは遅い回線で遅れの山になるので、定期のものは念のため 30 秒ごとにとどめる
+            // キーフレームは iPad の要求時に作る (受信確認付きの TCP で、途中で失われるフレームはない)。大きなキーフレームは遅い回線で遅延のピークになるので、定期のものは念のため 30 秒ごとにとどめる
             kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration: keyFrameInterval,
         ]
         VTSessionSetProperties(session, propertyDictionary: properties as CFDictionary)
@@ -44,7 +44,7 @@ public final class VideoEncoder: @unchecked Sendable {
         VTCompressionSessionInvalidate(session)
     }
 
-    /// `region` は、このフレームに写っている Mac の画面の範囲。受け取った側はそれに合わせて置く。
+    /// `region` は、このフレームに写っている Mac のディスプレイの範囲。受信側はそれに合わせて配置する。
     public func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, forceKeyFrame: Bool, region: VideoRegion = .full) {
         let frameProperties = forceKeyFrame ? [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary : nil
         VTCompressionSessionEncodeFrame(
@@ -61,7 +61,7 @@ public final class VideoEncoder: @unchecked Sendable {
         }
     }
 
-    /// 符号化を続けたまま、平均のビットレートを変える。`encode` と同じスレッドから呼ぶ。
+    /// エンコードを続けたまま、平均ビットレートを変える。`encode` と同じスレッドから呼ぶ。
     public func setAverageBitRate(_ bitRate: Int) {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitRate as CFNumber)
     }

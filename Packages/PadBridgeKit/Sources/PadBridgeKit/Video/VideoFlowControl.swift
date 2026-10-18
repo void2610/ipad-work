@@ -1,31 +1,31 @@
 import Foundation
 import Synchronization
 
-/// 映像のフレームを送ってよいかを、iPad から受け取りの返事が来ていないフレームの数で決める。
-/// 送り終えた知らせ (`pendingSendCount`) は OS の送信バッファに入った時点で来る。バッファは何秒分も吸い込むので、
-/// それで数えると、回線が遅いときに遅れが秒単位で積み上がる (ループバックで 10 Mbps に絞って 3 秒を超えた)。
+/// 映像のフレームを送ってよいかを、iPad から受信確認 (ACK) が届いていないフレームの数で決める。
+/// 送信完了の通知 (`pendingSendCount`) は OS の送信バッファに入った時点で届く。バッファは何秒分も吸い込むので、
+/// それで数えると、回線が遅いときに遅延が秒単位で積み上がる (ループバックで 10 Mbps に絞って 3 秒を超えた)。
 public struct VideoFlowControl: Sendable {
-    /// 返事を待つフレームがこの数に達したら、返事が遅れていないかを見る。往復の見積もりがないうちは、この数で止める。
+    /// ACK を待つフレームがこの数に達したら、ACK が遅れていないかを見る。RTT の見積もりがないうちは、この数で止める。
     public static let maxInFlight = 3
-    /// いつもの往復の時間を超えて、返事の遅れをここまで許す (60fps で 3 枚分)。回線が詰まったときの遅れは、およそこの時間に収まる。
+    /// ベースの往復遅延を超えて、ACK の遅れをここまで許す (60fps で 3 フレーム分)。輻輳したときの遅延は、およそこの時間に収まる。
     public static let queueingAllowance: TimeInterval = 0.05
-    /// 往復が長い回線でも、返事を待つフレームはこれより増やさない。
+    /// RTT が長い回線でも、ACK を待つフレームはこれより増やさない。
     public static let maxInFlightOnSlowRoundTrip = 30
-    // いつもの往復の時間は、最近の往復の最小値。経路が変わって長くなったときに追えるよう、この秒数ごとに測り直す (短いと、詰まっている間の値が混ざって膨らむ)
+    // ベースの往復遅延は、最近の RTT の最小値。経路が変わって長くなったときに追従できるよう、この秒数ごとに測り直す (短いと、輻輳中の値が混ざって膨らむ)
     static let roundTripWindow: TimeInterval = 30
-    /// 返事が来ないまま待ち続けないよう、この秒数を過ぎたら待つのをやめる。
+    /// ACK が来ないまま待ち続けないよう、この秒数を過ぎたら待つのをやめる。
     public static let stallTimeout: TimeInterval = 2
 
-    // 返事を返さない古い iPad アプリのときに、覚えておくフレームの数の上限
+    // ACK を返さない古い iPad アプリのときに、記憶しておくフレーム数の上限
     static let maxRemembered = 120
 
-    /// 返事で届いたと分かった分。
+    /// ACK で到達が確認できた分。
     public struct Delivery: Sendable, Equatable {
         public var bytes: Int
-        /// 前の返事のときにはもう送っていたフレームなら、前の返事からの時間 (回線が埋まっていて、これだけの時間で届いた)。
-        /// 回線が空いてから送ったフレームは、待っていた時間が入るので速さの見積もりに使わない。
+        /// 前の ACK の時点で送信済みだったフレームなら、前の ACK からの経過時間 (回線が埋まっていて、この時間で届いた)。
+        /// 回線が空いてから送ったフレームは、待機時間が含まれるので速度の見積もりに使わない。
         public var busyDuration: TimeInterval?
-        /// 届いたうちの最後のフレームを送ってから、返事が届くまで。iPad に「接続の状態」として見せる。
+        /// 到達したうちの最後のフレームを送ってから、ACK が届くまで。iPad の「接続の状態」に表示する。
         public var roundTrip: TimeInterval?
 
         public init(bytes: Int, busyDuration: TimeInterval?, roundTrip: TimeInterval? = nil) {
@@ -39,16 +39,16 @@ public struct VideoFlowControl: Sendable {
     private var lastAcknowledgedAt: TimeInterval?
     private var roundTripMinimum: (since: TimeInterval, value: TimeInterval)?
     private var previousRoundTripMinimum: TimeInterval?
-    // 直近の往復。Wi-Fi の揺れなら一部だけが遅れ、回線に詰まるとどれも遅れるので、この中の最小値で見分ける (平均で見ると揺れの大きな遅れに引かれ、往復 80ms・揺れ 30ms の回線で下限まで下げた)
+    // 直近の RTT。Wi-Fi のジッターなら一部だけが遅れ、回線が輻輳するとどれも遅れるので、この中の最小値で見分ける (平均で見るとジッターによる大きな遅れに引かれ、RTT 80ms・ジッター 30ms の回線で下限まで下げた)
     private var recentRoundTrips: [(time: TimeInterval, value: TimeInterval)] = []
-    // 60fps で 9 枚ほど。0.1 秒だと揺れで全部が遅れた窓を詰まりと取り (往復 80ms・揺れ 30ms で 3.1 Mbps まで下げた)、0.2 秒だと詰まりに気づくまでに遅れが積み上がった
+    // 60fps で 9 フレームほど。0.1 秒だとジッターで全部が遅れた窓を輻輳と誤判定し (RTT 80ms・ジッター 30ms で 3.1 Mbps まで下げた)、0.2 秒だと輻輳に気づくまでに遅延が積み上がった
     static let recentWindow: TimeInterval = 0.15
-    // 返事がこれだけ来なければ、途切れたとみなす。揺れで返事の間が 0.15 秒空くことはあるので、直近の窓より長くする (同じ長さだと、往復 80ms・揺れ 30ms で 5.2 Mbps まで下げた)
+    // ACK がこれだけ来なければ、途絶したとみなす。ジッターで ACK の間隔が 0.15 秒空くことはあるので、直近の窓より長くする (同じ長さだと、RTT 80ms・ジッター 30ms で 5.2 Mbps まで下げた)
     static let acknowledgementGap: TimeInterval = 0.3
-    /// iPad が返事を返すと分かったか。返事を返さない古い iPad アプリには、送り待ちの数で間引く。
+    /// iPad が ACK を返すと判明したか。ACK を返さない古い iPad アプリには、送信待ちの数で破棄する。
     public private(set) var isAcknowledged = false
 
-    /// `isAcknowledged` は、同じ iPad への取り込みを作り直したときに引き継ぐ。最初の返事を待つ間は間引かないので、遅い回線では遅れがたまる。
+    /// `isAcknowledged` は、同じ iPad へのキャプチャを作り直したときに引き継ぐ。最初の ACK を待つ間は破棄しないので、遅い回線では遅延がたまる。
     public init(isAcknowledged: Bool = false) {
         self.isAcknowledged = isAcknowledged
     }
@@ -57,24 +57,24 @@ public struct VideoFlowControl: Sendable {
         inFlight.count
     }
 
-    /// キーフレームの返事を待っているか。キーフレームは大きく、遅い回線では送るのに何枚分もかかるので、その間に捨てたフレームでビットレートを下げない。
-    /// 返事が来ない間はそもそも間引かない。返事を返さない古い iPad アプリでは、覚えているキーフレームが消えないので待っているとみなさない。
+    /// キーフレームの ACK を待っているか。キーフレームは大きく、遅い回線では送信に何フレーム分もかかるので、その間に破棄したフレームでビットレートを下げない。
+    /// ACK が来ない間はそもそも破棄しない。ACK を返さない古い iPad アプリでは、記憶しているキーフレームが消えないので待っているとみなさない。
     public var isWaitingForKeyFrame: Bool {
         isAcknowledged && inFlight.contains { $0.isKeyFrame }
     }
 
-    /// いつもの往復の時間 (最近の返事の往復の最小値)。返事がまだなければ nil。
+    /// ベースの往復遅延 (最近の ACK の RTT の最小値)。ACK がまだなければ nil。
     public var baseRoundTrip: TimeInterval? {
         [roundTripMinimum?.value, previousRoundTripMinimum].compactMap(\.self).min()
     }
 
-    /// 次のフレームを符号化して送ってよいか。
+    /// 次のフレームをエンコードして送ってよいか。
     public mutating func canSend(at time: TimeInterval) -> Bool {
         guard isAcknowledged, inFlight.count >= Self.maxInFlight, let oldest = inFlight.first else { return true }
-        // 往復が長いだけの回線では、返事を待つ枚数が増えても遅れは積み上がらない。枚数で止めると、帯域に余裕があっても 3 枚 ÷ 往復しか送れず
-        // (往復 80ms で毎秒 37 枚)、捨てた分でビットレートを下限まで下げていた。直近の往復の最小値がいつもの往復に近い間は、揺れで遅れても捨てない
+        // RTT が長いだけの回線では、ACK を待つフレームが増えても遅延は積み上がらない。フレーム数で止めると、帯域に余裕があっても 3 フレーム ÷ RTT しか送れず
+        // (RTT 80ms で毎秒 37 フレーム)、破棄した分でビットレートを下限まで下げていた。直近の RTT の最小値がベースの往復遅延に近い間は、ジッターで遅れても破棄しない
         if let base = baseRoundTrip, inFlight.count < Self.maxInFlightOnSlowRoundTrip {
-            // 返事が途切れたら、途切れる前の小さな往復で詰まっていないとみなさない (途切れた 1 秒に 30 枚を送り込んだ)
+            // ACK が途絶したら、途絶する前の小さな RTT で輻輳していないとみなさない (途絶した 1 秒に 30 フレームを送り込んだ)
             let isFresh = recentRoundTrips.last.map { time - $0.time <= Self.acknowledgementGap } ?? false
             let recent = recentRoundTrips.map(\.value).min()
             let isQueueing = !isFresh || recent.map { $0 - base >= Self.queueingAllowance } ?? true
@@ -94,7 +94,7 @@ public struct VideoFlowControl: Sendable {
         }
     }
 
-    /// 届いた順に返事が来るので、そのフレームまでを届いたものとする。前の取り込みのフレームの返事は、どれにも当たらない。
+    /// ACK は到着順に届くので、そのフレームまでを到達したものとする。前のキャプチャのフレームの ACK は、どれにも当たらない。
     @discardableResult
     public mutating func received(presentationTimeMicros: Int64, at time: TimeInterval = 0) -> Delivery {
         isAcknowledged = true
@@ -106,7 +106,7 @@ public struct VideoFlowControl: Sendable {
         guard let first = delivered.first, let last = delivered.last else { return Delivery(bytes: 0, busyDuration: nil) }
         let bytes = delivered.reduce(0) { $0 + $1.bytes }
         let roundTrip = time - last.sentAt
-        // キーフレームは送るだけで時間がかかるので、その往復をいつもの往復に混ぜない (作り直した直後の最初の返事はキーフレーム)
+        // キーフレームは送信だけで時間がかかるので、その RTT をベースの往復遅延に混ぜない (作り直した直後の最初の ACK はキーフレーム)
         if !last.isKeyFrame {
             recordRoundTrip(roundTrip, at: time)
         }
@@ -129,37 +129,37 @@ public struct VideoFlowControl: Sendable {
     }
 }
 
-/// 回線が詰まってフレームを捨てた割合から、映像の平均のビットレートを決める。
-/// 詰まったまま同じ大きさのフレームを送ると、間引かれて動きがカクつくので、1 枚を小さくして枚数を保つ。
-/// ただし回線が運べる速さより下げない。それ以上縮まない映像では、エンコーダがフレームを落として合わせるので、枚数が減るだけになる。
+/// 輻輳してフレームを破棄した割合から、映像の平均ビットレートを決める。
+/// 輻輳したまま同じサイズのフレームを送ると、破棄されて動きがカクつくので、1 フレームを小さくしてフレーム数を保つ。
+/// ただし回線の転送速度より下げない。それ以上縮まない映像では、エンコーダがフレームを落として合わせるので、フレーム数が減るだけになる。
 public struct BitRateController: Sendable {
-    /// 2 秒ごとに見直す。1 秒だと、窓を切り替えたときなどの大きな 1 枚を送る間に捨てた分 (5 Mbps で約 9 枚) だけで下げてしまう
+    /// 2 秒ごとに見直す。1 秒だと、ウィンドウを切り替えたときなどの大きな 1 フレームを送る間に破棄した分 (5 Mbps で約 9 フレーム) だけで下げてしまう
     public static let window: TimeInterval = 2
-    // 捨てた割合がこれを超えたら下げる
+    // 破棄した割合がこれを超えたら下げる
     static let dropRatioToLower = 0.1
     static let lowerFactor = 0.6
     static let raiseFactor = 1.25
-    // 天井を超えて試すときの、上げる幅と待つ窓の数。回線の限界のすぐ上へ何度も上げて詰まらせ、周期的にカクつかないように
+    // 回線容量の上限を超えて試すときの、上げ幅と待つ窓の数。回線の限界のすぐ上へ何度も上げて輻輳させ、周期的にカクつかないように
     static let probeFactor = 1.1
     static let calmWindowsToProbe = 6
-    // 天井は、見積もった回線の速さのこの割合
+    // 回線容量の上限は、見積もった回線速度のこの割合
     static let ceilingShare = 0.95
-    // 上限のこの割合より下げたら「画質を下げた」、この割合まで戻したら「戻した」とする。境目で揺れて知らせが何度も出ないよう、2 つを離す
+    // 上限のこの割合より下げたら「画質低下」、この割合まで戻したら「復帰」とする。境目で上下して通知が何度も出ないよう、2 つを離す
     static let reducedBelow = 0.7
     static let restoredAtOrAbove = 0.85
-    // 見積もった回線の速さのうち、映像に使う割合。残りは揺れと Mac の音に回す
+    // 見積もった回線速度のうち、映像に使う割合。残りはジッターと Mac のサウンドに回す
     static let capacityShare = 0.85
-    // 回線が埋まっていた時間がこれより短いと、速さを見積もらない
+    // 回線が埋まっていた時間がこれより短いと、速度を見積もらない
     static let minimumBusyDuration: TimeInterval = 0.2
-    // 捨てない窓がこれだけ続いたら上げる
+    // 破棄のない窓がこれだけ続いたら上げる
     static let calmWindowsToRaise = 3
-    // 画面がほとんど動かない間の数枚では、割合を決めない
+    // ディスプレイがほとんど動かない間の数フレームでは、割合を判定しない
     static let minimumFramesToJudge = 20
 
     public let maximum: Int
     public let minimum: Int
     public private(set) var current: Int
-    /// 回線に合わせて、上限より大きく下げているか。iPad に画質を下げたことを知らせるのに使う。
+    /// 回線に合わせて、上限より大きく下げているか。iPad に画質低下を通知するのに使う。
     public private(set) var isReduced = false
     private var windowStart: TimeInterval?
     private var offered = 0
@@ -167,10 +167,10 @@ public struct BitRateController: Sendable {
     private var busyBytes = 0
     private var busyDuration: TimeInterval = 0
     private var calmWindows = 0
-    // 下げたときに見積もった回線の速さから決めた天井。ここまでは上げてよいが、超えるのは慎重に試す
+    // 下げたときに見積もった回線速度から決めた回線容量の上限。ここまでは上げてよいが、超えるのは慎重に試す
     private var ceiling: Int?
 
-    /// `initial` は、同じ iPad への取り込みを作り直す前のビットレート。回線は変わっていないので、上限から測り直さない。
+    /// `initial` は、同じ iPad へのキャプチャを作り直す前のビットレート。回線は変わっていないので、上限から測り直さない。
     public init(maximum: Int, minimum: Int = 1_500_000, initial: Int? = nil) {
         self.maximum = maximum
         self.minimum = min(minimum, maximum)
@@ -178,14 +178,14 @@ public struct BitRateController: Sendable {
         updateReduced()
     }
 
-    /// 返事が来るたびに呼ぶ。回線が埋まっていた間に届いた量から、回線の速さを見積もる。
+    /// ACK が届くたびに呼ぶ。回線が埋まっていた間に届いた量から、回線速度を見積もる。
     public mutating func delivered(_ delivery: VideoFlowControl.Delivery) {
         guard let duration = delivery.busyDuration else { return }
         busyBytes += delivery.bytes
         busyDuration += duration
     }
 
-    /// 取り込んだフレームごとに呼ぶ。`isDropped` は、回線が詰まっていて送らずに捨てたか。ビットレートを変えるときだけ新しい値を返す。
+    /// キャプチャしたフレームごとに呼ぶ。`isDropped` は、輻輳していて送らずに破棄したか。ビットレートを変えるときだけ新しい値を返す。
     public mutating func record(isDropped: Bool, at time: TimeInterval) -> Int? {
         guard let start = windowStart else {
             begin(at: time, isDropped: isDropped)
@@ -196,7 +196,7 @@ public struct BitRateController: Sendable {
             dropped += isDropped ? 1 : 0
             return nil
         }
-        // 画面が止まっていて間が空いたときは、前の数枚で決めず数え直す
+        // ディスプレイが止まっていて間が空いたときは、直前の数フレームで判定せず数え直す
         let isStale = time - start >= Self.window * 2
         let previous = current
         if !isStale, offered >= Self.minimumFramesToJudge {
@@ -244,7 +244,7 @@ public struct BitRateController: Sendable {
     private mutating func raiseIfCalm() {
         guard current < maximum else { return }
         if let ceiling, current >= ceiling {
-            // 回線が速くなったかを確かめるときだけ、天井を少し超えてみる
+            // 回線が速くなったかを確かめるときだけ、上限を少し超えてみる
             guard calmWindows >= Self.calmWindowsToProbe else { return }
             current = min(Int(Double(current) * Self.probeFactor), maximum)
             self.ceiling = nil
@@ -257,13 +257,13 @@ public struct BitRateController: Sendable {
     }
 }
 
-/// iPad 側で、映像用の接続ごとに作る。Mac に求められたら、受け取ったフレームごとに返事を作る。
+/// iPad 側で、映像用の接続ごとに作る。Mac に要求されたら、受信したフレームごとに ACK を作る。
 public final class VideoAcknowledger: Sendable {
     private let isRequested = Atomic(false)
 
     public init() {}
 
-    /// 映像用の接続で受け取ったメッセージに対して、Mac へ返すメッセージ。
+    /// 映像用の接続で受信したメッセージに対して、Mac へ返すメッセージ。
     public func reply(to message: WireMessage) -> WireMessage? {
         switch message {
         case .control(.acknowledgeVideoFrames):

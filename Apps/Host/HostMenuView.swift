@@ -27,7 +27,7 @@ struct HostMenuView: View {
                     .font(.caption)
             }
 
-            // iPad で映像が遅い・粗いと言われたときに、Mac の前でも回線のせいかを見られるように
+            // iPad で映像が遅い・粗いと言われたときに、Mac の前でも回線のせいかを確認できるように
             if let stats = controller.videoStatsOnPad {
                 Label("iPad への配信: \(stats.summary)", systemImage: "gauge.with.dots.needle.33percent")
                     .font(.caption)
@@ -51,7 +51,7 @@ struct HostMenuView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // 蓋を閉じた Mac で iPad のマイクを使うときに要る許可。iPad をつなぐまでは分からないので、分かったものだけ出す
+            // 蓋を閉じた Mac で iPad のマイクを使うときに必要な許可。iPad を接続するまで判別できないので、判別できたものだけ表示する
             GroupBox("iPad のマイク") {
                 VStack(alignment: .leading, spacing: 8) {
                     PermissionRow(title: "PadBridge Host", detail: "システムオーディオの録音 (iPad のマイクを Mac で使う)", granted: controller.canRelayMicrophone) {
@@ -71,7 +71,7 @@ struct HostMenuView: View {
                 }
             }
 
-            // どの組み立てが動いているかを、iPad の「接続の状態」と見比べられるように
+            // どのビルドが動いているかを、iPad の「接続の状態」と照合できるように
             Text("ビルド: \(BuildCommit.current() ?? "不明")")
                 .font(.caption2)
                 .foregroundStyle(.secondary)

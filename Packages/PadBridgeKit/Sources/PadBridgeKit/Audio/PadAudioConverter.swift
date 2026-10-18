@@ -1,7 +1,7 @@
 @preconcurrency import AVFAudio
 import Foundation
 
-/// マイクの音を、送るときの形 (`PadAudio`) にする。iPad のマイクと、Mac のマイクを「PadBridge iPad マイク」へ流すときに使う。
+/// マイクの音声を、送信形式 (`PadAudio`) に変換する。iPad のマイクと、Mac のマイクを「PadBridge iPad マイク」へ流すときに使う。
 /// マイクのスレッドの中でだけ使う。
 public final class PadAudioConverter: @unchecked Sendable {
     private let converter: AVAudioConverter
@@ -14,12 +14,12 @@ public final class PadAudioConverter: @unchecked Sendable {
         self.converter = converter
     }
 
-    /// 送る形にした音と、その中のいちばん大きな振れ幅を返す。
+    /// 送信形式にした音声と、その中の最大振幅を返す。
     public func convert(_ buffer: AVAudioPCMBuffer) -> (Data, Float)? {
         let ratio = converter.outputFormat.sampleRate / converter.inputFormat.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else { return nil }
-        // 入力のブロックは convert の中で同じスレッドから呼ばれる
+        // 入力ブロックは convert の中で同じスレッドから呼ばれる
         nonisolated(unsafe) var consumed = false
         var error: NSError?
         converter.convert(to: output, error: &error) { _, status in

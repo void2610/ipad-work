@@ -1,9 +1,9 @@
 import Foundation
 
-/// 映像の符号化の方式。
+/// 映像のエンコード方式。
 public enum VideoCodec: UInt8, Codable, Sendable {
     case h264 = 0
-    /// 同じビットレートでも文字がにじみにくいので、Mac で作れればこちらを使う。
+    /// 同じビットレートでも文字がにじみにくいので、Mac で作成できればこちらを使う。
     case hevc = 1
 }
 
@@ -11,7 +11,7 @@ public struct VideoFormat: Sendable, Equatable {
     public var codec: VideoCodec
     public var width: Int
     public var height: Int
-    /// 復号に要るパラメータセット。H.264 は SPS・PPS、HEVC は VPS・SPS・PPS の順。
+    /// デコードに必要なパラメータセット。H.264 は SPS・PPS、HEVC は VPS・SPS・PPS の順。
     public var parameterSets: [Data]
 
     public init(codec: VideoCodec, width: Int, height: Int, parameterSets: [Data]) {
@@ -26,7 +26,7 @@ public struct VideoFormat: Sendable, Equatable {
 public struct VideoFrame: Sendable, Equatable {
     public var isKeyFrame: Bool
     public var presentationTimeMicros: Int64
-    /// このフレームに写っている、Mac の画面の範囲。
+    /// このフレームに写っている、Mac のディスプレイの範囲。
     public var region: VideoRegion
     public var data: Data
 
@@ -42,11 +42,11 @@ public enum WireMessage: Sendable, Equatable {
     case control(ControlMessage)
     case videoFormat(VideoFormat)
     case videoFrame(VideoFrame)
-    /// iPad のマイクの音。形式は `PadAudio` (48kHz・モノラル・16 ビットのリトルエンディアン)。
+    /// iPad のマイクの音声。形式は `PadAudio` (48kHz・モノラル・16 ビットのリトルエンディアン)。
     case audio(Data)
-    /// Mac で鳴っている音。形式は `MacAudio` (48kHz・ステレオ・16 ビットのリトルエンディアン)。
+    /// Mac で再生中のサウンド。形式は `MacAudio` (48kHz・ステレオ・16 ビットのリトルエンディアン)。
     case macAudio(Data)
-    /// Mac で鳴っている音を Opus にした 1 パケット (20ms)。iPad が `macAudioCodec(.opus)` で求めたときだけ送る。
+    /// Mac で再生中のサウンドを Opus にした 1 パケット (20ms)。iPad が `macAudioCodec(.opus)` で要求したときだけ送る。
     case macAudioOpus(Data)
 
     enum Kind: UInt32 {

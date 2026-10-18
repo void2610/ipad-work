@@ -10,7 +10,7 @@ public enum KeyboardMapping {
 
     /// 実際の Mac のキーボードと同じ CGEventFlags の生の値。Control+矢印の Mission Control などは、矢印に Fn とテンキーのビットがないと反応しない。
     public static func eventFlags(modifiers: KeyModifiers, macVirtualKeyCode keyCode: UInt16) -> UInt64 {
-        // 下位ビットは左右どちらの修飾キーかを示す (IOLLEvent.h の NX_DEVICE*KEYMASK)。iPad からは左右が来ないので左として扱う
+        // 下位ビットは左右どちらの修飾キーかを示す (IOLLEvent.h の NX_DEVICE*KEYMASK)。iPad からは左右の区別が届かないので左として扱う
         var flags: UInt64 = 0x100
         if modifiers.contains(.shift) { flags |= 0x20000 | 0x2 }
         if modifiers.contains(.control) { flags |= 0x40000 | 0x1 }

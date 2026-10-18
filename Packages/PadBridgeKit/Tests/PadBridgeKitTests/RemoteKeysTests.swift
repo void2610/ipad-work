@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct RemoteKeysTests {
-    /// 3 本指で払ったときに送る並びが、Mac で Mission Control などを起こすのと同じ「Control 押下 → 矢印 → Control 解放」になること。
+    /// 3 本指でスワイプしたときに送るシーケンスが、Mac で Mission Control などを起動するのと同じ「Control 押下 → 矢印 → Control 解放」になること。
     @Test func controlArrowWrapsArrowInControl() {
         #expect(RemoteKeys.controlArrow(usage: KeyboardMapping.ArrowUsage.up) == [
             .key(usage: 0xE0, isDown: true, modifiers: [.control]),
@@ -92,7 +92,7 @@ struct AppSwitcherTests {
         #expect(switcher.commit().isEmpty)
     }
 
-    /// ⌘F のようなショートカットは、修飾キーを付けた F の押し離しだけにする (⌘ そのものは押したときに送っている)。
+    /// ⌘F のようなショートカットは、修飾キーを付けた F の押下と解放だけにする (⌘ そのものは押した時点で送信済み)。
     @Test func shortcutTapsKeyWithModifiers() {
         #expect(RemoteKeys.shortcut("f", modifiers: .command) == [
             .key(usage: 0x09, isDown: true, modifiers: .command),

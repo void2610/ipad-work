@@ -9,7 +9,7 @@ enum ScreenStreamerError: Error {
     case displayNotFound
 }
 
-/// 映している画面と、その大きさ。取り込みを作り直すべき変化かを見分ける。
+/// 表示中のディスプレイとそのサイズ。キャプチャを作り直すべき変化かを判定する。
 nonisolated struct DisplayLayout: Equatable {
     var displayID: CGDirectDisplayID
     var bounds: CGRect
@@ -25,14 +25,14 @@ nonisolated struct DisplayLayout: Equatable {
     }
 }
 
-/// 画面を 1 台取り込み、`VideoSender` で符号化して映像用の接続へ流す。
+/// ディスプレイを 1 台キャプチャし、`VideoSender` でエンコードして映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let channel: MessageChannel
     private let displayID: CGDirectDisplayID
     private let maxWidth: Int
     private let maxHeight: Int
     private let sampleQueue = DispatchQueue(label: "dev.void2610.padbridge.host.capture")
-    // SCStream は Sendable でないため、Mutex ではなく NSLock で守る
+    // SCStream は Sendable でないため、Mutex ではなく NSLock で保護する
     private let lock = NSLock()
     private var stream: SCStream?
     private var sender: VideoSender?
@@ -42,15 +42,15 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let initialRoundTrip: TimeInterval?
     private let onQualityChange: (@Sendable (_ isReduced: Bool) -> Void)?
     private let frameRate: Int
-    // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
+    // iPad が見ている範囲。拡大している間はディスプレイを元の解像度でキャプチャし、この範囲だけを切り出して送る
     private var region = VideoRegion.full
     private var configuration: SCStreamConfiguration?
     private var outputSize = (width: 0, height: 0)
     private var nativeSize = (width: 0, height: 0)
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
-    /// `isAcknowledged` と `initialBitRate` は、同じ映像の接続で作り直す前の取り込みから引き継ぐ。
-    /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。取り込みのキューから呼ばれる。
+    /// `isAcknowledged` と `initialBitRate` は、同じ映像の接続で作り直す前のキャプチャから引き継ぐ。
+    /// `onQualityChange` は、回線に合わせてビットレートを変えるたびに、上限より大きく下げているかを渡す。キャプチャのキューから呼ばれる。
     init(
         channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion,
         isAcknowledged: Bool = false, initialBitRate: Int? = nil, initialRoundTrip: TimeInterval? = nil, frameRate: Int = PreferredFrameRate.normal,
@@ -70,7 +70,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        // 別の画面で代わりに映すと、触った位置がその画面に届かないので、見つからなければ始めない
+        // 別のディスプレイで代わりに表示すると、タッチ位置がそのディスプレイに届かないので、見つからなければ開始しない
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw ScreenStreamerError.displayNotFound
         }
@@ -107,7 +107,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
             self.configuration = configuration
             self.outputSize = size
             self.nativeSize = native
-            // 取り込みを用意している間に範囲が変わっていたら、それに合わせる。ロックの中で渡し、あとから変わった範囲を古い範囲で上書きしない
+            // キャプチャを準備している間に範囲が変わっていたら、それに合わせる。ロック内で渡し、後から変わった範囲を古い範囲で上書きしない
             sender.setRegion(region)
             return region
         }
@@ -119,16 +119,16 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
             updateCaptureSize(stream: stream, configuration: configuration, isFull: latestRegion.isFull)
         }
         try await stream.startCapture()
-        // 始めている途中で止められたときは、止める処理がまだ始まっていない取り込みに効かず、取り込みが動き続ける。始め終えたところで止め直す
+        // 開始処理の途中で停止されたときは、停止処理がまだ開始していないキャプチャには効かず、キャプチャが動き続ける。開始完了後に停止し直す
         if lock.withLock({ isStopped }) {
             try? await stream.stopCapture()
             return
         }
-        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(sender.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
+        Self.logger.info("ディスプレイのキャプチャを開始: ディスプレイ \(self.displayID)、\(size.width)x\(size.height)、\(sender.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
     }
 
     func stop() {
-        // 送る側は手放さない。作り直すときに、止めたこの取り込みから返事の有無とビットレートを読んで引き継ぐ
+        // 送信側は手放さない。作り直すときに、停止したこのキャプチャから ACK の有無とビットレートを読み取って引き継ぐ
         let (stream, sender) = lock.withLock {
             isStopped = true
             defer { self.stream = nil }
@@ -142,33 +142,33 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         lock.withLock { sender }?.requestKeyFrame()
     }
 
-    /// iPad が受け取りの返事を返すと分かったか。
+    /// iPad が受信確認 (ACK) を返すと判明したか。
     var isAcknowledged: Bool {
         lock.withLock { sender }?.isAcknowledged ?? initialAcknowledged
     }
 
-    /// 回線に合わせて決めた今のビットレート。取り込みを始める前は nil。
+    /// 回線に合わせて決めた現在のビットレート。キャプチャを開始する前は nil。
     var currentBitRate: Int? {
         lock.withLock { sender }?.currentBitRate
     }
 
-    /// ならした往復の遅れ。同じ映像の接続で作り直すときに引き継ぐ。
+    /// 平滑化した往復遅延 (RTT)。同じ映像の接続で作り直すときに引き継ぐ。
     var currentRoundTrip: TimeInterval? {
         guard let sender = lock.withLock({ sender }) else { return initialRoundTrip }
         return sender.currentRoundTrip
     }
 
-    /// iPad の「接続の状態」に出す、今の映像の状態。取り込みを始める前は nil。
+    /// iPad の「接続の状態」に表示する、現在の映像の状態。キャプチャを開始する前は nil。
     var stats: VideoStats? {
         lock.withLock { sender }?.stats
     }
 
-    /// iPad がこのフレームを受け取った。
+    /// iPad がこのフレームを受信した。
     func frameReceived(presentationTimeMicros: Int64) {
         lock.withLock { sender }?.frameReceived(presentationTimeMicros: presentationTimeMicros)
     }
 
-    /// iPad が見ている範囲を変える。拡大している間だけ、画面を元の解像度で取り込む (等倍のときは iPad の解像度で十分なので、取り込みを軽くする)。
+    /// iPad が見ている範囲を変更する。拡大している間だけ、ディスプレイを元の解像度でキャプチャする (等倍のときは iPad の解像度で十分なので、キャプチャを軽くする)。
     func setRegion(_ newRegion: VideoRegion) {
         let update: (SCStream, SCStreamConfiguration)? = lock.withLock {
             guard region != newRegion else { return nil }
@@ -189,7 +189,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         configuration.height = size.height
         stream.updateConfiguration(configuration) { error in
             if let error {
-                Self.logger.error("取り込みの設定を変えられない: \(error, privacy: .public)")
+                Self.logger.error("キャプチャの設定を変更できません: \(error, privacy: .public)")
             }
         }
     }
@@ -202,7 +202,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     }
 
     func stream(_: SCStream, didStopWithError _: any Error) {
-        // 作り直したあとの古い取り込みの知らせで、新しい取り込みが使っている映像の接続を閉じない
+        // 作り直した後の古いキャプチャからの通知で、新しいキャプチャが使っている映像の接続を閉じない
         guard !lock.withLock({ isStopped }) else { return }
         channel.cancel()
     }

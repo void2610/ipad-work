@@ -9,7 +9,7 @@ struct VideoRegionTests {
         #expect(VideoRegion.visible(zoomed: CGRect(x: 0, y: 25, width: 1000, height: 650), area: area) == .full)
     }
 
-    /// 2 倍に拡大して中央を見ているときは、中央の半分ほど (余白込み) を頼むこと。
+    /// 2 倍に拡大して中央を表示しているときは、中央の半分ほど (余白込み) を要求すること。
     @Test func zoomedCenterAsksForCenterWithMargin() {
         let zoomed = CGRect(x: -500, y: -300, width: 2000, height: 1300)
         let region = VideoRegion.visible(zoomed: zoomed, area: area, margin: 0)
@@ -18,7 +18,7 @@ struct VideoRegionTests {
         #expect(abs(region.x + region.width / 2 - 0.5) < VideoRegion.step)
     }
 
-    /// 端を見ているときも、範囲が画面の外にはみ出さないこと。
+    /// 端を表示しているときも、範囲が映像の外にはみ出さないこと。
     @Test func regionStaysInsideScreen() {
         let zoomed = CGRect(x: 0, y: 0, width: 3000, height: 1950)
         let region = VideoRegion.visible(zoomed: zoomed, area: area)

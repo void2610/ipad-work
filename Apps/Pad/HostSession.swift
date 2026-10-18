@@ -5,7 +5,7 @@ import os
 import PadBridgeKit
 import UIKit
 
-/// 1 台の Mac との接続。操作用と映像用の 2 本の接続を持ち、切れたら自分でつなぎ直す。
+/// 1 台の Mac との接続。操作用と映像用の 2 本の接続を持ち、切断されたら自分で再接続する。
 @Observable
 final class HostSession {
     enum Phase {
@@ -23,76 +23,76 @@ final class HostSession {
                 reachabilityTask = nil
                 isUnreachable = false
             } else if oldValue == .connected {
-                // つなぎ直すたびに数え直すと、つなぎ直す間隔 (最大 5 秒) より長く待てないので、つながりが切れたときから数える
+                // 再接続のたびに数え直すと、再接続の間隔 (最大 5 秒) より長く待てないので、接続が切れたときから数える
                 watchReachability()
             }
         }
     }
-    /// つなごうとしてしばらくたってもつながらない。「接続中…」が続くだけで理由が分からないので、確かめることを知らせる。
+    /// 接続を試みてしばらくたっても接続できない。「接続中…」が続くだけで理由が分からないので、確認すべきことを通知する。
     private(set) var isUnreachable = false
     private var reachabilityTask: Task<Void, Never>?
     private(set) var hostStatus: HostStatus?
     private(set) var videoSize = CGSize.zero
-    /// 映像を映しているか。映像の接続を張り直している間は、前の大きさが残っていても映していない。
+    /// 映像を表示しているか。映像の接続を再確立している間は、前のサイズが残っていても表示していない。
     private(set) var isVideoShown = false
-    /// Mac が 2 秒ごとに送る映像の状態と、その間に iPad に届いた映像の枚数と量。「接続の状態」に出す。
+    /// Mac が 2 秒ごとに送る映像の状態と、その間に iPad に届いた映像のフレーム数とデータ量。「接続の状態」に表示する。
     private(set) var videoStats: VideoStats?
     private(set) var receivedRate: (framesPerSecond: Double, megabitsPerSecond: Double)?
-    /// Mac とつながっている経路 (Wi-Fi のネットワークか、Wi-Fi の直接通信か)。状態が届くたびに読み直す。
+    /// Mac との接続経路 (Wi-Fi ネットワークか、Wi-Fi ダイレクトか)。状態が届くたびに読み直す。
     private(set) var route: String?
     private let receiveMeter = ReceiveRateMeter()
-    // Mac に頼んだ毎秒の枚数。Mac はつながるたびに 60 から始める
+    // Mac に要求したフレームレート (fps)。Mac は接続のたびに 60 から始める
     private var requestedFrameRate = PreferredFrameRate.normal
     private var powerObservers: [any NSObjectProtocol] = []
-    /// 今表示している映像に写っている、Mac の画面の範囲。
+    /// 現在表示している映像に写っている、Mac のディスプレイの範囲。
     private(set) var videoRegion = VideoRegion.full
-    // 送ってほしいと頼んだ範囲。つなぎ直したときに頼み直す
+    // 送信を要求した範囲。再接続したときに要求し直す
     private var requestedRegion = VideoRegion.full
-    /// Mac の Typeless が聞き取っているか。押した直後は求めた状態を先に見せ、Mac から実際の状態が届いたらそれに合わせる。
+    /// Mac の Typeless が音声入力中か。押した直後は要求した状態を先に表示し、Mac から実際の状態が届いたらそれに合わせる。
     private(set) var isVoiceInputActive = false
-    /// iPad のマイクを使えないときの知らせ。
+    /// iPad のマイクを使えないときの通知。
     private(set) var microphoneNotice: String?
-    /// Mac で鳴っている音を iPad で鳴らすか。鳴らしている間、Mac のスピーカーからは鳴らない。
-    /// 裏に回っている間は Mac で鳴らす。iPad をしまったまま Mac を開いたときに、Mac が無音のままにならないように。
+    /// Mac で再生中のオーディオを iPad で再生するか。再生している間、Mac のスピーカーからは出ない。
+    /// バックグラウンドに移っている間は Mac で再生する。iPad をしまったまま Mac を開いたときに、Mac が無音のままにならないように。
     private(set) var playsMacAudio = UserDefaults.standard.bool(forKey: HostSession.playsMacAudioKey)
-    /// Mac につながっている、映せる画面。2 台以上あれば、映す画面を選べる。
+    /// Mac に接続中の、表示可能なディスプレイ。2 台以上あれば、表示するディスプレイを選べる。
     private(set) var displays: [RemoteDisplay] = []
-    /// 今映している Mac の画面。
+    /// 現在表示している Mac のディスプレイ。
     private(set) var shownDisplayID: UInt32?
     /// Mac の文字入力が英数とかなのどちらか。古い Host からは届かないので nil のままになる。
     private(set) var macInputMode: MacInputMode?
-    /// Mac の画面がロックされているか。ロック中は映像が止まり、入力も届かないことがあるので、黒いままの理由を出す。
+    /// Mac の画面がロックされているか。ロック中は映像が止まり、入力も届かないことがあるので、黒いままの理由を表示する。
     private(set) var isMacScreenLocked = false
-    /// Mac の Host の組み立てが、この iPad アプリと違うときの Mac 側のコミット。片方だけ古いと、古い側の動きを見て取り違える。
+    /// Mac の Host のビルドが、この iPad アプリと異なるときの Mac 側のコミット。片方だけ古いと、古い側の挙動を見て取り違える。
     private(set) var mismatchedHostCommit: String?
-    /// Mac の Host の組み立てたコミット。「接続の状態」に出す。古い Host からは届かない。
+    /// Mac の Host のビルド元コミット。「接続の状態」に表示する。古い Host からは届かない。
     private(set) var hostCommit: String?
-    /// 映す画面が替わったときや、回線に合わせて画質を変えたときに、少しの間だけ出す知らせ。Mac が自分で替えたときも、何が起きたか分かるように。
-    /// 種類ごとに持ち、画面を替えた知らせで画質を下げた知らせが消えないようにする。
+    /// 表示するディスプレイが切り替わったときや、回線に合わせて画質を変えたときに、短時間だけ表示する通知。Mac が自分で切り替えたときも、何が起きたか分かるように。
+    /// 種類ごとに保持し、ディスプレイ切り替えの通知で画質低下の通知が消えないようにする。
     private(set) var notices: [TransientNotice] = []
     private var noticeTasks: [TransientNotice.Kind: Task<Void, Never>] = [:]
 
-    /// iPad のマイクで拾っている声の大きさ (0...1)。画面の書き換えごとに読む値なので、変化を SwiftUI には知らせない。
+    /// iPad のマイクで拾っている音量 (0...1)。画面の再描画ごとに読む値なので、変化を SwiftUI には通知しない。
     @ObservationIgnored var microphoneLevel: Float {
         microphone.level
     }
 
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.pad", category: "session")
     private static let playsMacAudioKey = "playsMacAudio"
-    // 映像の受信と復号を操作の通信から切り離し、映像が重くても操作が遅れないようにする
+    // 映像の受信とデコードを操作の通信から切り離し、映像が重くても操作が遅れないようにする
     private let videoQueue = DispatchQueue(label: "dev.void2610.padbridge.pad.video")
     private var control: MessageChannel?
     private var video: MessageChannel?
     private var isClosed = false
     private var isForeground = true
-    // iPad から始めさせた聞き取りか。裏に回るときに、Mac で直接始めた聞き取りまで止めないために覚える
+    // iPad から開始した音声入力か。バックグラウンドに移るときに、Mac で直接開始した音声入力まで止めないために保持する
     private var isVoiceInputStartedHere = false
     private let microphone = MicrophoneStreamer()
     private var microphoneStopTask: Task<Void, Never>?
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
-    // 映像の接続を張り直す間隔。Mac が取り込みを始められないときに、0.5 秒おきに張り直し続けないよう延ばしていく
+    // 映像の再接続の間隔。Mac がキャプチャを開始できないときに、0.5 秒おきに再接続し続けないよう延ばしていく
     private var videoRetryDelay: Duration = .milliseconds(500)
     private(set) var modifierLatch = ModifierLatch()
     private var pointerModifiers = PointerModifierHold()
@@ -114,7 +114,7 @@ final class HostSession {
 
     func start() {
         watchReachability()
-        // 低電力モードや本体の熱さが変わったら、受けたい映像の枚数を頼み直す
+        // 低電力モードや本体の発熱状態が変わったら、受信したい映像のフレームレートを要求し直す
         powerObservers = [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification].map { name in
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.requestFrameRateIfChanged() }
@@ -127,7 +127,7 @@ final class HostSession {
             Task { @MainActor in
                 self?.videoSize = size
                 self?.isVideoShown = true
-                // 映像が届いたので、張り直す間隔を戻す
+                // 映像が届いたので、再接続の間隔を戻す
                 self?.videoRetryDelay = .milliseconds(500)
             }
         }
@@ -152,19 +152,19 @@ final class HostSession {
         modifierLatch.consume()
     }
 
-    /// バーの修飾キーの状態を使わず、渡した修飾キーで押す。押し続けて繰り返すときに使う。
+    /// バーの修飾キーの状態を使わず、渡した修飾キーで押す。リピート時に使う。
     func tapKey(usage: Int, modifiers: KeyModifiers) {
         RemoteKeys.withModifiers(modifiers, RemoteKeys.tap(usage: usage)).forEach(send)
     }
 
-    /// ソフトウェアキーボードで打った文字を、そのまま Mac に送る。
+    /// ソフトウェアキーボードで入力した文字を、そのまま Mac に送る。
     func typeText(_ text: String) {
         guard !text.isEmpty else { return }
         RemoteKeys.typed(text, modifiers: modifierLatch.active).forEach(send)
         modifierLatch.consume()
     }
 
-    /// 画面のタッチから来たクリックやドラッグに、バーの修飾キーを効かせて送る。
+    /// 画面のタッチによるクリックやドラッグに、バーの修飾キーを適用して送る。
     func sendPointer(_ messages: [ControlMessage]) {
         let wrapped = pointerModifiers.wrap(messages, modifiers: modifierLatch.active)
         wrapped.messages.forEach(send)
@@ -173,7 +173,7 @@ final class HostSession {
         }
     }
 
-    /// 拡大している間は、見えている範囲だけを Mac の解像度で送ってもらう。
+    /// 拡大中は、表示範囲だけを Mac の解像度で送ってもらう。
     func requestVideoRegion(_ region: VideoRegion) {
         guard region != requestedRegion else { return }
         requestedRegion = region
@@ -181,13 +181,13 @@ final class HostSession {
     }
 
     func selectDisplay(_ id: UInt32) {
-        // つなぎ直している間は Mac に届かないので、表示だけ先に替えない
+        // 再接続中は Mac に届かないので、表示だけ先に切り替えない
         guard phase == .connected, id != shownDisplayID else { return }
         showDisplay(id)
         send(.selectDisplay(id: id))
     }
 
-    /// 手前のウィンドウをこの画面へ移す。移せたら Mac がその画面を映す。
+    /// 最前面のウィンドウをこのディスプレイへ移す。移せたら Mac がそのディスプレイを表示する。
     func moveFrontWindow(to id: UInt32) {
         guard phase == .connected else { return }
         send(.moveFrontWindow(toDisplay: id))
@@ -198,7 +198,7 @@ final class HostSession {
         let isSwitching = shownDisplayID != nil
         shownDisplayID = id
         guard isSwitching else { return }
-        // 前の画面で拡大していた範囲は、別の画面では意味がない。画面を替える前に頼んだ範囲が後から届いても、全体に戻させる
+        // 前のディスプレイで拡大していた範囲は、別のディスプレイでは意味がない。切り替え前に要求した範囲が後から届いても、全体に戻させる
         requestedRegion = .full
         send(.videoRegion(.full))
         announceDisplay(id)
@@ -223,7 +223,7 @@ final class HostSession {
         }
     }
 
-    /// 低電力モードのときや本体が熱いときは、映像の枚数を半分にしてもらい、復号と描画の電池と熱を抑える。
+    /// 低電力モードのときや本体が高温のときは、フレームレートを半分にしてもらい、デコードと描画の電力消費と発熱を抑える。
     private func requestFrameRateIfChanged() {
         let rate = PreferredFrameRate.choose(
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled, thermalState: ProcessInfo.processInfo.thermalState, current: requestedFrameRate
@@ -233,7 +233,7 @@ final class HostSession {
         send(.videoFrameRate(rate))
     }
 
-    /// 映像を止めたら、前の映像の状態を出したままにしない。
+    /// 映像を止めたら、前の映像の状態を表示したままにしない。
     private func clearVideoStats() {
         videoStats = nil
         receivedRate = nil
@@ -264,7 +264,7 @@ final class HostSession {
         }
     }
 
-    /// Mac の音を Opus で送ってもらう。無圧縮だと約 1.5 Mbps になり、遅い回線では映像の取り分を削る。
+    /// Mac のオーディオを Opus で送ってもらう。無圧縮だと約 1.5 Mbps になり、遅い回線では映像の帯域を圧迫する。
     private func sendMacAudioCodec() {
         send(.macAudioCodec(BackgroundAudio.shared.macAudio.canDecodeOpus ? .opus : .pcm))
     }
@@ -299,8 +299,8 @@ final class HostSession {
         appSwitcher.commit().forEach(send)
     }
 
-    /// Mac の Typeless で音声入力を始める (true) か、終える (false)。
-    /// 始めるときは iPad のマイクの音を Mac へ送り始めてから、Typeless を起動する。Mac は蓋を閉じると内蔵マイクが使えないため。
+    /// Mac の Typeless で音声入力を開始する (true) か、終了する (false)。
+    /// 開始時は iPad のマイク音声を Mac へ送り始めてから、Typeless を起動する。Mac は蓋を閉じると内蔵マイクが使えないため。
     func setVoiceInput(_ isActive: Bool) {
         guard isVoiceInputActive != isActive else { return }
         isVoiceInputActive = isActive
@@ -309,7 +309,7 @@ final class HostSession {
             startMicrophone()
         } else {
             send(.voiceInput(isActive: false))
-            // Mac が Typeless を止めたら知らせが来て止める。来なかったときのために、少し待ってからも止める
+            // Mac が Typeless を停止したら通知が来て停止する。来なかったときのために、少し待ってからも停止する
             microphoneStopTask?.cancel()
             microphoneStopTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(2))
@@ -322,17 +322,17 @@ final class HostSession {
     private func startMicrophone() {
         microphoneStopTask?.cancel()
         microphone.requestPermission { [weak self] permission in
-            // 許可を尋ねている間に離された場合は、始めない
+            // 権限を確認している間に離された場合は、開始しない
             guard let self, isVoiceInputActive, isVoiceInputStartedHere else { return }
             switch permission {
             case .granted:
                 microphoneNotice = nil
                 if !microphone.isRunning, let channel = control {
                     microphone.start { samples in channel.send(.audio(samples)) }
-                    // iPad のスピーカーで鳴らした Mac の音を、マイクから Typeless に入れない
+                    // iPad のスピーカーで再生した Mac のオーディオを、マイクから Typeless に入れない
                     BackgroundAudio.shared.macAudio.setSuppressed(microphone.isRunning)
                     if !microphone.isRunning {
-                        // 電話のあとや、ほかのアプリがマイクを使っているときは始められない。黙って Mac の無音を聞き取らせない
+                        // 電話のあとや、ほかのアプリがマイクを使っているときは開始できない。黙って Mac の無音を音声入力させない
                         microphoneNotice = "iPad のマイクを開始できなかったため、Mac のマイクで音声入力します。"
                     }
                 }
@@ -357,31 +357,31 @@ final class HostSession {
         isClosed = true
         retryTask?.cancel()
         videoRetryTask?.cancel()
-        // 次につないだセッションのマイクや「届かない」の表示に、前のセッションの予約が触らないように
+        // 次に接続したセッションのマイクや「届かない」の表示に、前のセッションの予約が影響しないように
         microphoneStopTask?.cancel()
         reachabilityTask?.cancel()
         replaceControl(with: nil)
         stopVideo()
         clearNotices()
-        // 次につないだときに、前の接続でためた Mac の音が鳴らないように
+        // 次に接続したときに、前の接続で溜まった Mac のオーディオが再生されないように
         BackgroundAudio.shared.macAudio.reset()
         BackgroundAudio.shared.stop()
     }
 
-    /// 裏に回っている間は操作用の接続だけ保ち、映像は止めて電池と通信量を抑える。
+    /// バックグラウンドに移っている間は操作用の接続だけ保ち、映像は止めてバッテリーと通信量を抑える。
     func setForeground(_ isForeground: Bool) {
         self.isForeground = isForeground
         if playsMacAudio {
             updateMacAudio()
         }
         if isForeground {
-            // 裏にいる間に無音の再生が止まっていたら流し直す。止まったままだと、次に裏に回ったときに iPadOS に止められて接続が切れる
+            // バックグラウンドにいる間に無音の再生が止まっていたら再生し直す。止まったままだと、次にバックグラウンドに移ったときに iPadOS に停止されて接続が切れる
             BackgroundAudio.shared.resumeIfNeeded()
             startVideoIfNeeded()
         } else {
-            // iPadOS に取られて離した知らせが届かなかったキーやボタンを、Mac に押したまま残さない
+            // iPadOS に奪われて離した通知が届かなかったキーやボタンを、Mac に押したまま残さない
             send(.releaseHeldInput)
-            // 押しっぱなしのまま裏に回ると、Mac の Typeless が聞き取り続けてしまう
+            // 押しっぱなしのままバックグラウンドに移ると、Mac の Typeless が音声入力し続けてしまう
             stopVoiceInputStartedHere()
             stopMicrophone()
             commitAppSwitch()
@@ -409,7 +409,7 @@ final class HostSession {
             },
             onMessage: { [weak self, weak channel] message in
                 MainActor.assumeIsolated {
-                    // 張り直したあとに、前の接続から遅れて届いたものでつながった扱いにしない
+                    // 再接続したあとに、前の接続から遅れて届いたものを接続済みとして扱わない
                     guard let self, let channel, channel === self.control else { return }
                     self.handleControl(message)
                 }
@@ -439,12 +439,12 @@ final class HostSession {
 
     private func connectionLost() {
         guard !isClosed, retryTask == nil else { return }
-        // 接続が切れた時点で Mac 側は iPad が始めさせた聞き取りを止める。つなぎ直したら Mac から実際の状態が届く
+        // 接続が切れた時点で Mac 側は iPad が開始した音声入力を停止する。再接続したら Mac から実際の状態が届く
         isVoiceInputActive = false
         isVoiceInputStartedHere = false
-        // つなぎ直すまで Mac の文字入力の状態は分からない。つなぎ直すと Mac から届く
+        // 再接続するまで Mac の文字入力の状態は分からない。再接続すると Mac から届く
         macInputMode = nil
-        // 切れたときに Mac は押したままのものを離すので、iPad も修飾キーを押したつもりのまま残さない
+        // 切断時に Mac は押したままのものを解除するので、iPad も修飾キーを押したままの扱いで残さない
         pointerModifiers = PointerModifierHold()
         stopMicrophone()
         replaceControl(with: nil)
@@ -463,7 +463,7 @@ final class HostSession {
     private func handleControl(_ message: WireMessage) {
         switch message {
         case let .macAudio(samples):
-            // 切ったあと (裏に回ったあと) も、送られている途中の音が少し届く。鳴らすと止めたはずの音がまた鳴るので捨てる
+            // 切断後 (バックグラウンドに移ったあと) も、送信途中のオーディオが少し届く。再生すると停止したはずの音が再び出るので破棄する
             if playsMacAudio, isForeground {
                 BackgroundAudio.shared.macAudio.feed(samples)
             }
@@ -479,16 +479,16 @@ final class HostSession {
         guard case let .control(message) = message else { return }
         switch message {
         case let .welcome(_, status):
-            // ロックされていれば、続けて Mac が知らせる
+            // ロックされていれば、続けて Mac が通知する
             isMacScreenLocked = false
             if let commit = BuildCommit.current() {
                 send(.buildCommit(commit))
             }
-            // つながっただけでは戻さない。つながってすぐ Mac に切られることが続くときに、0.5 秒おきにつなぎ直し続けないように
+            // 接続しただけでは戻さない。接続直後に Mac に切断されることが続くときに、0.5 秒おきに再接続し続けないように
             retryDelay = .milliseconds(500)
             hostStatus = status
             phase = .connected
-            // Mac はつながるたびに画面全体から始めるので、拡大していれば頼み直す
+            // Mac は接続のたびにディスプレイ全体から始めるので、拡大していれば要求し直す
             if !requestedRegion.isFull {
                 send(.videoRegion(requestedRegion))
             }
@@ -512,13 +512,13 @@ final class HostSession {
             self.hostCommit = hostCommit
             mismatchedHostCommit = BuildCommit.isMismatch(BuildCommit.current(), hostCommit) ? hostCommit : nil
         case let .videoStats(stats):
-            // 映像を止めた直後に届いた分で、止めた前の状態を出し直さない
+            // 映像を止めた直後に届いた分で、止める前の状態を再表示しない
             guard video != nil else { break }
             videoStats = stats
             receivedRate = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
             route = control?.connection.currentPath?.availableInterfaces.first.map { ConnectionRoute.label(interfaceName: $0.name, type: $0.type) }
         case let .videoQuality(isReduced):
-            // 映像がぼやけたり戻ったりした理由が分かるように
+            // 映像がぼやけたり元に戻ったりした理由が分かるように
             let notice = isReduced
                 ? TransientNotice(kind: .quality, text: "回線が遅いため、画質を下げています", systemImage: "wifi.exclamationmark")
                 : TransientNotice(kind: .quality, text: "画質を戻しました", systemImage: "wifi")
@@ -562,7 +562,7 @@ final class HostSession {
                 }
             },
             onMessage: { [weak channel] message in
-                // 描く前に返し、描く時間で Mac が送るのを待たせない
+                // 描画前に応答を返し、描画時間で Mac の送信を待たせない
                 if let reply = acknowledger.reply(to: message) {
                     channel?.send(reply)
                 }
@@ -595,7 +595,7 @@ final class HostSession {
         }
     }
 
-    /// 横向きにしたときの画面の画素数。Mac はこれに収まる大きさで画面を取り込む。
+    /// 横向きにしたときのディスプレイの画素数。Mac はこれに収まるサイズでディスプレイをキャプチャする。
     private static func maxVideoSize() -> (width: Int, height: Int) {
         let screen = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
         let bounds = screen?.nativeBounds ?? CGRect(x: 0, y: 0, width: 2048, height: 2732)
@@ -610,7 +610,7 @@ enum HIDUsage {
     static let tab = 0x2B
 }
 
-/// 画面の上に少しの間だけ出す知らせ。
+/// ディスプレイ上に短時間だけ表示する通知。
 struct TransientNotice: Equatable, Identifiable {
     enum Kind {
         case display

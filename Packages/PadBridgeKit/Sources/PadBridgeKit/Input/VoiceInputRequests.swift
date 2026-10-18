@@ -1,7 +1,7 @@
-/// iPad から届いた音声入力の開始・完了の要求を、届いた順に番号で覚える。後から届いた要求が優先で、古い要求の続き (補助アプリの返事、押し直し) は捨てる。
+/// iPad から届いた音声入力の開始・完了の要求を、届いた順に番号で記憶する。後から届いた要求を優先し、古い要求の続き (ヘルパーアプリの応答、押し直し) は破棄する。
 public struct VoiceInputRequests: Sendable, Equatable {
     public private(set) var latest = 0
-    /// 始めさせたが、Typeless が聞き取りを始めたのをまだ確かめていない要求。
+    /// 開始させたが、Typeless が音声入力を始めたのをまだ確認していない要求。
     public private(set) var pendingStart: Int?
 
     public init() {}
@@ -17,21 +17,21 @@ public struct VoiceInputRequests: Sendable, Equatable {
         request == latest
     }
 
-    /// 始めさせた要求が、聞き取りを始めた (または始めるのをあきらめた)。
+    /// 開始させた要求が、音声入力を開始した (または開始を断念した)。
     public mutating func settle(_ request: Int) {
         if pendingStart == request {
             pendingStart = nil
         }
     }
 
-    /// iPad とのつながりが切れた。待っている要求の続きで Typeless を始めない。
+    /// iPad との接続が切れた。待機中の要求の続きで Typeless を開始しない。
     public mutating func cancelAll() {
         latest += 1
         pendingStart = nil
     }
 
-    /// Typeless の聞き取りが終わったことを iPad に知らせるか。
-    /// 止めた直後に iPad でまた始めたときは、前の聞き取りの終わりを知らせると iPad が始めたばかりのマイクを止めてしまうので、知らせない。
+    /// Typeless の音声入力が終わったことを iPad に通知するか。
+    /// 停止した直後に iPad でまた開始したときは、前回の音声入力の終了を通知すると iPad が開始したばかりのマイクを止めてしまうので、通知しない。
     public var announcesStop: Bool {
         pendingStart == nil
     }

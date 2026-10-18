@@ -15,7 +15,7 @@ struct PadAudioConverterTests {
         return buffer
     }
 
-    /// 送る形と同じ 48kHz・モノラルなら、長さも大きさも変えない。
+    /// 送信形式と同じ 48kHz・モノラルなら、長さもサイズも変えない。
     @Test func keepsSameFormat() throws {
         let converter = try #require(PadAudioConverter(from: AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!))
         let (data, peak) = try #require(converter.convert(sine(sampleRate: 48_000, channels: 1, frames: 1024, amplitude: 0.5)))
@@ -23,7 +23,7 @@ struct PadAudioConverterTests {
         #expect(abs(peak - 0.5) < 0.01)
     }
 
-    /// Mac のマイクによくある 44.1kHz・ステレオも、48kHz・モノラルの長さにして、声の大きさを保つ。
+    /// Mac のマイクに多い 44.1kHz・ステレオも、48kHz・モノラルの長さに変換し、音量を保つ。
     @Test func resamplesAndDownmixes() throws {
         let converter = try #require(PadAudioConverter(from: AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!))
         var frames = 0
@@ -33,7 +33,7 @@ struct PadAudioConverterTests {
             frames += data.count / 2
             peak = max(peak, bufferPeak)
         }
-        // 2 秒分。変換の始めの遅れの分だけ短くなってよい
+        // 2 秒分。変換開始時の遅延の分だけ短くなってよい
         #expect((95_000 ... 96_000).contains(frames))
         #expect((0.4 ... 1).contains(peak))
     }

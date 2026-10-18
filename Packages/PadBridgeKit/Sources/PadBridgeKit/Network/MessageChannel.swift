@@ -15,7 +15,7 @@ public final class MessageChannel: Sendable {
         self.queue = queue
     }
 
-    /// 送信済みだがまだネットワークに渡っていないメッセージの数。映像の間引きに使う。
+    /// 送信要求済みだがまだネットワークに渡っていないメッセージの数。映像のフレーム破棄に使う。
     public var pendingSendCount: Int {
         pendingSends.withLock { $0 }
     }
@@ -57,7 +57,7 @@ public final class MessageChannel: Sendable {
         connection.receiveMessage { [weak self] content, context, _, error in
             guard let self else { return }
             guard error == nil else {
-                // 受け取りをやめたまま開いていると、何も届かないのにつなぎ直しも始まらない。閉じて、つなぎ直す側に知らせる
+                // 受信をやめたまま開いていると、何も届かないのに再接続も始まらない。閉じて、再接続する側に通知する
                 connection.cancel()
                 return
             }
@@ -66,11 +66,11 @@ public final class MessageChannel: Sendable {
                 connection.cancel()
                 return
             }
-            // 区切りは framer が切り出しているので、相手が新しいビルドで送ってきた知らないメッセージは飛ばして続けられる
+            // 区切りは framer が切り出しているので、相手が新しいビルドで送ってきた未知のメッセージはスキップして続行できる
             do {
                 try onMessage(WireMessage(type: framerMessage.padBridgeMessageType, payload: content ?? Data()))
             } catch {
-                Self.logger.notice("解釈できないメッセージを飛ばした (種類 \(framerMessage.padBridgeMessageType)): \(error, privacy: .public)")
+                Self.logger.notice("解釈できないメッセージをスキップした (種類 \(framerMessage.padBridgeMessageType)): \(error, privacy: .public)")
             }
             receiveNext(onMessage)
         }

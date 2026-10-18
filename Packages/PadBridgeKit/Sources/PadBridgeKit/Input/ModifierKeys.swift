@@ -18,7 +18,7 @@ public struct ModifierLatch: Sendable {
         states[modifier.rawValue] ?? .off
     }
 
-    /// 今の操作に載せる修飾キー。
+    /// 現在の操作に付与する修飾キー。
     public var active: KeyModifiers {
         states.reduce(into: KeyModifiers()) { result, entry in
             if entry.value != .off { result.insert(KeyModifiers(rawValue: entry.key)) }
@@ -39,7 +39,7 @@ public struct ModifierLatch: Sendable {
         }
     }
 
-    /// キーやクリックを 1 回送ったあとに呼ぶ。1 回だけのものは外れ、固定したものは残る。
+    /// キーやクリックを 1 回送ったあとに呼ぶ。1 回限りのものは解除され、固定したものは残る。
     public mutating func consume() {
         for (key, state) in states where state == .once {
             states[key] = .off
@@ -47,7 +47,7 @@ public struct ModifierLatch: Sendable {
     }
 }
 
-/// Mac 側で、押されている修飾キーを覚えておく。マウスのイベントにも載せないと ⌘クリックや ⇧クリックにならない。
+/// Mac 側で、押されている修飾キーを保持する。マウスのイベントにも付与しないと ⌘クリックや ⇧クリックにならない。
 public struct HeldModifiers: Sendable {
     private var keyCodes: Set<UInt16> = []
 
@@ -65,12 +65,12 @@ public struct HeldModifiers: Sendable {
         }
     }
 
-    /// マウスのイベントに載せる CGEventFlags の生の値。
+    /// マウスのイベントに付与する CGEventFlags の生の値。
     public var mouseEventFlags: UInt64 {
         KeyboardMapping.eventFlags(modifiers: modifiers, macVirtualKeyCode: 0)
     }
 
-    /// 修飾キーでないキーのイベントに、押されている修飾キーを載せる。
+    /// 修飾キーでないキーのイベントに、押されている修飾キーを付与する。
     /// iPadOS は ⌘. のように、押している修飾キーをキーの情報から外して渡すことがあり、そのままだと Mac には . だけが届く。
     public func keyEvent(usage: Int, isDown: Bool, modifiers: KeyModifiers) -> MacKeyEvent? {
         guard let event = MacKeyEvent(usage: usage, isDown: isDown, modifiers: modifiers), !event.isFlagsChanged else {
@@ -96,7 +96,7 @@ public struct HeldModifiers: Sendable {
 extension RemoteKeys {
     static let modifierUsages: [(KeyModifiers, Int)] = [(.command, 0xE3), (.option, 0xE2), (.control, 0xE0), (.shift, 0xE1)]
 
-    /// 修飾キーを押してから操作を送り、最後に離す。キーにもクリックにも同じ形で効かせられる。
+    /// 修飾キーを押してから操作を送り、最後に離す。キーにもクリックにも同じ形で適用できる。
     public static func withModifiers(_ modifiers: KeyModifiers, _ messages: [ControlMessage]) -> [ControlMessage] {
         guard !modifiers.isEmpty else { return messages }
         let used = modifierUsages.filter { modifiers.contains($0.0) }
@@ -118,8 +118,8 @@ extension RemoteKeys {
         return downs + body + ups
     }
 
-    /// ソフトウェアキーボードで打った文字の並び。英数字と空白はキーとして、記号や日本語は文字として送る (記号は US と JIS の配列でキーの位置が違うため)。
-    /// ただし、どちらの配列でも同じ位置にある記号はキーとして送り、かなモードの Mac の日本語入力に「ー」「、」「。」などへ変えさせる。
+    /// ソフトウェアキーボードで入力した文字列。英数字と空白はキーとして、記号や日本語は文字として送る (記号は US と JIS の配列でキーの位置が違うため)。
+    /// ただし、どちらの配列でも同じ位置にある記号はキーとして送り、かなモードの Mac の日本語入力で「ー」「、」「。」などに変換させる。
     public static func typed(_ text: String, modifiers: KeyModifiers = []) -> [ControlMessage] {
         var messages: [ControlMessage] = []
         var pendingText = ""
@@ -144,8 +144,8 @@ extension RemoteKeys {
         return messages
     }
 
-    /// ハードウェアキーボードのショートカット (`input` は修飾キーと一緒に押した文字) を、修飾キーを付けたキーの押し離しにする。
-    /// 修飾キーそのものの押し離しは、押したときにそのまま Mac へ送っているので含めない。送れない文字なら空。
+    /// ハードウェアキーボードのショートカット (`input` は修飾キーと一緒に押した文字) を、修飾キーを付けたキーの押下・解放にする。
+    /// 修飾キー自体の押下・解放は、押したときにそのまま Mac へ送っているので含めない。送れない文字なら空。
     public static func shortcut(_ input: String, modifiers: KeyModifiers) -> [ControlMessage] {
         guard input.count == 1, let character = input.first, let (usage, needsShift) = keyUsage(for: character) else { return [] }
         return tap(usage: usage, modifiers: needsShift ? modifiers.union(.shift) : modifiers)
@@ -171,7 +171,7 @@ extension RemoteKeys {
     }
 }
 
-/// バーの修飾キーを、クリックやドラッグに効かせる。ボタンを押す前に修飾キーを押し、離したあとで修飾キーを離す。ドラッグは押してから離すまで続くので、送る単位をまたいで覚えておく。
+/// バーの修飾キーを、クリックやドラッグに適用する。ボタンを押す前に修飾キーを押し、離したあとで修飾キーを離す。ドラッグは押してから離すまで続くので、送る単位をまたいで保持する。
 public struct PointerModifierHold: Sendable {
     private var held: KeyModifiers = []
 

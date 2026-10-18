@@ -2,7 +2,7 @@
 import Testing
 
 struct PadBridgeServiceTests {
-    /// Bonjour が重なりを避けて付けた番号だけを除き、名前そのものの括弧は残す。
+    /// Bonjour が重複回避のために付けた番号だけを除き、名前自体の括弧は残す。
     @Test(arguments: [
         ("MacBook Pro", "MacBook Pro"),
         ("MacBook Pro (2)", "MacBook Pro"),

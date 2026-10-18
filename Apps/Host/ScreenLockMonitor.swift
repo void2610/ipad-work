@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// Mac の画面のロックと解除を知らせる。メインスレッドで使う。
-/// ロック中は ScreenCaptureKit の取り込みが止まるか断られ、解除しても取り込みは自分では戻らないと報告されている。
+/// Mac のディスプレイのロックと解除を通知する。メインスレッドで使う。
+/// ロック中は ScreenCaptureKit のキャプチャが停止または拒否され、解除してもキャプチャは自動では復帰しないと報告されている。
 final class ScreenLockMonitor: NSObject {
     private let onChange: @Sendable (_ isLocked: Bool) -> Void
 
@@ -10,14 +10,14 @@ final class ScreenLockMonitor: NSObject {
         self.onChange = onChange
     }
 
-    /// 今ロックされているか。ロック中だけ、セッションの情報にこのキーが現れる。
+    /// 現在ロックされているか。ロック中だけ、セッション情報にこのキーが現れる。
     static var isLocked: Bool {
         (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
     func start() {
         let center = DistributedNotificationCenter.default()
-        // 入力ソースの知らせと同じく、メニューバーの常駐アプリが前面にない間も止めずに届けさせる
+        // 入力ソースの通知と同じく、メニューバー常駐アプリが前面にない間も保留せずに配信させる
         center.addObserver(self, selector: #selector(locked), name: Notification.Name("com.apple.screenIsLocked"), object: nil, suspensionBehavior: .deliverImmediately)
         center.addObserver(self, selector: #selector(unlocked), name: Notification.Name("com.apple.screenIsUnlocked"), object: nil, suspensionBehavior: .deliverImmediately)
     }

@@ -1,14 +1,14 @@
 import CoreAudio
 import Foundation
 
-/// Typeless が今マイクで聞き取っているかを、CoreAudio のプロセスごとの入力状態から読む。
-/// Typeless は聞き取りの状態を外へ公開しておらず、聞き取っている間だけマイクを使うので、それを実際の状態とする。
+/// Typeless が現在マイクで音声入力しているかを、CoreAudio のプロセスごとの入力状態から読み取る。
+/// Typeless は音声入力の状態を外部に公開しておらず、音声入力中だけマイクを使うので、それを実際の状態とする。
 nonisolated final class TypelessMonitor: @unchecked Sendable {
     // Typeless は Electron 製で、マイクは本体ではなく Typeless Helper のプロセスが使う
     private static let bundleIDPrefix = TypelessApp.bundleIdentifier
     // プロセスの入力状態は、変わっても AudioObjectAddPropertyListenerBlock の通知が来ないので読み直す
     private static let pollInterval: TimeInterval = 0.2
-    // Typeless を起動し直したときに追えるよう、プロセスの一覧はときどき取り直す
+    // Typeless を再起動したときに追従できるよう、プロセス一覧は定期的に取得し直す
     private static let processRefreshInterval: TimeInterval = 2
     private static let systemObject = AudioObjectID(kAudioObjectSystemObject)
 
@@ -19,12 +19,12 @@ nonisolated final class TypelessMonitor: @unchecked Sendable {
     private var processesFetchedAt = -TimeInterval.infinity
     private var isRecording = false
 
-    /// `onChange` は聞き取りの開始と終了のたびに、このクラスのキューから呼ばれる。
+    /// `onChange` は音声入力の開始と終了のたびに、このクラスのキューから呼ばれる。
     init(onChange: @escaping @Sendable (Bool) -> Void) {
         self.onChange = onChange
     }
 
-    /// iPad がつながっている間だけ見る。
+    /// iPad が接続されている間だけ監視する。
     func start() {
         queue.async { [self] in
             guard timer == nil else { return }
@@ -45,12 +45,12 @@ nonisolated final class TypelessMonitor: @unchecked Sendable {
         }
     }
 
-    /// 今この瞬間の状態を CoreAudio に問い合わせる。どのスレッドからでも呼べる。
+    /// 現時点の状態を CoreAudio に問い合わせる。どのスレッドからでも呼べる。
     static func isRecording() -> Bool {
         typelessProcesses().contains(where: isRunningInput)
     }
 
-    /// Typeless が今録音に使っている入力デバイスの UID。
+    /// Typeless が現在録音に使っている入力デバイスの UID。
     static func inputDeviceUIDs() -> [String] {
         typelessProcesses().flatMap { process -> [String] in
             var address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)

@@ -5,13 +5,13 @@ import Network
 import os
 import PadBridgeKit
 
-/// 補助アプリが作る入力デバイス。
+/// ヘルパーアプリが作成する入力デバイス。
 nonisolated enum PadMicrophoneDevice {
     static let uid = "dev.void2610.padbridge.ipad-mic"
     static let name = "PadBridge iPad マイク"
 
-    /// 補助アプリが後始末をできずに終わって (強制終了など) 残ったデバイスとタップを消す。
-    /// 残ったものは補助アプリが次に起動するまで消えず、iPad をつながないとサウンドの設定に「PadBridge iPad マイク」が出続けるので、Host の起動時にも消す。
+    /// ヘルパーアプリが後始末できずに終了して (強制終了など) 残ったデバイスとタップを削除する。
+    /// 残ったものはヘルパーアプリが次に起動するまで消えず、iPad を接続しないとサウンド設定に「PadBridge iPad マイク」が出続けるので、Host の起動時にも削除する。
     static func removeLeftovers() {
         if let device = objects(kAudioHardwarePropertyDevices).first(where: { string($0, kAudioDevicePropertyDeviceUID) == uid }) {
             AudioHardwareDestroyAggregateDevice(device)
@@ -48,48 +48,48 @@ nonisolated enum PadMicrophoneDevice {
     }
 }
 
-/// 補助アプリ「PadBridge マイク」を起動し、iPad のマイクの音を渡す。補助アプリがそれを Mac の入力デバイスとして見せる。
-/// 音を取り出すプロセスタップにはシステムオーディオの録音の許可が要るが、ターミナルから動かした Host では Ghostty の許可として求められて断られる。
-/// Host のバンドルの中の補助アプリを LaunchServices で起動すると、許可は PadBridge Host のものとして求められる。
-/// Host 自身をアプリとして起動し直す必要がないので、画面収録などの許可を取り直す間に画面が映らなくなることもない。
-/// HostServer のキューの上でだけ使う。
+/// ヘルパーアプリ「PadBridge マイク」を起動し、iPad のマイク音声を渡す。ヘルパーアプリがそれを Mac の入力デバイスとして見せる。
+/// 音声をキャプチャするプロセスタップにはシステムオーディオ録音の許可が必要だが、ターミナルから起動した Host では Ghostty の許可として要求されて拒否される。
+/// Host のバンドル内のヘルパーアプリを LaunchServices で起動すると、許可は PadBridge Host のものとして要求される。
+/// Host 自身をアプリとして再起動する必要がないので、画面収録などの許可を取り直す間にディスプレイが表示されなくなることもない。
+/// HostServer のキュー上でのみ使う。
 nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "microphone")
-    // 補助アプリが応えないときに、Typeless の起動や完了を待たせ続けない
+    // ヘルパーアプリが応答しないときに、Typeless の起動や完了を待たせ続けない
     private static let readyTimeout: TimeInterval = 1.5
-    // 補助アプリは、ためている音 (最大 6 秒) を流し終えるまで待ってから返す
+    // ヘルパーアプリは、バッファしている音声 (最大 6 秒) を流し終えるまで待ってから応答する
     private static let finishTimeout: TimeInterval = 8
 
     private let queue: DispatchQueue
     private let onAuthorizationChange: @Sendable () -> Void
     private let onLateReady: @Sendable (_ isUsingPadMicrophone: Bool) -> Void
-    // iPad から聞き取りを始めていて、まだ終えていないか。待ち時間を過ぎて届いた返事を、今の聞き取りに反映するかを決める
+    // iPad から音声入力を開始していて、まだ終了していないか。タイムアウト後に届いた応答を、現在の音声入力に反映するかを判定する
     private var isListeningRequested = false
     private let token = UUID().uuidString
     private var listener: NWListener?
     private var channel: MessageChannel?
-    // 合言葉が届くまでの接続。ここで持っておかないと、受け付けた直後に解放されて合言葉を受け取れない
+    // トークンが届くまでの接続。ここで保持しておかないと、受け付けた直後に解放されてトークンを受け取れない
     private var pending: [ObjectIdentifier: MessageChannel] = [:]
     private var isRunning = false
     // 起動してから接続してくるまでの間に、もう 1 つ起動しないようにする
     private var launchedAt: TimeInterval?
-    // 起動に続けて失敗した回数。署名などで起動できないときに、iPad がつなぎ直すまで黙って使えないままにしない
+    // 起動に連続して失敗した回数。署名などで起動できないときに、iPad が再接続するまで黙って使えないままにしない
     private var launchFailures = 0
     private var pendingReady: (@Sendable (Bool) -> Void)?
-    // 聞き取りを始めるたびに増やす。前の要求の待ち時間切れで、次の要求の返事を待つのをやめないように
+    // 音声入力を開始するたびに増やす。前のリクエストのタイムアウトで、次のリクエストの応答待ちを打ち切らないように
     private var readyCount = 0
     private var pendingFinish: (id: Int, done: @Sendable () -> Void)?
     private var finishCount = 0
     private(set) var isKnownUnauthorized = false
 
-    /// `onLateReady` は、聞き取りの準備の返事が待ち時間 (`readyTimeout`) を過ぎてから届いたときに、このキューの上で呼ばれる。
+    /// `onLateReady` は、音声入力の準備の応答がタイムアウト (`readyTimeout`) を過ぎてから届いたときに、このキュー上で呼ばれる。
     init(queue: DispatchQueue, onAuthorizationChange: @escaping @Sendable () -> Void, onLateReady: @escaping @Sendable (_ isUsingPadMicrophone: Bool) -> Void) {
         self.queue = queue
         self.onAuthorizationChange = onAuthorizationChange
         self.onLateReady = onLateReady
     }
 
-    /// iPad がつながったときに呼ぶ。補助アプリがまだ動いていなければ起動する。
+    /// iPad が接続したときに呼ぶ。ヘルパーアプリがまだ動いていなければ起動する。
     func start() {
         isRunning = true
         let now = ProcessInfo.processInfo.systemUptime
@@ -101,7 +101,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         }
     }
 
-    /// iPad の接続が切れてしばらくたったときに呼ぶ。接続を閉じると、補助アプリはデバイスを消して終わる。
+    /// iPad の接続が切れてしばらくたったときに呼ぶ。接続を閉じると、ヘルパーアプリはデバイスを削除して終了する。
     func stop() {
         isRunning = false
         isListeningRequested = false
@@ -111,7 +111,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         channel = nil
     }
 
-    /// iPad から聞き取りを始めるとき、補助アプリが既定の入力を切り替え終えたら、切り替えたかを `ready` に渡す。補助アプリがなければすぐに呼ぶ。
+    /// iPad から音声入力を開始するとき、ヘルパーアプリが既定の入力を切り替え終えたら、切り替えたかを `ready` に渡す。ヘルパーアプリがなければすぐに呼ぶ。
     func beginListening(ready: @escaping @Sendable (Bool) -> Void) {
         guard let channel else {
             ready(false)
@@ -134,7 +134,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         channel?.send(.control(.microphoneRelay(isListening: false)))
     }
 
-    /// iPad で止めたとき、止めたところまでの声を補助アプリが流し終えたら `done` を呼ぶ。補助アプリがなければすぐに呼ぶ。
+    /// iPad で停止したとき、停止時点までの音声をヘルパーアプリが流し終えたら `done` を呼ぶ。ヘルパーアプリがなければすぐに呼ぶ。
     func finishListening(done: @escaping @Sendable () -> Void) {
         guard let channel else {
             done()
@@ -167,15 +167,15 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         ready?(isUsingPadMicrophone)
     }
 
-    // MARK: - 補助アプリとの接続
+    // MARK: - ヘルパーアプリとの接続
 
     private func startListener() {
         let parameters = NWParameters.padBridge()
-        // 同じ Mac の補助アプリだけがつなげるようにする
+        // 同じ Mac のヘルパーアプリだけが接続できるようにする
         parameters.requiredInterfaceType = .loopback
         parameters.acceptLocalOnly = true
         guard let listener = try? NWListener(using: parameters) else {
-            Self.logger.error("補助アプリとの接続を待ち受けられない")
+            Self.logger.error("ヘルパーアプリとの接続を待ち受けられない")
             return
         }
         listener.stateUpdateHandler = { [weak self, weak listener] state in
@@ -197,13 +197,13 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         configuration.addsToRecentItems = false
-        // 前の Host から残った補助アプリには新しい接続先が渡らないので、いつも新しく起動する。古い方は接続が切れて自分で終わる
+        // 前の Host から残ったヘルパーアプリには新しい接続先が渡らないので、常に新しく起動する。古い方は接続が切れて自分で終了する
         configuration.createsNewApplicationInstance = true
         configuration.arguments = ["--port", String(port.rawValue), "--token", token]
         DispatchQueue.main.async {
             NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
                 guard let error else { return }
-                Self.logger.error("補助アプリを起動できない: \(error, privacy: .public)")
+                Self.logger.error("ヘルパーアプリを起動できない: \(error, privacy: .public)")
                 guard let self else { return }
                 queue.async { self.retryLaunch() }
             }
@@ -223,7 +223,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
     private func accept(_ connection: NWConnection) {
         let channel = MessageChannel(connection: connection, queue: queue)
         pending[ObjectIdentifier(channel)] = channel
-        // 合言葉を言わないままの接続を残さない
+        // トークンを送らないままの接続を残さない
         queue.asyncAfter(deadline: .now() + 10) { [weak self, weak channel] in
             guard let self, let channel, pending[ObjectIdentifier(channel)] === channel else { return }
             pending[ObjectIdentifier(channel)] = nil
@@ -239,7 +239,7 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     self.channel = nil
                     finishPendingReady()
                     completeFinish()
-                    // 補助アプリが落ちたら、iPad がつながっている間は起動し直す。落ち続けるときに起動を繰り返し続けないよう、少し待つ
+                    // ヘルパーアプリが落ちたら、iPad が接続している間は再起動する。落ち続けるときに起動を繰り返し続けないよう、少し待つ
                     if isRunning {
                         queue.asyncAfter(deadline: .now() + 2) { [weak self] in
                             guard let self, isRunning, self.channel == nil else { return }
@@ -263,10 +263,10 @@ nonisolated final class MicrophoneRelay: @unchecked Sendable {
                     self.channel = channel
                     launchedAt = nil
                     launchFailures = 0
-                    Self.logger.notice("補助アプリとつながった")
-                // 合言葉を確かめた接続からのものだけを受ける
+                    Self.logger.notice("ヘルパーアプリと接続した")
+                // トークンを確認した接続からのものだけを受け付ける
                 case let .microphoneRelayReady(isUsingPadMicrophone) where channel === self.channel:
-                    // 補助アプリが起動直後の点検などで遅れると、待ち時間を過ぎてから届く。Typeless はもう聞き取りを始めているので、そのことを伝える
+                    // ヘルパーアプリが起動直後のチェックなどで遅れると、タイムアウトを過ぎてから届く。Typeless はすでに音声入力を始めているので、そのことを伝える
                     if pendingReady == nil, isListeningRequested {
                         onLateReady(isUsingPadMicrophone)
                     }

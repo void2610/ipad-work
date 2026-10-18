@@ -2,7 +2,7 @@ import Carbon
 import Foundation
 import PadBridgeKit
 
-/// Mac の文字入力が英数とかなのどちらかを読み、変わるたびに知らせる。メインスレッドで使う。
+/// Mac の文字入力が英数とかなのどちらかを取得し、変わるたびに通知する。メインスレッドで使う。
 final class InputModeMonitor: NSObject {
     private let onChange: @Sendable (MacInputMode) -> Void
 
@@ -11,7 +11,7 @@ final class InputModeMonitor: NSObject {
     }
 
     func start() {
-        // 分散通知は既定では、アプリが前面にない間は前面に来るまで止められる。メニューバーの常駐アプリはほとんど前面に来ないので、すぐ届けさせる
+        // 分散通知は既定では、アプリが前面にない間は前面に来るまで配信が保留される。メニューバー常駐アプリはほとんど前面に来ないので、すぐ配信させる
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(inputSourceChanged),

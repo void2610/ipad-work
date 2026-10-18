@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 
-/// Mac で動いている Typeless 本体の様子。どのスレッドからでも呼べる。
+/// Mac で動作している Typeless 本体の状態。どのスレッドからでも呼べる。
 nonisolated enum TypelessApp {
     static let bundleIdentifier = "now.typeless.desktop"
     private static let keyEvents: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
@@ -10,7 +10,7 @@ nonisolated enum TypelessApp {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
     }
 
-    /// Typeless がショートカットを待ち受けているか。ショートカットは本体のプロセスのキーのイベントタップで見ているので、タップができるまでは押しても届かない。
+    /// Typeless がショートカットを受け付けているか。ショートカットは本体プロセスのキーイベントタップで監視しているので、タップが作成されるまでは押しても届かない。
     static func isListeningForShortcut() -> Bool {
         let processes = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).map(\.processIdentifier))
         guard !processes.isEmpty else { return false }

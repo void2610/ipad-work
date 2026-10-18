@@ -9,7 +9,7 @@ struct KeyboardMappingTests {
         (0x28, 0x24), // Return
         (0x2A, 0x33), // Backspace
         (0x2D, 0x1B), // - (かなモードで「ー」になる)
-        (0x3C, 0x63), // F3 (⌃F3 でドックに移る。この Mac の「ドックを操作対象にする」の設定もキーコード 99 だった)
+        (0x3C, 0x63), // F3 (⌃F3 で Dock にフォーカスが移る。この Mac の「Dock にフォーカスを移動」の設定もキーコード 99 だった)
         (0x50, 0x7B), // ←
         (0x91, 0x66), // 英数
         (0xE3, 0x37), // 左 Command
@@ -55,7 +55,7 @@ struct ClickCounterTests {
 }
 
 struct TypelessShortcutTests {
-    /// 実際のキーボードと同じく、左 Control を示す 0x1 と、実入力を示す 0x100 を載せること。
+    /// 実際のキーボードと同じく、左 Control を示す 0x1 と、実入力を示す 0x100 を付けること。
     @Test func defaultPushToTalkPressesLeftCtrlThenFn() {
         let shortcut = TypelessShortcut("LeftCtrl+Fn")!
         #expect(shortcut.events(isDown: true) == [
@@ -96,7 +96,7 @@ struct TypelessToggleTests {
         #expect(pressedToStop)
     }
 
-    /// Typeless が自分で聞き取りを終えたあとに「完了」が来ても押さない。押すと逆に聞き取りが始まってしまう。
+    /// Typeless が自分で音声入力を終えたあとに「完了」が来ても押さない。押すと逆に音声入力が始まってしまう。
     @Test func doesNotPressWhenTypelessAlreadyStopped() {
         var toggle = TypelessToggle()
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
@@ -106,7 +106,7 @@ struct TypelessToggleTests {
         #expect(!pressed)
     }
 
-    /// 押した直後はまだマイクが動いていないので、すぐの「完了」は押した結果を待たずに押す。
+    /// 押した直後はまだマイクが起動していないので、すぐに「完了」が来たら、押した結果を待たずに押す。
     @Test func treatsPressAsAppliedUntilTypelessCatchesUp() {
         var toggle = TypelessToggle()
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
@@ -114,7 +114,7 @@ struct TypelessToggleTests {
         #expect(pressed)
     }
 
-    /// Typeless が押されたことに反応しなかったら、猶予のあとは実際の状態に戻って押し直せる。
+    /// Typeless が押下に反応しなかったら、猶予時間のあとは実際の状態に戻して押し直せる。
     @Test func fallsBackToActualStateWhenPressWasIgnored() {
         var toggle = TypelessToggle()
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
@@ -122,7 +122,7 @@ struct TypelessToggleTests {
         #expect(pressed)
     }
 
-    /// Mac で自分で始めた聞き取りは、iPad が始めさせたものとして扱わない。
+    /// Mac で自分で始めた音声入力は、iPad が開始したものとして扱わない。
     @Test func remembersOnlyListeningStartedByPad() {
         var toggle = TypelessToggle()
         #expect(!toggle.isStartedByPad)
@@ -133,8 +133,8 @@ struct TypelessToggleTests {
         #expect(!toggle.isStartedByPad)
     }
 
-    /// 前の聞き取りが止まったのに見張りが気づく前に開始を押すと、そのあとで前の「止まった」が届く。
-    /// それで iPad が始めさせたことを忘れると、iPad が離れたときに Typeless を止めず、聞き取りが残る。
+    /// 前の音声入力が止まったのに監視が気づく前に開始を押すと、そのあとで前の「停止」が届く。
+    /// それで iPad が開始したことを忘れると、iPad が切断したときに Typeless を止めず、音声入力が残る。
     @Test func staleStopRightAfterStartKeepsStartedByPad() {
         var toggle = TypelessToggle()
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 10)
@@ -142,7 +142,7 @@ struct TypelessToggleTests {
         #expect(toggle.isStartedByPad)
         toggle.observe(isRecording: true, at: 10.2)
         #expect(toggle.isStartedByPad)
-        // 押した結果の聞き取りが終われば、忘れる
+        // 押した結果の音声入力が終われば、忘れる
         toggle.observe(isRecording: false, at: 20)
         #expect(!toggle.isStartedByPad)
     }

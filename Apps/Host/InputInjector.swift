@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import PadBridgeKit
 
-/// iPad から届いた操作を、CGEvent として Mac に流し込む。HostServer の入力キューの上でだけ使う。
+/// iPad から届いた操作を、CGEvent として Mac に注入する。HostServer の入力キュー上でのみ使う。
 nonisolated final class InputInjector: @unchecked Sendable {
     private let source = CGEventSource(stateID: .hidSystemState)
     private var clickCounter: ClickCounter
@@ -12,7 +12,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var pressedKeys: Set<UInt16> = []
     private var scrollWheel = ScrollWheel()
     private var location = CGPoint.zero
-    // iPad に映している画面。タッチの位置はこの画面の上の割合で届く
+    // iPad に表示しているディスプレイ。タッチ位置はこのディスプレイ上の割合で届く
     private var displayID: CGDirectDisplayID?
     private var typeless = TypelessToggle()
     private var heldModifiers = HeldModifiers()
@@ -22,10 +22,10 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private var keyRepeat = KeyRepeat()
     private var keyRepeatTimer: DispatchSourceTimer?
     private var keyRepeatStartedAt: TimeInterval = 0
-    // 離した知らせが届かずに繰り返し続けても、ここで止める。実際のキーをこれより長く押し続けることはまずない
+    // 離した通知が届かずに繰り返し続けても、ここで止める。実際のキーをこれより長く押し続けることはまずない
     private static let maxKeyRepeatDuration: TimeInterval = 30
 
-    /// `queue` は HostServer の入力キュー。押したままのキーの繰り返しもこのキューで送る。
+    /// `queue` は HostServer の入力キュー。押したままのキーのリピートもこのキューで送る。
     init(queue: DispatchQueue, doubleClickInterval: TimeInterval, keyRepeatDelay: TimeInterval, keyRepeatInterval: TimeInterval) {
         self.queue = queue
         // iPad の指は狙った位置から数ポイントずれるので、Mac のマウスより判定を緩める
@@ -57,13 +57,13 @@ nonisolated final class InputInjector: @unchecked Sendable {
         self.displayID = displayID
     }
 
-    /// 映す画面を選び直したときに、ポインタをその画面の中央へ動かす。
-    /// Mission Control など、画面ごとの操作スペースではポインタのある画面に効く操作を、映している画面に効かせるため。
+    /// 表示するディスプレイを選び直したときに、ポインタをそのディスプレイの中央へ移動する。
+    /// Mission Control など、ディスプレイごとの操作スペースではポインタのあるディスプレイに作用する操作を、表示中のディスプレイに作用させるため。
     func moveToDisplayCenter() {
         move(to: screenPoint(NormalizedPoint(x: 0.5, y: 0.5)))
     }
 
-    /// Typeless のマイクが動き出したり止まったりしたときに呼ぶ。
+    /// Typeless のマイクが開始・停止したときに呼ぶ。
     func typelessRecordingChanged(_ isRecording: Bool) {
         typeless.observe(isRecording: isRecording, at: ProcessInfo.processInfo.systemUptime)
     }
@@ -76,7 +76,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         releaseHeldInput()
     }
 
-    /// 押したままのボタンとキーを離す。iPad が裏に回ったときにも呼ぶ (iPadOS に取られて離した知らせが届かなかったキーを、Mac に残さない)。
+    /// 押したままのボタンとキーを離す。iPad がバックグラウンドに回ったときにも呼ぶ (iPadOS に奪われて離した通知が届かなかったキーを、Mac に残さない)。
     func releaseHeldInput() {
         stopKeyRepeat()
         for button in pressedButtons {
@@ -94,23 +94,23 @@ nonisolated final class InputInjector: @unchecked Sendable {
         heldModifiers.removeAll()
     }
 
-    /// Typeless の音声入力を始める (true) / 終える (false)。
-    /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、押し続けると使い方の案内が出るだけなので、短く 1 回押す。
+    /// Typeless の音声入力を開始 (true) / 終了 (false) する。
+    /// Typeless の音声入力のショートカットは押すたびに開始と完了が切り替わり、長押しすると使い方の案内が出るだけなので、短く 1 回押す。
     private func setVoiceInput(_ isActive: Bool) {
-        // 起動を待つのは押すと決める前にする。押すと決めた時刻から待つと、待つ間に離したときの完了が「まだ始まっていない」とみなされて押されない
+        // 起動待ちは押すと決める前に行う。押すと決めた時刻から待つと、待つ間に離したときの完了が「まだ開始していない」とみなされて押されない
         if isActive {
             Self.waitForTypelessRestart()
             Self.launchTypelessIfNeeded()
         }
         guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
-        // Typeless 側でショートカットを変えても追従できるよう、押すたびに設定を読み直す
+        // Typeless 側でショートカットを変更しても追従できるよう、押すたびに設定を読み直す
         let shortcut = Self.typelessPushToTalk()
         post(shortcut.events(isDown: true))
         Thread.sleep(forTimeInterval: 0.05)
         post(shortcut.events(isDown: false))
     }
 
-    /// Typeless のマイクの設定のために終了させて起動し直している間は、終わるまで待つ。途中で押すと、終了しかけた Typeless に届かないか、別に起動してしまう。
+    /// Typeless のマイク設定のために終了して再起動している間は、完了するまで待つ。途中で押すと、終了しかけた Typeless に届かないか、別のプロセスが起動してしまう。
     private static func waitForTypelessRestart() {
         let deadline = Date.now + 15
         while TypelessMicrophoneSetup.isRestartingTypeless, Date.now < deadline {
@@ -118,8 +118,8 @@ nonisolated final class InputInjector: @unchecked Sendable {
         }
     }
 
-    /// Typeless が動いていなければ起動する。動いていないとショートカットを押しても何も起きないため。
-    /// 起動してからショートカットを待ち受けるまで少しかかるので、待ち受け始めるのを待つ (入力のキューの上なので、待つ間ほかの操作は後回しになる)。
+    /// Typeless が起動していなければ起動する。起動していないとショートカットを押しても何も起きないため。
+    /// 起動してからショートカットを受け付けるまで少しかかるので、受け付け開始まで待つ (入力キュー上なので、待つ間ほかの操作は後回しになる)。
     private static func launchTypelessIfNeeded() {
         guard !TypelessApp.isRunning, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TypelessApp.bundleIdentifier) else { return }
         let launched = DispatchSemaphore(value: 0)
@@ -144,7 +144,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         }
     }
 
-    /// Typeless の設定ファイルを読むだけで、書き換えはしない。読めなければ Typeless の既定 (LeftCtrl+Fn) を使う。
+    /// Typeless の設定ファイルを読み取るだけで、書き換えはしない。読み取れなければ Typeless の既定 (LeftCtrl+Fn) を使う。
     private static func typelessPushToTalk() -> TypelessShortcut {
         let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Typeless/app-settings.json")
         guard let data = try? Data(contentsOf: url),
@@ -158,13 +158,13 @@ nonisolated final class InputInjector: @unchecked Sendable {
 
     private var displayBounds: CGRect {
         let bounds = displayID.map(CGDisplayBounds) ?? .null
-        // 画面を外した直後で、Host がまだ映す画面を替えていない間は大きさ 0 が返る。メインディスプレイの上として扱う
+        // ディスプレイを取り外した直後で、Host がまだ表示するディスプレイを切り替えていない間はサイズ 0 が返る。メインディスプレイ上として扱う
         return bounds.isEmpty ? CGDisplayBounds(CGMainDisplayID()) : bounds
     }
 
     private func screenPoint(_ point: NormalizedPoint) -> CGPoint {
         let bounds = displayBounds
-        // 右端と下端 (割合 1) は隣の画面の端にあたるので、映している画面の内側に収める
+        // 右端と下端 (割合 1) は隣のディスプレイの端にあたるので、表示中のディスプレイの内側に収める
         return CGPoint(x: min(bounds.minX + point.x * bounds.width, bounds.maxX - 1), y: min(bounds.minY + point.y * bounds.height, bounds.maxY - 1))
     }
 
@@ -197,9 +197,9 @@ nonisolated final class InputInjector: @unchecked Sendable {
         let bounds = displayBounds
         guard let (wheelX, wheelY) = scrollWheel.pixels(dx: dx, dy: dy, width: Double(bounds.width), height: Double(bounds.height)) else { return }
         let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheelY, wheel2: wheelX, wheel3: 0)
-        // ⌘ を押しながらのスクロールで拡大するアプリがあるので、押されている修飾キーを載せる
+        // ⌘ を押しながらのスクロールで拡大するアプリがあるので、押されている修飾キーを付与する
         event?.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
-        // LinearMouse などは HID の段でホイールに速さと加速をかけるので、その後ろの段に入れ、指を動かした分だけ動かす
+        // LinearMouse などは HID 層でホイールに速度と加速を適用するので、その後段に注入し、指を動かした分だけ動かす
         event?.post(tap: .cgSessionEventTap)
     }
 
@@ -222,7 +222,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private func startKeyRepeat() {
         keyRepeatTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        // Mac のキーボード設定の「リピート入力認識までの時間」と「キーのリピート」に合わせる
+        // Mac のキーボード設定の「キーのリピート入力認識までの時間」と「キーのリピート」に合わせる
         timer.schedule(deadline: .now() + keyRepeatDelay, repeating: keyRepeatInterval)
         timer.setEventHandler { [weak self] in self?.postKeyRepeat() }
         timer.resume()
@@ -244,7 +244,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
             return
         }
         event.flags = CGEventFlags(rawValue: key.flags)
-        // 実際のキーボードの繰り返しと同じ印を付け、アプリが押し続けによる入力として扱えるようにする
+        // 実際のキーボードのリピートと同じフラグを付け、アプリが押し続けによる入力として扱えるようにする
         event.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
         event.post(tap: .cghidEventTap)
     }
@@ -274,7 +274,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
         if let clickCount {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         }
-        // ⌘クリックや ⇧クリックになるよう、押されている修飾キーを載せる
+        // ⌘クリックや ⇧クリックになるよう、押されている修飾キーを付与する
         event.flags = CGEventFlags(rawValue: heldModifiers.mouseEventFlags)
         event.post(tap: .cghidEventTap)
     }

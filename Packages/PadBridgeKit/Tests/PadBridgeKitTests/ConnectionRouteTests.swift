@@ -3,7 +3,7 @@ import Network
 import Testing
 
 struct ConnectionRouteTests {
-    /// AWDL はインターフェースの種類が Wi-Fi でも、名前でピアツーピア通信と見分ける。
+    /// AWDL はインターフェース種別が Wi-Fi でも、名前でピアツーピア通信と判別する。
     @Test func labelsRoutes() {
         #expect(ConnectionRoute.label(interfaceName: "awdl0", type: .wifi) == "Wi-Fi ピアツーピア (AWDL)")
         #expect(ConnectionRoute.label(interfaceName: "en0", type: .wifi) == "Wi-Fi")

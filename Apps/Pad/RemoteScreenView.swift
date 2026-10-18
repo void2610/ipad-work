@@ -24,14 +24,14 @@ struct RemoteScreenView: UIViewRepresentable {
     }
 }
 
-/// Mac の画面を映し、指・ポインタ・ハードウェアキーボードの操作を Mac の操作に変換する。対応表は README を参照。
+/// Mac のディスプレイを表示し、指・ポインタ・ハードウェアキーボードの操作を Mac の操作に変換する。対応表は README を参照。
 final class RemoteScreenUIView: UIView {
     var send: ((ControlMessage) -> Void)?
     var sendPointer: (([ControlMessage]) -> Void)?
     var onThreeFingerSwipe: ((TouchInterpreter.SwipeDirection) -> Void)?
     var onBottomEdgeSwipe: (() -> Void)?
     var onRegionRequest: ((VideoRegion) -> Void)?
-    /// 届いている映像に写っている Mac の画面の範囲。拡大中は見えている範囲だけが高い解像度で届く。
+    /// 受信している映像に写っている Mac のディスプレイの範囲。拡大中は表示範囲だけが高解像度で届く。
     var shownRegion = VideoRegion.full {
         didSet {
             if shownRegion != oldValue { setNeedsLayout() }
@@ -40,38 +40,38 @@ final class RemoteScreenUIView: UIView {
     private var regionRequestTimer: Timer?
     private var lastScreenArea = CGRect.null
     var videoSize = CGSize.zero {
-        // 画面を替えると、替えた知らせで一度置き直したあとに新しい画面の大きさが届く。そのときも置き直さないと、映像が前の画面の縦横比の枠に縮んで描かれ、触った位置とずれる
+        // ディスプレイを切り替えると、切り替え通知で一度配置し直したあとに新しいディスプレイのサイズが届く。そのときも配置し直さないと、映像が前のディスプレイの縦横比の枠に縮んで描かれ、タッチ位置とずれる
         didSet {
             if videoSize != oldValue { setNeedsLayout() }
         }
     }
-    /// 映像を映しているか。映していない間は Mac のポインタも見えないので、iPad のポインタを隠さない。
+    /// 映像を表示しているか。表示していない間は Mac のポインタも見えないので、iPad のポインタを隠さない。
     var isVideoShown = false {
         didSet {
             if isVideoShown != oldValue { pointerInteraction?.invalidate() }
         }
     }
-    /// 映している Mac の画面。別の画面に替わったら、拡大を戻す。
+    /// 表示している Mac のディスプレイ。別のディスプレイに切り替わったら、拡大を戻す。
     var displayID: UInt32? {
         didSet {
             guard oldValue != nil, displayID != oldValue else { return }
             regionRequestTimer?.invalidate()
             zoom = ScreenZoom()
             setNeedsLayout()
-            // 替える前に待っていた拡大の範囲の頼みが先に送られていても、全体に戻させる
+            // 切り替え前に待機していた拡大範囲の要求が先に送られていても、全体に戻させる
             onRegionRequest?(.full)
         }
     }
 
     private let displayLayer: AVSampleBufferDisplayLayer
     private let emptyInputView = UIView(frame: .zero)
-    // ビューの座標での、画面の下端に付いたキーボードの上端。キーボードがなければ無限大
+    // ビュー座標での、画面下端に付いたキーボードの上端。キーボードがなければ無限大
     private var keyboardTop = CGFloat.infinity
     private var interpreter = TouchInterpreter()
     private var zoom = ScreenZoom()
     private var pointerInteraction: UIPointerInteraction?
     private var longPressTimer: DispatchWorkItem?
-    // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
+    // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに保持しておく
     private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
     // ペンやマウスのボタンを押している間に触れた指や手のひら。押したままのボタンに、指の位置への移動やクリックが割り込まないよう、離すまで無視する
     private var ignoredTouches: Set<ObjectIdentifier> = []
@@ -81,7 +81,7 @@ final class RemoteScreenUIView: UIView {
         self.displayLayer = displayLayer
         super.init(frame: .zero)
         backgroundColor = .black
-        // 拡大した映像がビューの外にはみ出して、操作パネルの下などに描かれないようにする
+        // 拡大した映像がビューの外にはみ出して、操作パネルの下などに描画されないようにする
         clipsToBounds = true
         // 既定の false のままだと 2 本目の指が届かず、2 本指のスクロールが成立しない
         isMultipleTouchEnabled = true
@@ -113,12 +113,12 @@ final class RemoteScreenUIView: UIView {
     }
 
     @objc private func forwardShortcut(_ command: UIKeyCommand) {
-        // 一覧を出している間にキーを渡すと、ここに届く (押したキーと同じく、Mac へは送らない)
+        // 一覧を表示している間にキーを渡すと、ここに届く (押したキーと同様に、Mac へは送らない)
         guard !isCovered else { return }
         HardwareKeys.forwardShortcut(command, send: send)
     }
 
-    // 文字入力を持たないビューでも、入力先のまま「…」のメニューを開くと iPadOS がソフトウェアキーボードを出してメニューを隠すので、空の入力ビューに置き換える
+    // テキスト入力を持たないビューでも、ファーストレスポンダのまま「…」のメニューを開くと iPadOS がソフトウェアキーボードを表示してメニューを隠すので、空の入力ビューに置き換える
     override var inputView: UIView? {
         emptyInputView
     }
@@ -132,35 +132,35 @@ final class RemoteScreenUIView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // 拡大している間にキーボードの出し入れや回転で映す範囲が変わったら、見えている範囲を頼み直す。前の範囲のままだと縁が黒くなる
+        // 拡大中にキーボードの表示・非表示や回転で表示範囲が変わったら、表示範囲を要求し直す。前の範囲のままだと縁が黒くなる
         if screenArea != lastScreenArea {
             lastScreenArea = screenArea
             if zoom.isZoomed { scheduleRegionRequest() }
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        // 届いている映像は shownRegion の範囲だけなので、画面全体の中でその範囲が占める位置に置く
+        // 受信している映像は shownRegion の範囲だけなので、ディスプレイ全体の中でその範囲が占める位置に配置する
         displayLayer.frame = shownRegion.rect(in: videoRect)
         CATransaction.commit()
-        // キーボードが出ている間は、その上端は画面の下端ではないので、下端からの払いを受けない
+        // キーボードが表示されている間は、その上端は画面下端ではないので、下端からのスワイプを受けない
         interpreter.bottomEdge = isKeyboardShown ? .infinity : bounds.maxY
-        // 拡大や回転で Mac の画面の範囲が変わったので、ポインタを隠す範囲を決め直させる
+        // 拡大や回転で Mac のディスプレイの範囲が変わったので、ポインタを隠す範囲を再計算させる
         pointerInteraction?.invalidate()
     }
 
     // MARK: - キーボード
 
-    // キーボードの分は、SwiftUI の余白や keyboardLayoutGuide ではなく、キーボードの通知が知らせる位置から決める。
-    // 特殊キーの列を付けた入力欄をプログラムから外すと、どちらも列の高さ分を残したまま戻らない (通知は正しく画面外を知らせる)
+    // キーボード分は、SwiftUI の余白や keyboardLayoutGuide ではなく、キーボードの通知が伝える位置から決める。
+    // キーボード上部のバーを付けた入力欄をプログラムから外すと、どちらもバーの高さ分を残したまま戻らない (通知は正しく画面外を伝える)
     @objc private func keyboardWillChangeFrame(_ notification: Notification) {
         guard let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, let window else { return }
         let frame = window.screen.coordinateSpace.convert(end, to: self)
-        // 画面の下端に付いていない (フローティングの) キーボードは、映像に重ねるだけにする
+        // 画面下端に付いていない (フローティングの) キーボードは、映像に重ねるだけにする
         keyboardTop = frame.minY < bounds.maxY && frame.maxY >= bounds.maxY - 1 ? frame.minY : .infinity
         setNeedsLayout()
     }
 
-    // キーボードを閉じたあと、画面に触れなくてもハードウェアキーボードのキーを Mac に届ける (入力先がないとキーは捨てられる)
+    // キーボードを閉じたあと、画面に触れなくてもハードウェアキーボードのキーを Mac に届ける (ファーストレスポンダがないとキーは破棄される)
     @objc private func directTypingDidEnd(_: Notification) {
         guard window != nil, !isCovered, !isFirstResponder, !DirectTypingUIView.isTyping else { return }
         becomeFirstResponder()
@@ -175,20 +175,20 @@ final class RemoteScreenUIView: UIView {
         keyboardTop < bounds.maxY - 1
     }
 
-    /// Mac の画面を映す範囲。キーボードが出ている間は、その上までに縮める。
+    /// Mac のディスプレイを表示する範囲。キーボードが表示されている間は、その上までに縮める。
     private var screenArea: CGRect {
         CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: max(0, min(keyboardTop, bounds.maxY) - bounds.minY))
     }
 
     // MARK: - 座標
 
-    /// 等倍のときに映像を置く位置。
+    /// 等倍のときに映像を配置する位置。
     private var fittedRect: CGRect {
         guard videoSize.width > 0, videoSize.height > 0 else { return screenArea }
         return AVMakeRect(aspectRatio: videoSize, insideRect: screenArea)
     }
 
-    /// 拡大を反映した、映像を置く位置。タッチの位置もここを基準に Mac の座標へ直す。
+    /// 拡大を反映した、映像の配置位置。タッチ位置もここを基準に Mac の座標へ変換する。
     private var videoRect: CGRect {
         zoom.rect(fitted: fittedRect, in: screenArea)
     }
@@ -208,7 +208,7 @@ final class RemoteScreenUIView: UIView {
         }
         for touch in touches {
             let location = touch.location(in: self)
-            // Apple Pencil は Sidecar と同じく、触れたところを押してそのまま動かすとドラッグにする (指で払うのはスクロールのまま)
+            // Apple Pencil は Sidecar と同様に、触れた位置を押してそのまま動かすとドラッグにする (指のスワイプはスクロールのまま)
             if touch.type == .indirectPointer || touch.type == .pencil {
                 let button: MouseButton = event?.buttonMask.contains(.secondary) == true ? .right : .left
                 pointerButtons[ObjectIdentifier(touch)] = button
@@ -291,7 +291,7 @@ final class RemoteScreenUIView: UIView {
                 guard rect.width > 0, rect.height > 0 else { continue }
                 pointerMessages.append(.scroll(dx: dx / rect.width, dy: dy / rect.height))
             case .scrollEnded:
-                // 指を離したら止める。慣性で流すと、映像の遅れの分だけ見えている位置より先まで流れ、思った位置で止められない
+                // 指を離したら止める。慣性スクロールさせると、映像の遅延の分だけ表示位置より先まで流れ、思った位置で止められない
                 break
             case .longPressRecognized:
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -307,7 +307,7 @@ final class RemoteScreenUIView: UIView {
         }
     }
 
-    /// 拡大が落ち着いたら、見えている範囲を Mac に頼む。動かしている間に何度も頼まないよう、少し待つ。
+    /// 拡大が落ち着いたら、表示範囲を Mac に要求する。動かしている間に何度も要求しないよう、少し待つ。
     private func scheduleRegionRequest() {
         regionRequestTimer?.invalidate()
         regionRequestTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
@@ -363,7 +363,7 @@ final class RemoteScreenUIView: UIView {
     // MARK: - ハードウェアキーボード
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // 操作の一覧などを上に出している間は、入力先のままでもキーを Mac へ送らない (離したキーは、押したまま出したときに残らないよう送る)
+        // 操作の一覧などを前面に表示している間は、ファーストレスポンダのままでもキーを Mac へ送らない (離したキーは、押したまま表示したときに残らないよう送る)
         if isCovered || !forward(presses, isDown: true) {
             super.pressesBegan(presses, with: event)
         }
@@ -396,8 +396,8 @@ enum HardwareKeys {
     private static let shortcutModifiers: [UIKeyModifierFlags] = [.command, [.command, .shift], [.command, .alternate], [.command, .control]]
 
     /// ⌘ との組み合わせを、iPadOS より先に受け取ると宣言するショートカット。
-    /// 宣言しないと ⌘F・⌘B・⌘I・⌘E などは iPadOS のメニューや入力の仕組みに取られ、押したキーが届かない。宣言すると押したキーがそのまま presses に届くので、
-    /// `action` はそうならなかったときの受け口になる。
+    /// 宣言しないと ⌘F・⌘B・⌘I・⌘E などは iPadOS のメニューや入力機構に取られ、押したキーが届かない。宣言すると押したキーがそのまま presses に届くので、
+    /// `action` はそうならなかったときのフォールバックになる。
     static func priorityCommands(action: Selector) -> [UIKeyCommand] {
         shortcutModifiers.flatMap { modifiers in
             shortcutInputs.map { input in
@@ -432,12 +432,12 @@ enum HardwareKeys {
     }
 }
 
-// Mac の画面の上では iPad のポインタを隠し、映像に描かれた Mac のポインタだけを見せる。両方だと二重に見え、形 (I ビームなど) は Mac 側にしかない
+// Mac のディスプレイ上では iPad のポインタを隠し、映像に描かれた Mac のポインタだけを見せる。両方だと二重に見え、形 (I ビームなど) は Mac 側にしかない
 extension RemoteScreenUIView: UIPointerInteractionDelegate {
     func pointerInteraction(_: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion _: UIPointerRegion) -> UIPointerRegion? {
-        // 映像が届く前は映像の範囲が画面全体になるが、Mac のポインタはまだ見えない
+        // 映像が届く前は映像の範囲がディスプレイ全体になるが、Mac のポインタはまだ見えない
         guard isVideoShown else { return nil }
-        // 上下や左右の黒い帯と、拡大した映像がキーボードの下に回り込んだところでは、iPad のポインタを出したままにする
+        // 上下や左右の黒い帯と、拡大した映像がキーボードの下に回り込んだところでは、iPad のポインタを表示したままにする
         let screen = videoRect.intersection(screenArea)
         return screen.contains(request.location) ? UIPointerRegion(rect: screen) : nil
     }

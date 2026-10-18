@@ -7,7 +7,7 @@ import Synchronization
 import Testing
 import VideoToolbox
 
-/// 本物のエンコーダで、画面が止まったあとの送り直しを確かめる。画面の取り込みの代わりに、文字のような模様を作って渡す。
+/// 本物のエンコーダで、画面が静止したあとの再送を確認する。画面キャプチャの代わりに、文字のようなテストパターンを作って渡す。
 @Suite(.serialized)
 struct VideoSenderTests {
     private final class Recorder: Sendable {
@@ -28,7 +28,7 @@ struct VideoSenderTests {
 
     private let queue = DispatchQueue(label: "test.video-sender")
 
-    /// 回線が詰まって最後のフレームを捨てても、画面が止まったら最後の絵を届ける (iPad に途中の絵が残らない)。
+    /// 回線が輻輳して最後のフレームを破棄しても、画面が静止したら最後の映像を届ける (iPad に中途半端な映像が残らない)。
     @Test func deliversLastFrameDroppedByFullLink() async throws {
         let (width, height) = (640, 400)
         let recorder = Recorder()
@@ -38,7 +38,7 @@ struct VideoSenderTests {
         for image in images {
             queue.sync { sender.send(image, presentationTime: Self.now()) }
         }
-        // 返事を待つのは 3 枚までなので、4 枚目は捨てる
+        // ACK 待ちは 3 フレームまでなので、4 フレーム目は破棄する
         try await waitUntil { recorder.frames.count >= 3 }
         #expect(recorder.frames.count == 3)
         for frame in recorder.frames {
@@ -49,10 +49,10 @@ struct VideoSenderTests {
         let last = try #require(decoded.last)
         let toFourth = psnr(images[3], last)
         let toThird = psnr(images[2], last)
-        #expect(toFourth > 30 && toFourth > toThird + 10, "4 枚目と \(toFourth)dB、3 枚目と \(toThird)dB")
+        #expect(toFourth > 30 && toFourth > toThird + 10, "4 フレーム目と \(toFourth)dB、3 フレーム目と \(toThird)dB")
     }
 
-    /// 画面が止まっている間に iPad がキーフレームを頼んでも、次に画面が変わるのを待たずに届ける。
+    /// 画面が静止している間に iPad がキーフレームを要求しても、次に画面が変わるのを待たずに届ける。
     @Test func answersKeyFrameRequestWhileStill() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -67,7 +67,7 @@ struct VideoSenderTests {
         #expect(recorder.frames.last?.isKeyFrame == true)
     }
 
-    /// 画面が止まっている間に拡大の範囲が変わっても、その範囲を切り出した絵を届ける。
+    /// 画面が静止している間に拡大範囲が変わっても、その範囲を切り出した映像を届ける。
     @Test func sendsNewRegionWhileStill() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -83,7 +83,7 @@ struct VideoSenderTests {
         #expect(recorder.frames.last?.isKeyFrame == true)
     }
 
-    /// 拡大している範囲を、切り出して送る大きさに縮め、範囲を付けたキーフレームから送る。
+    /// 拡大している範囲を、切り出して送るサイズに縮め、範囲を付けたキーフレームから送る。
     @Test func sendsRegionFromKeyFrame() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -101,8 +101,8 @@ struct VideoSenderTests {
         #expect(recorder.frames[1].isKeyFrame)
     }
 
-    /// 画面が丸ごと替わってすぐ止まると (アプリの切り替えやページの読み込み)、1 枚分の予算で描いた絵のままになる。送り直してくっきりさせる。
-    /// 測ったときは、上限のビットレートで 47.1dB から 53.1dB、上限の 0.4 倍で 29.2dB から 45.5dB に上がった。
+    /// 画面全体が切り替わってすぐ静止すると (アプリの切り替えやページの読み込み)、1 フレーム分の予算で描画した粗い画質のままになる。再送して鮮明にする。
+    /// 測定結果は、上限のビットレートで 47.1dB から 53.1dB、上限の 0.4 倍で 29.2dB から 45.5dB に向上した。
     @Test(arguments: [(10, 3.0), (4, 10.0)])
     func sharpensStillFrameAfterSceneChange(tenthsOfMaximum: Int, expectedGain: Double) async throws {
         let (width, height) = (1920, 1080)
@@ -110,7 +110,7 @@ struct VideoSenderTests {
         let maximum = CaptureSize.bitRate(width: width, height: height)
         let sender = try makeSender(width: width, height: height, initialBitRate: maximum * tenthsOfMaximum / 10, recorder: recorder)
         defer { sender.stop() }
-        // 前の絵を送り終え、レート制御が最初のキーフレームの借りを返し終えてから替える (その間は絵を絞るので、比べられない)
+        // 前の映像を送り終え、レート制御が最初のキーフレームで超過した予算を返し終えてから切り替える (その間は画質を絞るので、比較できない)
         let images = try makeTexts(width: width, height: height, offsets: [0, 600])
         queue.sync { sender.send(images[0], presentationTime: Self.now()) }
         try await waitUntilSettled(recorder)
@@ -124,10 +124,10 @@ struct VideoSenderTests {
         let changedIndex = try #require(frames.firstIndex { $0.presentationTimeMicros == VideoFrame.presentationTimeMicros(of: changedAt) })
         let atStop = psnr(images[1], decoded[changedIndex])
         let refreshed = psnr(images[1], try #require(decoded.last))
-        #expect(refreshed > atStop + expectedGain, "替えた時点 \(atStop)dB、送り直したあと \(refreshed)dB")
+        #expect(refreshed > atStop + expectedGain, "切り替え時点 \(atStop)dB、再送後 \(refreshed)dB")
     }
 
-    /// 絵が仕上がったら送り直しをやめ、止まった画面ではそれ以上送らない (電池と通信量を使わない)。
+    /// 画質が仕上がったら再送をやめ、静止した画面ではそれ以上送らない (電池と通信量を使わない)。
     @Test func stopsRefreshingWhenSettled() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -141,7 +141,7 @@ struct VideoSenderTests {
         #expect(recorder.frames.count == count)
     }
 
-    /// 止めたあとは、送り直しの時刻が来ても送らない (作り直した取り込みの映像に混ぜない)。
+    /// 停止したあとは、再送の時刻が来ても送らない (再作成したキャプチャの映像に混ぜない)。
     @Test func stopEndsRefreshes() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -154,7 +154,7 @@ struct VideoSenderTests {
         #expect(recorder.frames.count == count)
     }
 
-    /// 送り直しのあとに、それより古い時刻の取り込みが届いても、送るフレームの時刻は戻らない (受け取りの返事は時刻の順に突き合わせる)。
+    /// 再送のあとに、それより古い時刻のキャプチャが届いても、送るフレームの時刻は戻らない (ACK は時刻順に突き合わせる)。
     @Test func keepsPresentationTimeIncreasing() async throws {
         let recorder = Recorder()
         let sender = try makeSender(width: 640, height: 400, recorder: recorder)
@@ -163,7 +163,7 @@ struct VideoSenderTests {
         queue.sync { sender.send(images[0], presentationTime: Self.now()) }
         try await waitUntil { recorder.frames.count >= 2 }
         let refreshed = try #require(recorder.frames.last)
-        // 画面に出た時刻は、送り直しを符号化したあとに届いても、送り直しより少し前のことがある
+        // 画面に表示された時刻は、再送をエンコードしたあとに届いても、再送より少し前になることがある
         let older = CMTime(value: refreshed.presentationTimeMicros - 5000, timescale: 1_000_000)
         queue.sync { sender.send(images[1], presentationTime: older) }
         try await waitUntil { recorder.frames.contains { $0.presentationTimeMicros > refreshed.presentationTimeMicros } }
@@ -171,7 +171,7 @@ struct VideoSenderTests {
         #expect(zip(times, times.dropFirst()).allSatisfy { $0 < $1 }, "\(times)")
     }
 
-    /// 止めたあとも、返事の有無・ビットレート・往復の遅れを読める (Host は止めてから読み、作り直す取り込みに引き継ぐ)。
+    /// 停止したあとも、ACK の有無・ビットレート・往復遅延を読める (Host は停止してから読み、再作成するキャプチャに引き継ぐ)。
     @Test func keepsStateForHandOverAfterStop() async throws {
         let recorder = Recorder()
         let maximum = CaptureSize.bitRate(width: 640, height: 400)
@@ -186,7 +186,7 @@ struct VideoSenderTests {
         #expect(sender.currentRoundTrip != nil)
     }
 
-    /// 作り直したエンコーダは、引き継いだビットレートから始める (上限から始めると、遅い回線では次に見直すまでの 2 秒を詰まらせる)。
+    /// 再作成したエンコーダは、引き継いだビットレートから始める (上限から始めると、遅い回線では次の見直しまでの 2 秒間が輻輳する)。
     @Test func startsAtHandedOverBitRate() async throws {
         let (width, height) = (640, 360)
         let maximum = CaptureSize.bitRate(width: width, height: height)
@@ -206,7 +206,7 @@ struct VideoSenderTests {
         }
         let atMaximum = try await averageBytes(initialBitRate: nil)
         let handedOver = try await averageBytes(initialBitRate: maximum / 5)
-        // 直す前は、どちらも同じ大きさ (12941 バイト) だった。直したあとは 4688 バイト
+        // 修正前は、どちらも同じサイズ (12941 バイト) だった。修正後は 4688 バイト
         #expect(handedOver * 2 < atMaximum, "上限から \(atMaximum) バイト、引き継いだ 1/5 から \(handedOver) バイト")
     }
 
@@ -229,13 +229,13 @@ struct VideoSenderTests {
         }
     }
 
-    /// 送り直しが終わるまで (0.4 秒増えなくなるまで) 待つ。
+    /// 再送が終わるまで (0.4 秒増えなくなるまで) 待つ。
     private func waitUntilSettled(_ recorder: Recorder) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         var count = recorder.frames.count
         var stableSince = ContinuousClock.now
         while ContinuousClock.now - stableSince < .milliseconds(400) {
-            try #require(ContinuousClock.now < deadline, "送り直しが終わらない")
+            try #require(ContinuousClock.now < deadline, "再送が終わらない")
             try await Task.sleep(for: .milliseconds(20))
             let current = recorder.frames.count
             if current != count {
@@ -245,7 +245,7 @@ struct VideoSenderTests {
         }
     }
 
-    /// 8x8 の濃淡のブロックを `seed` ごとに替えた模様。毎フレーム全体が変わり、上限のビットレートでは収まるが 1/5 では収まらない量にする。
+    /// 8x8 の濃淡のブロックを `seed` ごとに入れ替えたテストパターン。毎フレーム全体が変わり、上限のビットレートでは収まるが 1/5 では収まらない量にする。
     private func makeBlocks(width: Int, height: Int, seed: Int) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
@@ -268,12 +268,12 @@ struct VideoSenderTests {
         return buffer
     }
 
-    /// 9x18 の升に文字のような線を並べた模様。`offset` だけ下へずらす (スクロール)。
+    /// 9x18 のマス目に文字のような線を並べたテストパターン。`offset` だけ下へずらす (スクロール)。
     private func makeText(width: Int, height: Int, offset: Int) throws -> CVPixelBuffer {
         try makeTexts(width: width, height: height, offsets: [offset])[0]
     }
 
-    /// 縦に長い模様を 1 度だけ描き、`offsets` ごとにずらした行を写す (デバッグの組み立てでは、1 枚ずつ描くと 1920x1080 で 1 枚 0.1 秒以上かかる)。
+    /// 縦に長いテストパターンを 1 度だけ描画し、`offsets` ごとにずらした行を切り出す (デバッグビルドでは、1 フレームずつ描画すると 1920x1080 で 1 フレーム 0.1 秒以上かかる)。
     private func makeTexts(width: Int, height: Int, offsets: [Int]) throws -> [CVPixelBuffer] {
         let rows = height + (offsets.max() ?? 0)
         var pattern = [UInt8](repeating: 235, count: width * rows)
@@ -311,7 +311,7 @@ struct VideoSenderTests {
         }
     }
 
-    /// 送られた順に復号し、フレームごとの絵を返す。
+    /// 送られた順にデコードし、フレームごとの映像を返す。
     private func decodeAll(_ messages: [WireMessage]) throws -> [CVPixelBuffer] {
         var decoder: Decoder?
         var description: CMVideoFormatDescription?

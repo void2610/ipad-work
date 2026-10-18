@@ -30,7 +30,7 @@ struct TypelessMicrophoneChoiceTests {
         #expect(decide(selected: ["deviceId": "pad"]) == .alreadySelected)
     }
 
-    /// 利用者が特定のマイクを選んでいれば、今つながっていなくても変えない。
+    /// ユーザーが特定のマイクを選んでいれば、現在接続されていなくても変えない。
     @Test(arguments: ["builtin", "unplugged-usb"])
     func keepsUserChoice(deviceID: String) {
         #expect(decide(selected: ["deviceId": deviceID]) == .userChoseOther)

@@ -1,6 +1,6 @@
 import AppKit
 
-/// 終わる直前に、作ったデバイスを消す。Host との接続が切れたときや終了の合図のほかに、Apple Event で終わらされることもあるため。
+/// 終了する直前に、作成したデバイスを削除する。Host との接続が切れたときや終了シグナルのほかに、Apple Event で終了させられることもあるため。
 final class HelperDelegate: NSObject, NSApplicationDelegate {
     let relay: RelayClient
 
@@ -13,7 +13,7 @@ final class HelperDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// 画面には何も出さず、Host から渡された音を入力デバイスとして見せるだけの補助アプリ
+// ウィンドウは表示せず、Host から渡された音声を入力デバイスとして見せるだけのヘルパーアプリ
 let application = NSApplication.shared
 application.setActivationPolicy(.prohibited)
 let relay = RelayClient(arguments: CommandLine.arguments)

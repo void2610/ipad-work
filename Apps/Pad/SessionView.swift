@@ -1,7 +1,7 @@
 import PadBridgeKit
 import SwiftUI
 
-/// Mac の画面を全面に映し、操作は隅に浮かぶパネルとキーボードの上の列にまとめる。
+/// Mac のディスプレイを全面に表示し、操作は隅に浮かぶパネルとキーボード上部のバーにまとめる。
 struct SessionView: View {
     let model: AppModel
     let session: HostSession
@@ -11,7 +11,7 @@ struct SessionView: View {
         ZStack {
             Color.black
                 .ignoresSafeArea()
-            // キーボードの分は RemoteScreenView が UIKit のキーボードの位置から自分で縮める
+            // キーボード分は RemoteScreenView が UIKit のキーボードの位置から自分で縮める
             RemoteScreenView(session: session)
                 .ignoresSafeArea()
             statusOverlay
@@ -22,7 +22,7 @@ struct SessionView: View {
                 .allowsHitTesting(false)
         }
         .persistentSystemOverlays(.hidden)
-        // 画面の端を触ったときに、Mac の操作より先に iPadOS のジェスチャーが反応しないようにする
+        // 画面端を触ったときに、Mac の操作より先に iPadOS のジェスチャーが反応しないようにする
         .defersSystemGestures(on: .all)
         .statusBarHidden()
     }
@@ -31,7 +31,7 @@ struct SessionView: View {
         session.mismatchedHostCommit.map { "Mac の PadBridge Host と iPad アプリのビルドが一致しません (Mac: \($0)、iPad: \(BuildCommit.current() ?? "?"))。片方だけ古いと、正しく動作しないことがあります。" }
     }
 
-    // ロック中は macOS が画面の取り込みとロック画面への合成の入力を制限するので、黒いまま止まった理由を出す
+    // ロック中は macOS が画面キャプチャとロック画面への合成を制限するので、黒いまま止まっている理由を表示する
     private var lockNotice: String? {
         session.isMacScreenLocked ? "Mac の画面がロックされています。ロック中は映像が止まり、iPad からの入力が反映されないことがあります。" : nil
     }

@@ -2,7 +2,7 @@ import Observation
 import PadBridgeKit
 import UIKit
 
-/// キーボードを出している間だけ、そのすぐ上に出る特殊キーの列。ソフトウェアキーボードにない esc・修飾キー・矢印・英数/かな・長音を置く。
+/// キーボードの表示中だけ、そのすぐ上に表示されるキーボード上部のバー。ソフトウェアキーボードにない esc・修飾キー・矢印・英数/かな・長音を置く。
 final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     private enum Key {
         case tap(String, usage: Int, repeats: Bool)
@@ -28,7 +28,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         // iPad のソフトウェアキーボードには Mac の日本語入力を切り替えるキーがないので、JIS キーボードの英数・かなを置く
         .tap("英数", usage: 0x91, repeats: false),
         .tap("かな", usage: 0x90, repeats: false),
-        // 英字配列のキーボードでは - が記号の面にしかないので、かなモードで「ー」になる - のキーを置く
+        // 英字配列のキーボードでは - が記号面にしかないので、かなモードで「ー」になる - のキーを置く
         .tap("ー", usage: 0x2D, repeats: true),
         .gap,
         .paste,
@@ -36,20 +36,20 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
 
     private weak var session: HostSession?
     private var modifierButtons: [(KeyModifiers, KeyCapButton)] = []
-    // 英数・かなのキー。Mac の文字入力で効いている方を示す
+    // 英数・かなのキー。Mac の文字入力で有効な方を示す
     private var inputModeButtons: [(MacInputMode, KeyCapButton)] = []
-    // iPad でコピーした文字を Mac に入れる。システムのペーストボタンなら、iOS がペーストの許可を尋ねない
+    // iPad でコピーした文字を Mac に挿入する。システムのペーストボタンなら、iOS がペーストの許可を確認しない
     private let pasteControl: UIPasteControl = {
         var configuration = UIPasteControl.Configuration()
         configuration.displayMode = .iconOnly
         configuration.cornerStyle = .medium
-        // iOS が別に描くので列のダークの見た目に従わない。ほかのキー (ダークの灰色のボタン、実測 #262629) と同じ色を直接渡す
+        // iOS が別に描画するのでバーのダーク外観に従わない。ほかのキー (ダークの灰色のボタン、実測 #262629) と同じ色を直接渡す
         configuration.baseBackgroundColor = UIColor(red: 0x26 / 255, green: 0x26 / 255, blue: 0x29 / 255, alpha: 1)
         configuration.baseForegroundColor = .white
         return UIPasteControl(configuration: configuration)
     }()
 
-    /// ペーストボタンが押されたときに、コピーした文字を受け取る入力先。
+    /// ペーストボタンが押されたときに、コピーした文字を受け取るファーストレスポンダ。
     weak var pasteTarget: UIPasteConfigurationSupporting? {
         get { pasteControl.target }
         set { pasteControl.target = newValue }
@@ -58,7 +58,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     init(session: HostSession) {
         self.session = session
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 52), inputViewStyle: .keyboard)
-        // 列の後ろは Mac の画面の外の黒い背景なので、ライトモードの黒い文字だとキーの上でほとんど読めない。いつもダークの見た目にする
+        // バーの背面は Mac のディスプレイ外の黒い背景なので、ライトモードの黒い文字だとキー上でほとんど読めない。常にダーク外観にする
         overrideUserInterfaceStyle = .dark
         allowsSelfSizing = true
         buildKeys()
@@ -74,7 +74,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         CGSize(width: UIView.noIntrinsicMetric, height: 52)
     }
 
-    // キーを押したときに、iPad のキーボードと同じクリック音を鳴らせるようにする (設定の「キーボードのクリック」に従う)
+    // キーを押したときに、iPad のキーボードと同じクリック音を再生できるようにする (設定の「キーボードのクリック」に従う)
     var enableInputClicksWhenVisible: Bool {
         true
     }
@@ -87,7 +87,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
         for key in Self.keys {
             switch key {
             case let .tap(title, usage, repeats):
-                // 1 回だけ効く修飾キーは最初の 1 回で外れるので、押し始めに効いていた修飾キーを覚えて繰り返しにも使う (⇧ のあと ← を押し続けて選び続けられるように)
+                // 1 回だけ有効な修飾キーは最初の 1 回で解除されるので、押し始めに有効だった修飾キーを保持してリピートにも使う (⇧ のあと ← を押し続けて選択を広げ続けられるように)
                 var heldModifiers: KeyModifiers = []
                 let button = RepeatingButton(title: title, repeats: repeats) { [weak self] isFirst in
                     guard let session = self?.session else { return }
@@ -118,10 +118,10 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
             }
         }
 
-        // 縦向きなどで幅が足りなくても、全部のキーに横へずらして届くようにする
+        // 縦向きなどで幅が足りなくても、全部のキーに横スクロールで届くようにする
         let scroll = KeyScrollView()
         scroll.showsHorizontalScrollIndicator = false
-        // 既定ではスクロールかどうかを見極める間キーの押下が遅れ、短く押すと押した表示がほとんど出ない
+        // 既定ではスクロールかどうかの判定中にキーの押下が遅れ、短く押すと押下表示がほとんど出ない
         scroll.delaysContentTouches = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -136,14 +136,14 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
             stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -12),
             stack.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             stack.heightAnchor.constraint(equalToConstant: 40),
-            // キーが少なく幅に余るときは中央に寄せる
+            // キーが少なく幅に余裕があるときは中央に寄せる
             stack.centerXAnchor.constraint(equalTo: scroll.centerXAnchor).withPriority(.defaultLow),
             scroll.contentLayoutGuide.widthAnchor.constraint(greaterThanOrEqualTo: scroll.frameLayoutGuide.widthAnchor),
         ])
     }
 
-    /// 修飾キーは、次の 1 回だけ効く状態と固定した状態を色の濃さで見せる。クリックで外れたときも追従させる。
-    /// 英数・かなは、Mac で効いている方を薄い色で見せる。Mac で直接切り替えたときも追従させる。
+    /// 修飾キーは、次の 1 回だけ有効な状態とロック状態を色の濃さで示す。クリックで解除されたときも追従させる。
+    /// 英数・かなは、Mac で有効な方を薄い色で示す。Mac で直接切り替えたときも追従させる。
     private func observeModifiers() {
         withObservationTracking {
             refreshModifiers()
@@ -172,7 +172,7 @@ final class KeyAccessoryBar: UIInputView, UIInputViewAudioFeedback {
     }
 }
 
-/// キーの上から触れ始めても横へずらせるようにする。
+/// キーの上から触れ始めても横スクロールできるようにする。
 private final class KeyScrollView: UIScrollView {
     override func touchesShouldCancel(in _: UIView) -> Bool {
         true
@@ -206,7 +206,7 @@ fileprivate class KeyCapButton: UIButton {
         fatalError("init(coder:) is not supported")
     }
 
-    /// 英数・かなのキーで、Mac の文字入力がこのキーの側になっているか。
+    /// 英数・かなのキーで、Mac の文字入力がこのキー側になっているか。
     func showCurrent(_ isCurrent: Bool) {
         guard self.isCurrent != isCurrent else { return }
         self.isCurrent = isCurrent
@@ -248,10 +248,10 @@ fileprivate class KeyCapButton: UIButton {
     }
 }
 
-/// 指を離したときに 1 回送り、押し続けると実際のキーボードと同じく繰り返す。
-/// 押した瞬間に送ると、キーの列を横へずらそうとキーの上から触れただけでもキーが送られてしまう。押したことは表示と音ですぐに伝える。
+/// 指を離したときに 1 回送信し、押し続けると実際のキーボードと同様にリピートする。
+/// 押した瞬間に送信すると、バーを横スクロールしようとしてキーの上から触れただけでもキーが送信されてしまう。押下は表示とサウンドですぐに伝える。
 private final class RepeatingButton: KeyCapButton {
-    /// 押し始めの 1 回目は true、押し続けて繰り返す 2 回目からは false で呼ぶ。
+    /// 押し始めの 1 回目は true、押し続けてリピートする 2 回目以降は false で呼ぶ。
     private let fire: (_ isFirst: Bool) -> Void
     private let repeats: Bool
     private var timer: Timer?

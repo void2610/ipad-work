@@ -5,8 +5,8 @@ import os
 import PadBridgeKit
 import Synchronization
 
-/// Mac で鳴っている音をプロセスタップで取り出し、`MacAudio` の形にして渡す。取り出している間は、Mac のスピーカーから鳴らさない。
-/// iPad のマイクの音を鳴らしている補助アプリの出力は取り出さない (iPad に送り返さない)。
+/// Mac で再生中のサウンドをプロセスタップでキャプチャし、`MacAudio` の形式にして渡す。キャプチャ中は、Mac のスピーカーから再生しない。
+/// iPad のマイク音声を再生しているヘルパーアプリの出力はキャプチャしない (iPad に送り返さない)。
 nonisolated final class MacAudioCapture: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "mac-audio")
     private static let name = "PadBridge Mac サウンド"
@@ -14,7 +14,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     private static let helperBundleIdentifier = "dev.void2610.padbridge.mic"
 
     private let queue = DispatchQueue(label: "dev.void2610.padbridge.host.mac-audio")
-    // 処理を待っている写しの数。キューが詰まったときに、オーディオのスレッドが写しを際限なく積まないように上限で捨てる (約 0.5 秒分)
+    // 処理待ちのコピーの数。キューが混雑したときに、オーディオスレッドがコピーを際限なく積まないように上限で破棄する (約 0.5 秒分)
     private let backlog = Atomic(0)
     private static let maxBacklog = 50
     private let send: @Sendable (Data) -> Void
@@ -26,16 +26,16 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     private var excludedProcesses: [AudioObjectID] = []
     private var processListener: AudioObjectPropertyListenerBlock?
     private var formatListener: AudioObjectPropertyListenerBlock?
-    // 20ms の塊にまとめてから送る
+    // 20ms のチャンクにまとめてから送る
     private var pending = Data()
     private var sentChunks = 0
-    // 作るのに続けて失敗した回数。出力先を替えた直後などは一時的に作れないことがあるので、少し待って作り直す
+    // 作成に連続して失敗した回数。出力先を切り替えた直後などは一時的に作成できないことがあるので、少し待って作り直す
     private var failedBuilds = 0
 
     private let onGiveUp: @Sendable () -> Void
 
-    /// `send` は取り出した音の塊ごとに、このクラスのキューから呼ばれる。何も鳴っていない間は呼ばれない。
-    /// `onGiveUp` は、何度作り直しても読めずにあきらめたときに呼ばれる。
+    /// `send` はキャプチャしたチャンクごとに、このクラスのキューから呼ばれる。無音の間は呼ばれない。
+    /// `onGiveUp` は、何度作り直しても読み取れずに断念したときに呼ばれる。
     init(send: @escaping @Sendable (Data) -> Void, onGiveUp: @escaping @Sendable () -> Void = {}) {
         self.send = send
         self.onGiveUp = onGiveUp
@@ -45,7 +45,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         queue.async { [self] in
             guard !isRunning else { return }
             isRunning = true
-            // 補助アプリは起動し直すとプロセスが変わるので、そのたびに除くプロセスを入れ替える
+            // ヘルパーアプリは再起動するとプロセスが変わるので、そのたびに除外するプロセスを更新する
             var address = Self.address(kAudioHardwarePropertyProcessObjectList)
             let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.processesChanged() }
             if AudioObjectAddPropertyListenerBlock(Self.systemObject, &address, queue, listener) == noErr {
@@ -55,7 +55,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         }
     }
 
-    /// 取り出すのをやめる。やめると Mac のスピーカーから鳴るようになる。
+    /// キャプチャを停止する。停止すると Mac のスピーカーから再生されるようになる。
     func stop() {
         queue.async { [self] in
             guard isRunning else { return }
@@ -66,18 +66,18 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
                 self.processListener = nil
             }
             tearDown()
-            Self.logger.notice("Mac の音を送るのをやめた (送った塊 \(self.sentChunks))")
+            Self.logger.notice("Mac のサウンドの送信を停止した (送信したチャンク \(self.sentChunks))")
         }
     }
 
     private func processesChanged() {
-        // 作れていない間は、補助アプリのプロセスが前と同じでも作り直す
+        // 作成できていない間は、ヘルパーアプリのプロセスが前と同じでも作り直す
         guard isRunning, deviceID == kAudioObjectUnknown || Self.helperProcesses() != excludedProcesses else { return }
         tearDown()
         build()
     }
 
-    /// 出力先の機器が変わると、タップの形式 (サンプルレート) も変わる。
+    /// 出力先のデバイスが変わると、タップのフォーマット (サンプルレート) も変わる。
     private func formatChanged() {
         guard isRunning else { return }
         tearDown()
@@ -89,12 +89,12 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
         description.uuid = UUID()
         description.name = Self.name
-        // 読んでいる間だけ Mac で鳴らさない。Host が落ちてタップが残っても、Mac の音は消えない
+        // 読み取っている間だけ Mac で再生させない。Host が落ちてタップが残っても、Mac のサウンドは消えない
         description.muteBehavior = .mutedWhenTapped
         description.isPrivate = true
         var tap = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(description, &tap) == noErr, tap != kAudioObjectUnknown else {
-            Self.logger.error("Mac の音のタップを作れない")
+            Self.logger.error("Mac のサウンドのタップを作成できない")
             scheduleRebuild()
             return
         }
@@ -102,7 +102,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
               let outputFormat = AVAudioFormat(standardFormatWithSampleRate: Double(MacAudio.sampleRate), channels: AVAudioChannelCount(MacAudio.channelCount)),
               let converter = AVAudioConverter(from: format, to: outputFormat)
         else {
-            Self.logger.error("Mac の音の形式を変換できない")
+            Self.logger.error("Mac のサウンドのフォーマットを変換できない")
             AudioHardwareDestroyProcessTap(tap)
             scheduleRebuild()
             return
@@ -117,14 +117,14 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         ]
         var device = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &device) == noErr, device != kAudioObjectUnknown else {
-            Self.logger.error("Mac の音の集約デバイスを作れない")
+            Self.logger.error("Mac のサウンドの機器セットを作成できない")
             AudioHardwareDestroyProcessTap(tap)
             scheduleRebuild()
             return
         }
         var procID: AudioDeviceIOProcID?
         AudioDeviceCreateIOProcIDWithBlock(&procID, device, nil) { [weak self, queue] _, inputData, _, _, _ in
-            // 入力の中身は呼ばれている間しか使えないので写してから、変換はオーディオのスレッドの外で行う
+            // 入力バッファの中身はコールバック中しか使えないのでコピーし、変換はオーディオスレッドの外で行う
             guard let self, backlog.load(ordering: .relaxed) < Self.maxBacklog, let copy = Self.copy(inputData, format: format) else { return }
             backlog.add(1, ordering: .relaxed)
             queue.async {
@@ -133,7 +133,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
             }
         }
         guard let procID, AudioDeviceStart(device, procID) == noErr else {
-            Self.logger.error("Mac の音を読み始められない")
+            Self.logger.error("Mac のサウンドの読み取りを開始できない")
             if let procID { AudioDeviceDestroyIOProcID(device, procID) }
             AudioHardwareDestroyAggregateDevice(device)
             AudioHardwareDestroyProcessTap(tap)
@@ -152,15 +152,15 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         if AudioObjectAddPropertyListenerBlock(tap, &formatAddress, queue, formatListener) == noErr {
             self.formatListener = formatListener
         }
-        Self.logger.notice("Mac の音を送り始めた: \(format, privacy: .public)、除いたプロセス \(excluded.count)")
+        Self.logger.notice("Mac のサウンドの送信を開始した: \(format, privacy: .public)、除外したプロセス \(excluded.count)")
     }
 
-    /// 作れなかったときに、少し待って作り直す。作れないまま iPad に何も届かず、Mac のスピーカーも鳴らない状態を残さない。
+    /// 作成に失敗したときに、少し待って作り直す。作成できないまま iPad に何も届かず、Mac のスピーカーも鳴らない状態を残さない。
     private func scheduleRebuild() {
         failedBuilds += 1
         guard failedBuilds <= 5 else {
-            Self.logger.error("Mac の音を何度作り直しても読めない")
-            // 取り出していないので Mac のスピーカーは鳴っている。「鳴らしている」と出したままにしないよう知らせる
+            Self.logger.error("Mac のサウンドの読み取りが何度作り直しても成功しない")
+            // キャプチャしていないので Mac のスピーカーは再生中。「再生中」と表示したままにならないよう通知する
             onGiveUp()
             return
         }
@@ -198,7 +198,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         let ratio = converter.outputFormat.sampleRate / converter.inputFormat.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else { return }
-        // 入力のブロックは convert の中で同じスレッドから呼ばれる
+        // 入力ブロックは convert の中で同じスレッドから呼ばれる
         nonisolated(unsafe) var consumed = false
         var error: NSError?
         converter.convert(to: output, error: &error) { _, status in
@@ -220,7 +220,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
             guard !MacAudio.isSilent(chunk) else { continue }
             sentChunks += 1
             if sentChunks == 1 {
-                Self.logger.notice("Mac の音の最初の塊を送った")
+                Self.logger.notice("Mac のサウンドの最初のチャンクを送信した")
             }
             send(chunk)
         }
@@ -250,7 +250,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         return AVAudioFormat(streamDescription: &description)
     }
 
-    /// 補助アプリのプロセスのオーディオオブジェクト。音を鳴らし始めるまでは現れない。
+    /// ヘルパーアプリのプロセスのオーディオオブジェクト。再生を開始するまでは現れない。
     private static func helperProcesses() -> [AudioObjectID] {
         processObjects().filter { bundleIdentifier(of: $0) == helperBundleIdentifier }.sorted()
     }

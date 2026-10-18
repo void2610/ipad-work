@@ -1,8 +1,8 @@
 #if os(macOS)
 import Foundation
 
-/// システムオーディオの録音の許可。公開の API がないので、AudioCap などと同じく TCC の関数を直接呼ぶ。
-/// 画面を持たない補助アプリでは Core Audio が許可の有無を確かめるだけで尋ねないため、こちらから尋ねる。補助アプリは Host の中から起動されるので、Host の許可として扱われる。
+/// システムオーディオ録音の許可。公開 API がないので、AudioCap などと同じく TCC の関数を直接呼ぶ。
+/// ディスプレイを持たないヘルパーアプリでは Core Audio が許可の有無を確認するだけでダイアログを出さないため、こちらから要求する。ヘルパーアプリは Host の中から起動されるので、Host の許可として扱われる。
 public enum AudioCapturePermission {
     public enum Status: Sendable {
         case authorized

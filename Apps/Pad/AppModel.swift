@@ -15,12 +15,12 @@ struct DiscoveredHost: Identifiable, Hashable {
 final class AppModel {
     private(set) var hosts: [DiscoveredHost] = []
     private(set) var session: HostSession?
-    /// iPad の設定で、このアプリにローカルネットワークが許可されていない。Mac を探せない。
+    /// iPad の設定でこのアプリにローカルネットワークが許可されておらず、Mac を探索できない。
     private(set) var isLocalNetworkDenied = false
 
     private static let lastHostKey = "lastHostName"
     private var browser: NWBrowser?
-    // 利用者が自分で切断したあとは、見つかった Mac に勝手につなぎ直さない
+    // ユーザーが自分で切断したあとは、見つかった Mac に勝手に再接続しない
     private var isAutoConnectSuppressed = false
 
     init() {
@@ -76,7 +76,7 @@ final class AppModel {
             let isDenied = LocalNetworkAccess.isDenied(state)
             MainActor.assumeIsolated {
                 self?.isLocalNetworkDenied = isDenied
-                // mDNSResponder が起動し直したときなどに失敗する。そのままだと、アプリを起動し直すまで Mac が見つからない
+                // mDNSResponder が再起動したときなどに失敗する。そのままだと、アプリを再起動するまで Mac が見つからない
                 if case .failed = state, !isDenied, let self, let browser, browser === self.browser {
                     self.restartBrowsing()
                 }
@@ -107,7 +107,7 @@ final class AppModel {
         }
     }
 
-    /// つないでいる Mac の名前が消え、同じ名前の「 (2)」付きの別名が現れたら、そちらへつなぎ直す (前の Host の登録が残っている間に起動し直すと名前が変わる)。
+    /// 接続中の Mac の名前が消え、同名に「 (2)」が付いた別名が現れたら、そちらへ再接続する (前の Host の登録が残っている間に再起動すると名前が変わる)。
     private func followRenamedHost() {
         guard let session, session.phase != .connected, !hosts.contains(where: { $0.name == session.host.name }) else { return }
         let base = PadBridgeService.baseName(session.host.name)

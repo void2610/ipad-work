@@ -4,7 +4,7 @@ import Network
 import os
 import PadBridgeKit
 
-/// Host につなぎ、iPad のマイクの音を受け取って `PadMicrophone` に渡す。Host との接続が切れたら、デバイスを消して終わる。
+/// Host に接続し、iPad のマイク音声を受け取って `PadMicrophone` に渡す。Host との接続が切れたら、デバイスを削除して終了する。
 nonisolated final class RelayClient: @unchecked Sendable {
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.mic", category: "relay")
     private let queue = DispatchQueue(label: "dev.void2610.padbridge.mic.relay")
@@ -24,7 +24,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
     }
 
     func start() {
-        // 終了の合図で終わらされたときも、作ったデバイスを Mac に残さない
+        // 終了シグナルで終了させられたときも、作成したデバイスを Mac に残さない
         for number in [SIGTERM, SIGINT, SIGHUP] {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: queue)
@@ -50,7 +50,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
                     case .ready:
                         channel.send(.control(.microphoneRelayHello(token: token)))
                         microphone.start()
-                    // つなげない (Host が終わって待ち受けていない) ときは .waiting のまま待ち続けるので、それも終わる合図にする
+                    // 接続できない (Host が終了して待ち受けていない) ときは .waiting のまま待ち続けるので、それも終了のトリガーにする
                     case .failed, .cancelled, .waiting:
                         guard let self else { return }
                         queue.async { self.finish() }
@@ -86,7 +86,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
         }
     }
 
-    /// アクティビティモニタの「終了」やログアウトなど、Apple Event で終わらされるときに呼ぶ。作ったデバイスを Mac に残さない。
+    /// アクティビティモニタの「終了」やログアウトなど、Apple Event で終了させられるときに呼ぶ。作成したデバイスを Mac に残さない。
     func stopBeforeQuitting() {
         queue.sync {
             microphone?.stop()
@@ -94,10 +94,10 @@ nonisolated final class RelayClient: @unchecked Sendable {
         }
     }
 
-    /// Host が終わったか、接続できなかった。作ったデバイスを消してから終わる。
+    /// Host が終了したか、接続できなかった。作成したデバイスを削除してから終了する。
     private func finish() {
-        Self.logger.notice("Host との接続が切れたので終わる")
-        // 自分が作ったものだけを消す。名前で探して消すと、入れ替わりに起動した補助アプリのデバイスまで消してしまう
+        Self.logger.notice("Host との接続が切れたので終了する")
+        // 自分が作成したものだけを削除する。名前で探して削除すると、入れ替わりに起動したヘルパーアプリのデバイスまで消してしまう
         microphone?.stop()
         microphone = nil
         DispatchQueue.main.async {

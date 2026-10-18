@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// 指のタッチの並びを、Mac のマウス操作に読み替える。
-/// UIKit のジェスチャー認識を並べると、長押しとドラッグや 1 本指と 2 本指が取り合って誤認識するため、1 つの状態機械で判定する。
+/// 指のタッチ列を、Mac のマウス操作に変換する。
+/// UIKit のジェスチャー認識を並べると、長押しとドラッグや 1 本指と 2 本指が競合して誤認識するため、1 つの状態機械で判定する。
 public struct TouchInterpreter {
     public enum Action: Equatable, Sendable {
         case move(CGPoint)
@@ -13,11 +13,11 @@ public struct TouchInterpreter {
         case scrollEnded(velocityX: CGFloat, velocityY: CGFloat)
         /// 長押しが成立した。離せば右クリック、動かせばドラッグになる。
         case longPressRecognized
-        /// 3 本指で払った。指が動いた向き。
+        /// 3 本指でスワイプした。指が動いた向き。
         case threeFingerSwipe(SwipeDirection)
-        /// 画面の下端から上へ払った。iPad で Dock を出すのと同じ操作で、Mac の Dock を出す。
+        /// ディスプレイの下端から上へスワイプした。iPad で Dock を表示するのと同じ操作で、Mac の Dock を表示する。
         case bottomEdgeSwipe
-        /// 2 本指で広げたり縮めたりした。`center` を中心に前回から `scale` 倍し、指の中心が動いた分 `translation` だけ動かす。
+        /// 2 本指でピンチした。`center` を中心に前回から `scale` 倍し、指の中心が動いた分 `translation` だけ移動する。
         case zoom(scale: CGFloat, center: CGPoint, translation: CGVector)
     }
 
@@ -44,21 +44,21 @@ public struct TouchInterpreter {
     public static let longPressDuration: TimeInterval = 0.5
     public var slop: CGFloat = 10
     public var twoFingerTapMaxDuration: TimeInterval = 0.35
-    // 指を止めてから離したときに、慣性で流れないようにするための猶予
+    // 指を止めてから離したときに、慣性スクロールしないようにするための猶予
     public var flickTimeout: TimeInterval = 0.08
     public var threeFingerSwipeDistance: CGFloat = 50
-    /// 画面の下端の位置 (ビューの座標系)。ここから `bottomEdgeZone` 以内で触れ始めて上へ払うと `bottomEdgeSwipe` になる。
+    /// ディスプレイの下端の位置 (ビューの座標系)。ここから `bottomEdgeZone` 以内で触れ始めて上へスワイプすると `bottomEdgeSwipe` になる。
     public var bottomEdge: CGFloat = .infinity
     public var bottomEdgeZone: CGFloat = 24
     public var bottomEdgeSwipeDistance: CGFloat = 30
-    /// 2 本指の間隔がこれだけ変わったら、スクロールではなく拡大・縮小とみなす。
+    /// 2 本指の間隔がこれだけ変わったら、スクロールではなくピンチ (拡大・縮小) とみなす。
     public var pinchThreshold: CGFloat = 24
     // 複数の指は同時には着地しないので、1 本目が動いてもしばらくは 1 本指のスクロールと決めずに他の指を待つ
     public var multiFingerGrace: TimeInterval = 0.08
 
     private var state = State.idle
     private var scrollStartTime: TimeInterval = 0
-    /// スクロールの開始からこれより後に触れた 3 本目は、払うつもりではなく親指や手のひらとみなす (指をずらして置く人の残りの指は数十 ms で触れる)。
+    /// スクロール開始からこれより後に触れた 3 本目は、スワイプの意図ではなく親指や手のひらとみなす (指をずらして置く人の残りの指は数十 ms で触れる)。
     public var lateThirdFinger: TimeInterval = 0.25
     private var touches: [Int: CGPoint] = [:]
     private var velocity = CGVector.zero
@@ -88,7 +88,7 @@ public struct TouchInterpreter {
             guard touches.count == 2 else { return [] }
             state = .twoFingerPending(start: centroid, startTime: time, startSpan: span)
         case let .scrolling(_, lastTime):
-            // 指が増えると重心が飛ぶので、そこを新しい基準にする。慣性の判定に使う最後に動いた時刻は保つ
+            // 指が増えると重心が飛ぶので、そこを新しい基準にする。慣性スクロールの判定に使う最後に動いた時刻は保持する
             state = .scrolling(last: centroid, lastTime: lastTime)
         case .dragging, .twoFingerPending, .pinching, .threeFinger, .ignoring:
             break
@@ -102,7 +102,7 @@ public struct TouchInterpreter {
         switch state {
         case let .pending(touch, start, startTime, fromBottomEdge):
             guard touch == id, distance(start, point) > slop else { return [] }
-            // 下端から上へ向かう間は、スクロールと決めずに払いきるのを待つ
+            // 下端から上へ向かう間は、スクロールと決めずにスワイプの完了を待つ
             if fromBottomEdge, start.y - point.y > abs(point.x - start.x) {
                 guard start.y - point.y >= bottomEdgeSwipeDistance else { return [] }
                 state = .ignoring
@@ -122,7 +122,7 @@ public struct TouchInterpreter {
             return touch == id ? [.move(point)] : []
         case let .twoFingerPending(start, _, startSpan):
             let center = centroid
-            // 間隔の変化が中心の移動より大きければ、払ったのではなく広げたり縮めたりしている
+            // 間隔の変化が中心の移動より大きければ、スワイプではなくピンチとみなす
             if touches.count == 2, abs(span - startSpan) > pinchThreshold, abs(span - startSpan) > distance(start, center) {
                 state = .pinching(lastCenter: center, lastSpan: span)
                 return [.zoom(scale: span / max(startSpan, 1), center: center, translation: CGVector(dx: center.x - start.x, dy: center.y - start.y))]
@@ -152,7 +152,7 @@ public struct TouchInterpreter {
             let dy = center.y - last.y
             let interval = time - lastTime
             if interval > 0 {
-                // 指先の揺れで速さが暴れないよう、直近の値に寄せつつ均す
+                // 指先のぶれで速度が乱れないよう、直近の値に寄せつつ平滑化する
                 velocity = CGVector(dx: velocity.dx * 0.3 + dx / interval * 0.7, dy: velocity.dy * 0.3 + dy / interval * 0.7)
             }
             state = .scrolling(last: center, lastTime: time)
@@ -167,7 +167,7 @@ public struct TouchInterpreter {
         switch state {
         case let .pending(touch, start, _, _) where touch == id:
             state = .ignoring
-            // 待っている間に払いきって離した場合は、タップではなくスクロールとして送る
+            // 待っている間にスワイプを完了して離した場合は、タップではなくスクロールとして送る
             guard distance(start, point) <= slop else {
                 state = .idle
                 return [.move(start), .scroll(dx: point.x - start.x, dy: point.y - start.y), .scrollEnded(velocityX: 0, velocityY: 0)]
@@ -220,7 +220,7 @@ public struct TouchInterpreter {
         return [.longPressRecognized]
     }
 
-    /// 3 本目の指が触れたら、それまでの判定をやめて 3 本指の払いだけを待つ。
+    /// 3 本目の指が触れたら、それまでの判定をやめて 3 本指のスワイプだけを待つ。
     private mutating func beginThreeFinger() -> [Action] {
         var actions: [Action] = []
         switch state {

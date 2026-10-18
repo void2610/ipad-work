@@ -2,7 +2,7 @@ import PadBridgeKit
 import SwiftUI
 import UIKit
 
-/// ソフトウェアキーボードで打ったキーを、そのまま Mac へ送る見えない入力先。日本語は Mac 側の日本語入力で変換する。
+/// ソフトウェアキーボードで入力したキーを、そのまま Mac へ送る不可視のファーストレスポンダ。日本語は Mac 側の日本語入力で変換する。
 struct DirectTypingField: UIViewRepresentable {
     let session: HostSession
     @Binding var isActive: Bool
@@ -20,11 +20,11 @@ struct DirectTypingField: UIViewRepresentable {
     }
 
     func updateUIView(_ view: DirectTypingUIView, context _: Context) {
-        // キーボードを閉じるボタンなど、こちら以外の理由で入力先から外れたらボタンの表示を戻す
+        // キーボードを閉じるボタンなど、これ以外の理由でファーストレスポンダから外れたらボタンの表示を戻す
         view.onResign = { isActive = false }
-        // 値はここで読む。後で動く処理の中でだけ読むと SwiftUI が依存を記録せず、切り替えてもこの更新が呼ばれなくなる
+        // 値はここで読む。後で実行される処理の中でだけ読むと SwiftUI が依存を記録せず、切り替えてもこの更新が呼ばれなくなる
         let shouldBeActive = isActive
-        // SwiftUI の更新の途中でキーボードを出し入れすると、キーボードの分の余白が戻らないので、更新が終わってから行う
+        // SwiftUI の更新中にキーボードを表示・非表示にすると、キーボード分の余白が戻らないので、更新の完了後に行う
         DispatchQueue.main.async {
             if shouldBeActive, !view.isFirstResponder {
                 _ = view.becomeFirstResponder()
@@ -35,12 +35,12 @@ struct DirectTypingField: UIViewRepresentable {
     }
 }
 
-/// ソフトウェアキーボードは、入力先が UITextInput でないと削除キーの長押しを繰り返さない (UIKeyInput だけだと 3 秒押しても 1 回)。
-/// 打った内容は手元に持たず Mac へ送るだけなので、キーボードには中身の変わらない文書を見せる。
+/// ソフトウェアキーボードは、ファーストレスポンダが UITextInput でないと削除キーの長押しでリピートしない (UIKeyInput だけだと 3 秒押しても 1 回)。
+/// 入力内容は保持せず Mac へ送るだけなので、キーボードには内容の変わらないドキュメントを見せる。
 final class DirectTypingUIView: UIView, UITextInput {
-    /// 直接入力中か。画面のタップでキーボードを閉じないよう、画面側が見る。
+    /// 直接入力中か。画面のタップでキーボードが閉じないよう、画面側が参照する。
     static var isTyping = false
-    /// 直接入力を終えた知らせ。画面側がハードウェアキーボードの入力先に戻る。
+    /// 直接入力の終了通知。画面側がハードウェアキーボードのファーストレスポンダに戻す。
     static let didEndTyping = Notification.Name("DirectTypingUIView.didEndTyping")
 
     var onText: ((String) -> Void)?
@@ -50,8 +50,8 @@ final class DirectTypingUIView: UIView, UITextInput {
     var send: ((ControlMessage) -> Void)?
     var accessoryBar: UIView?
 
-    // キーボードに見せる文書。削除キーをいつでも受け付けるよう、カーソルの前に常に文字がある。
-    // 英字だとキーボードが単語とみなし、空白 2 回をピリオドに置き換えるなど勝手に書き換えるので、改行だけにする
+    // キーボードに見せるドキュメント。削除キーを常に受け付けるよう、カーソルの前に常に文字がある。
+    // 英字だとキーボードが単語とみなし、スペース 2 回をピリオドに置き換えるなど勝手に書き換えるので、改行だけにする
     private static let document = String(repeating: "\n", count: 400) as NSString
     // iPadOS の日本語キーボードなどが変換中の文字。確定したときにまとめて送る
     private var markedText = ""
@@ -67,7 +67,7 @@ final class DirectTypingUIView: UIView, UITextInput {
     var smartDashesType = UITextSmartDashesType.no
     var smartInsertDeleteType = UITextSmartInsertDeleteType.no
     var inlinePredictionType = UITextInlinePredictionType.no
-    // 打ったキーを Mac の日本語入力に渡すので、iPad 側では変換しない英字配列にする
+    // 入力したキーを Mac の日本語入力に渡すので、iPad 側では変換しない英字配列にする
     var keyboardType = UIKeyboardType.asciiCapable
 
     override var inputAccessoryView: UIView? {
@@ -89,13 +89,13 @@ final class DirectTypingUIView: UIView, UITextInput {
         HardwareKeys.forwardShortcut(command, send: send)
     }
 
-    // UITextInput の入力先は iPadOS の 3 本指の編集ジェスチャー (取り消しなど) を受けるが、3 本指は Mac のデスクトップ切り替えに使う
+    // UITextInput のファーストレスポンダは iPadOS の 3 本指の編集ジェスチャー (取り消しなど) を受けるが、3 本指は Mac のデスクトップ切り替えに使う
     override var editingInteractionConfiguration: UIEditingInteractionConfiguration {
         .none
     }
 
     override func becomeFirstResponder() -> Bool {
-        // キーボードの上の取り消し・やり直し・ペーストは使わない。手元の文書は飾りで、そのペーストは iOS がペーストの許可を尋ねる
+        // キーボード上部のバーの取り消し・やり直し・ペーストは使わない。手元のドキュメントはダミーで、そのペーストは iOS がペーストの許可を確認する
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
         let didBecome = super.becomeFirstResponder()
@@ -116,12 +116,12 @@ final class DirectTypingUIView: UIView, UITextInput {
         onDeleteBackward?()
     }
 
-    // 「操作の一覧」などのシートを出している間も入力先のまま残るので、裏の Mac には送らない (シートを閉じようと押した esc が Mac にも届く)
+    // 「操作の一覧」などのシートを表示している間もファーストレスポンダのまま残るので、背後の Mac には送らない (シートを閉じようと押した esc が Mac にも届く)
     private var isCovered: Bool {
         window?.rootViewController?.presentedViewController != nil
     }
 
-    // 特殊キーの列のペーストボタンで、iPad でコピーした文字をキーを 1 つずつ打たずに文字のまま Mac の入力欄へ入れる (日本語や記号もそのまま入る)
+    // キーボード上部のバーのペーストボタンで、iPad でコピーした文字をキーを 1 つずつ入力せず文字のまま Mac の入力欄へ挿入する (日本語や記号もそのまま入る)
     override var pasteConfiguration: UIPasteConfiguration? {
         get { UIPasteConfiguration(forAccepting: NSString.self) }
         set {}
@@ -170,7 +170,7 @@ final class DirectTypingUIView: UIView, UITextInput {
 
 // MARK: - UITextInput
 
-/// キーボードに見せる文書の上の位置。文書は変わらないので、文字の番号だけを持つ。
+/// キーボードに見せるドキュメント上の位置。ドキュメントは不変なので、文字のオフセットだけを持つ。
 private final class DocumentPosition: UITextPosition {
     let index: Int
 
@@ -220,7 +220,7 @@ extension DirectTypingUIView {
         return Self.document.substring(with: range.range)
     }
 
-    // 文書は変えず、キーボードからの削除と入力は deleteBackward と insertText で受ける
+    // ドキュメントは変更せず、キーボードからの削除と入力は deleteBackward と insertText で受ける
     func replace(_: UITextRange, withText _: String) {}
 
     func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {

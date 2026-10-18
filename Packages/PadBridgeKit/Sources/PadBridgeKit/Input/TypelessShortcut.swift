@@ -1,6 +1,6 @@
 import Foundation
 
-/// Typeless の設定に書かれたショートカット ("LeftCtrl+Fn" など) を、押す順のキー列に読み替える。
+/// Typeless の設定に書かれたショートカット ("LeftCtrl+Fn" など) を、押す順のキー列に変換する。
 public struct TypelessShortcut: Equatable, Sendable {
     public struct Key: Equatable, Sendable {
         public var keyCode: UInt16
@@ -18,14 +18,14 @@ public struct TypelessShortcut: Equatable, Sendable {
         public var flags: UInt64
     }
 
-    // CGEventFlags の各ビット。iOS からも単体テストできるよう CoreGraphics の型を使わずに持つ
+    // CGEventFlags の各ビット。iOS からも単体テストできるよう CoreGraphics の型を使わずに保持する
     static let shift: UInt64 = 0x20000
     static let control: UInt64 = 0x40000
     static let option: UInt64 = 0x80000
     static let command: UInt64 = 0x100000
     static let function: UInt64 = 0x800000
-    // 実際のキーボードは左右どちらの修飾キーかを下位ビット (IOLLEvent.h の NX_DEVICE*KEYMASK) でも知らせる。
-    // Typeless は Left Ctrl と Right Ctrl をこのビットで区別するので、載せないと Left Ctrl が押されたと認識しない
+    // 実際のキーボードは左右どちらの修飾キーかを下位ビット (IOLLEvent.h の NX_DEVICE*KEYMASK) でも通知する。
+    // Typeless は Left Ctrl と Right Ctrl をこのビットで区別するので、付与しないと Left Ctrl が押されたと認識しない
     static let leftControl: UInt64 = 0x1
     static let leftShift: UInt64 = 0x2
     static let rightShift: UInt64 = 0x4

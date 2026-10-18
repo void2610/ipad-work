@@ -84,7 +84,7 @@ struct FloatingControls: View {
         let screen = CGSize(width: proxy.size.width + insets.leading + insets.trailing, height: proxy.size.height + insets.top + insets.bottom)
         let band = (screen.height - min(screen.height, screen.width * video.height / video.width)) / 2
         guard band >= Self.panelHeight + 8 else { return Self.margin }
-        // 画面の端からの距離で決め、Mac の画面を映す範囲と同じく安全領域を無視する
+        // 画面の端からの距離で決め、Mac のディスプレイを表示する範囲と同じく安全領域を無視する
         return min(Self.margin + edgeInset, (band - Self.panelHeight) / 2) - edgeInset
     }
 
@@ -109,7 +109,7 @@ struct FloatingControls: View {
                             }
                         }
                         .pickerStyle(.inline)
-                        // 画面をまたいでドラッグできない代わりに、手前のウィンドウを選んだ画面へ移す
+                        // ディスプレイをまたいでドラッグできない代わりに、最前面のウィンドウを選んだディスプレイへ移す
                         Menu("最前面のウィンドウを移動", systemImage: "macwindow") {
                             ForEach(session.displays) { display in
                                 Button(display.label) { session.moveFrontWindow(to: display.id) }

@@ -3,7 +3,7 @@ import Network
 
 struct FrameHeader {
     static let size = 8
-    // 壊れた長さを受け取ったときに巨大なバッファを確保しないための上限
+    // 不正な長さを受け取ったときに巨大なバッファを確保しないための上限
     static let maxPayloadLength: UInt32 = 32 * 1024 * 1024
 
     var type: UInt32

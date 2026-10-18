@@ -1,7 +1,7 @@
 import PadBridgeKit
 import SwiftUI
 
-/// Mac から届いている映像と音の状態。遅い・カクつくと感じたときに、回線のせいかを見られるようにする。「…」から開く。
+/// Mac から受信している映像とオーディオの状態。遅い・カクつくと感じたときに、回線が原因かを確認できるようにする。「…」から開く。
 struct ConnectionStatsView: View {
     @Environment(\.dismiss) private var dismiss
     let session: HostSession
@@ -33,7 +33,7 @@ struct ConnectionStatsView: View {
                     if let route = session.route {
                         row("経路", route)
                     }
-                    // 片方だけ古い組み立てのまま動いていないかを見られるように
+                    // 片方だけ古いビルドのまま動いていないかを確認できるように
                     row("ビルド (iPad)", BuildCommit.current() ?? "不明")
                     row("ビルド (Mac)", session.hostCommit ?? "不明")
                 }

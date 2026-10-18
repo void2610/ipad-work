@@ -2,7 +2,7 @@
 import Testing
 
 struct VoiceInputRequestsTests {
-    /// 離してすぐまた押すと、前の聞き取りの終わりは iPad に知らせない。新しい聞き取りが始まれば、また知らせる。
+    /// 離してすぐ再度押すと、前の音声入力の終了は iPad に通知しない。新しい音声入力が始まれば、また通知する。
     @Test func quickRestartHidesPreviousStop() {
         var requests = VoiceInputRequests()
         let first = requests.receive(isActive: true)
@@ -15,7 +15,7 @@ struct VoiceInputRequestsTests {
         #expect(requests.announcesStop)
     }
 
-    /// 補助アプリの返事を待つ間に離したら、届いた返事では始めない。
+    /// ヘルパーアプリの応答を待つ間に離したら、届いた応答では開始しない。
     @Test func startReplyAfterStopIsStale() {
         var requests = VoiceInputRequests()
         let start = requests.receive(isActive: true)
@@ -23,7 +23,7 @@ struct VoiceInputRequestsTests {
         #expect(!requests.isCurrent(start))
     }
 
-    /// 押し直している間に切れたら、残りの押し直しはしない。
+    /// 押し直している間に切断されたら、残りの押し直しはしない。
     @Test func disconnectCancelsPendingRetries() {
         var requests = VoiceInputRequests()
         let start = requests.receive(isActive: true)
@@ -32,7 +32,7 @@ struct VoiceInputRequestsTests {
         #expect(requests.announcesStop)
     }
 
-    /// 前の要求のあきらめが、新しい要求の待ちを消さない。
+    /// 前の要求の放棄が、新しい要求の待機を解除しない。
     @Test func settlingOldRequestKeepsNewPending() {
         var requests = VoiceInputRequests()
         let old = requests.receive(isActive: true)

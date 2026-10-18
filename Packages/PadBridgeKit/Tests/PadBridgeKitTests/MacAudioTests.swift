@@ -36,7 +36,7 @@ struct MacAudioTests {
         #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
     }
 
-    /// たまるまでは無音を出し、たまったら左右に分けて届いた順に出す。
+    /// バッファが溜まるまでは無音を出力し、溜まったら左右に分けて届いた順に出力する。
     @Test func stereoWaitsForThresholdThenSplitsChannels() {
         var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 2, channelCount: 2)
         buffer.write(encode(left: [0.1], right: [-0.1]))
@@ -48,7 +48,7 @@ struct MacAudioTests {
         #expect(buffer.underruns == 1)
     }
 
-    /// あふれて古い音を捨てても、左右が入れ替わらない。
+    /// あふれて古い音声を破棄しても、左右が入れ替わらない。
     @Test func stereoOverflowKeepsChannelsAligned() {
         var buffer = PCMJitterBuffer(capacity: 2, startThreshold: 1, channelCount: 2)
         buffer.write(encode(left: [0.1, 0.2, 0.3], right: [-0.1, -0.2, -0.3]))
@@ -58,7 +58,7 @@ struct MacAudioTests {
         #expect(played.right == [-20, -30])
     }
 
-    /// エンジンを手で回して、届いた音がたまってから左右に分かれて鳴ることを確かめる。
+    /// エンジンを手動で駆動し、届いた音声が溜まってから左右に分かれて再生されることを確認する。
     @Test func playerRendersBufferedAudioThroughEngine() throws {
         let player = MacAudioPlayer()
         let engine = try Self.offlineEngine(playing: player)
@@ -69,7 +69,7 @@ struct MacAudioTests {
         #expect(try Self.render(engine, frames: half * 2) == ([50], [-25]))
     }
 
-    /// iPad のマイクを使っている間は、届いた音を鳴らさず捨てる。
+    /// iPad のマイクを使っている間は、届いた音声を再生せず破棄する。
     @Test func playerStaysSilentWhileSuppressed() throws {
         let player = MacAudioPlayer()
         let engine = try Self.offlineEngine(playing: player)
@@ -83,14 +83,14 @@ struct MacAudioTests {
         #expect(try Self.render(engine, frames: tenth) == ([50], [50]))
     }
 
-    /// iPad で受ける形と同じく、Opus のパケットを渡して鳴らす。鳴らすのをやめて再開したあとも同じく鳴る。
+    /// iPad で受信する形式と同じく、Opus のパケットを渡して再生する。再生を停止して再開したあとも同じく再生される。
     @Test func playerRendersOpusPacketsThroughEngine() throws {
         let player = MacAudioPlayer()
         #expect(player.canDecodeOpus)
         let engine = try Self.offlineEngine(playing: player)
         let encoder = try #require(MacAudioEncoder())
         var chunkIndex = 0
-        // 左にだけ 440Hz・0.5 の正弦波を鳴らした 20ms の塊を、Opus にして渡す
+        // 左にだけ 440Hz・0.5 の正弦波を入れた 20ms のチャンクを、Opus にエンコードして渡す
         func feedChunks(_ count: Int) {
             for _ in 0 ..< count {
                 let left = (0 ..< MacAudio.chunkFrames).map { Float(sin(2 * Double.pi * 440 * Double(chunkIndex * MacAudio.chunkFrames + $0) / Double(MacAudio.sampleRate)) * 0.5) }
@@ -102,7 +102,7 @@ struct MacAudioTests {
         }
         for round in 0 ..< 2 {
             feedChunks(25)
-            // たまり始めの 100ms と符号化の先頭の遅れを越えたところから、200ms を測る
+            // 溜まり始めの 100ms とエンコード先頭の遅延を越えたところから、200ms を測る
             let (left, right) = try Self.renderSamples(engine, frames: MacAudio.sampleRate * 3 / 10)
             let rms = { (samples: ArraySlice<Float>) in sqrt(samples.reduce(0) { $0 + Double($1 * $1) } / Double(samples.count)) }
             let steadyLeft = left[(MacAudio.sampleRate / 10)...]
@@ -130,7 +130,7 @@ struct MacAudioTests {
         return engine
     }
 
-    /// 描いた音の左右それぞれに出てきた値 (100 倍して丸めたもの) を、重ねずに返す。
+    /// レンダリングした音声の左右それぞれの値 (100 倍して丸めたもの) を、重複なく返す。
     private static func render(_ engine: AVAudioEngine, frames: Int) throws -> (left: Set<Float>, right: Set<Float>) {
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: AVAudioFrameCount(frames)))
         #expect(try engine.renderOffline(AVAudioFrameCount(frames), to: buffer) == .success)
@@ -139,7 +139,7 @@ struct MacAudioTests {
         return (values(0), values(1))
     }
 
-    /// フレームの途中で切れた分は捨て、次の塊の左右をずらさない。
+    /// フレームの途中で切れた分は破棄し、次のチャンクの左右をずらさない。
     @Test func stereoDropsPartialFrames() {
         var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 1, channelCount: 2)
         buffer.write(encode(left: [0.1], right: [-0.1]) + Data([0xFF, 0x7F]))
@@ -149,7 +149,7 @@ struct MacAudioTests {
         #expect(played.right == [-10, -20])
     }
 
-    /// どこかのアプリが NaN や無限大を鳴らしても、落ちずに無音か最大の音にする。
+    /// どこかのアプリが NaN や無限大を再生しても、クラッシュせず無音か最大音量にする。
     @Test func nonFiniteSamplesDoNotTrap() {
         #expect(PadAudio.int16(.nan) == 0)
         #expect(PadAudio.int16(.infinity) == Int16.max)
@@ -162,7 +162,7 @@ struct MacAudioTests {
         #expect(buffer.count == 2)
     }
 
-    /// 詰まって一度に届いてあふれたら、鳴らし始めのたまり具合まで減らし、遅れを残さない。左右はずれない。
+    /// 輻輳して一度に届きあふれたら、再生開始時のバッファ量まで減らし、遅延を残さない。左右はずれない。
     @Test func overflowTrimsBackToThreshold() {
         var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 2, channelCount: 2, trimsOnOverflow: true)
         let left = (1 ... 11).map { Float($0) / 100 }
@@ -173,7 +173,7 @@ struct MacAudioTests {
         #expect(played.right == [-9, -10, -11])
     }
 
-    /// iPad の声のように捨てたくない音は、今までどおり古い方から 1 つずつ捨てる。
+    /// iPad の音声入力のように破棄したくない音声は、従来どおり古い方から 1 つずつ破棄する。
     @Test func overflowWithoutTrimDropsOneAtATime() {
         var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 2, channelCount: 2)
         let left = (1 ... 11).map { Float($0) / 100 }

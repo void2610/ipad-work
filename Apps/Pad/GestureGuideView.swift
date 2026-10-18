@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// iPad での操作と、Mac での動作の一覧。「…」から開く。
+/// iPad での操作と、それに対応する Mac での動作の一覧。「…」から開く。
 struct GestureGuideView: View {
     @Environment(\.dismiss) private var dismiss
 
