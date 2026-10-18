@@ -1,16 +1,24 @@
 import Foundation
 
+/// 映像の符号化の方式。
+public enum VideoCodec: UInt8, Sendable {
+    case h264 = 0
+    /// 同じビットレートでも文字がにじみにくいので、Mac で作れればこちらを使う。
+    case hevc = 1
+}
+
 public struct VideoFormat: Sendable, Equatable {
+    public var codec: VideoCodec
     public var width: Int
     public var height: Int
-    public var sps: Data
-    public var pps: Data
+    /// 復号に要るパラメータセット。H.264 は SPS・PPS、HEVC は VPS・SPS・PPS の順。
+    public var parameterSets: [Data]
 
-    public init(width: Int, height: Int, sps: Data, pps: Data) {
+    public init(codec: VideoCodec, width: Int, height: Int, parameterSets: [Data]) {
+        self.codec = codec
         self.width = width
         self.height = height
-        self.sps = sps
-        self.pps = pps
+        self.parameterSets = parameterSets
     }
 }
 
@@ -53,10 +61,13 @@ public enum WireMessage: Sendable, Equatable {
             return (Kind.control.rawValue, try JSONEncoder().encode(message))
         case let .videoFormat(format):
             var writer = ByteWriter()
+            writer.write(format.codec.rawValue)
             writer.write(UInt32(format.width))
             writer.write(UInt32(format.height))
-            writer.writeLengthPrefixed(format.sps)
-            writer.writeLengthPrefixed(format.pps)
+            writer.write(UInt8(format.parameterSets.count))
+            for parameterSet in format.parameterSets {
+                writer.writeLengthPrefixed(parameterSet)
+            }
             return (Kind.videoFormat.rawValue, writer.data)
         case let .videoFrame(frame):
             var writer = ByteWriter()
@@ -80,11 +91,13 @@ public enum WireMessage: Sendable, Equatable {
             self = try .control(JSONDecoder().decode(ControlMessage.self, from: payload))
         case .videoFormat:
             var reader = ByteReader(payload)
+            let codecValue = try reader.read(UInt8.self)
+            guard let codec = VideoCodec(rawValue: codecValue) else { throw WireError.unknownVideoCodec(codecValue) }
             let width = try Int(reader.read(UInt32.self))
             let height = try Int(reader.read(UInt32.self))
-            let sps = try reader.readLengthPrefixed()
-            let pps = try reader.readLengthPrefixed()
-            self = .videoFormat(VideoFormat(width: width, height: height, sps: sps, pps: pps))
+            let count = try Int(reader.read(UInt8.self))
+            let parameterSets = try (0 ..< count).map { _ in try reader.readLengthPrefixed() }
+            self = .videoFormat(VideoFormat(codec: codec, width: width, height: height, parameterSets: parameterSets))
         case .videoFrame:
             var reader = ByteReader(payload)
             let isKeyFrame = try reader.read(UInt8.self) != 0

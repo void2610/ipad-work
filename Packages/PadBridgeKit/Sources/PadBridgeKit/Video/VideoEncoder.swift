@@ -3,30 +3,33 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-/// 画面転送用の低遅延 H.264 エンコーダ。`encode` は同じスレッドから順に呼ぶこと。
-public final class H264Encoder: @unchecked Sendable {
+/// 画面転送用の低遅延エンコーダ。`encode` は同じスレッドから順に呼ぶこと。
+public final class VideoEncoder: @unchecked Sendable {
     public typealias OutputHandler = @Sendable (_ format: VideoFormat?, _ frame: VideoFrame) -> Void
 
+    public let codec: VideoCodec
     private let session: VTCompressionSession
     private let output: OutputHandler
 
-    public init(width: Int, height: Int, averageBitRate: Int, frameRate: Int, output: @escaping OutputHandler) throws {
+    public init(codec: VideoCodec, width: Int, height: Int, averageBitRate: Int, frameRate: Int, output: @escaping OutputHandler) throws {
         var session: VTCompressionSession?
         // 低遅延レート制御は、フレームの並べ替えをせず 1 フレームずつ即座に出力させるために使う
         let specification = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
         let status = VTCompressionSessionCreate(
-            allocator: kCFAllocatorDefault, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
+            allocator: kCFAllocatorDefault, width: Int32(width), height: Int32(height),
+            codecType: codec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
             encoderSpecification: specification, imageBufferAttributes: nil, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &session
         )
         guard status == noErr, let session else { throw VideoCodingError.status(status) }
+        self.codec = codec
         self.session = session
         self.output = output
 
         let properties: [CFString: Any] = [
             kVTCompressionPropertyKey_RealTime: true,
-            // 低遅延レート制御が対応するのは Constrained 系のプロファイルだけ
-            kVTCompressionPropertyKey_ProfileLevel: kVTProfileLevel_H264_ConstrainedHigh_AutoLevel,
+            // 低遅延レート制御が対応するのは、H.264 では Constrained 系のプロファイルだけ
+            kVTCompressionPropertyKey_ProfileLevel: codec == .hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_ConstrainedHigh_AutoLevel,
             kVTCompressionPropertyKey_AllowFrameReordering: false,
             kVTCompressionPropertyKey_AverageBitRate: averageBitRate,
             kVTCompressionPropertyKey_ExpectedFrameRate: frameRate,

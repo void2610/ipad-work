@@ -12,46 +12,76 @@ extension VideoFormat {
     static let nalUnitHeaderLength: Int32 = 4
 
     public init(formatDescription: CMFormatDescription) throws {
-        var count = 0
-        var headerLength: Int32 = 0
-        let status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-            formatDescription, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil,
-            parameterSetCountOut: &count, nalUnitHeaderLengthOut: &headerLength
-        )
-        guard status == noErr, count >= 2 else { throw VideoCodingError.missingParameterSets }
-        guard headerLength == Self.nalUnitHeaderLength else { throw VideoCodingError.unsupportedNALUnitHeaderLength(headerLength) }
-
-        func parameterSet(at index: Int) throws -> Data {
+        let codec: VideoCodec
+        let minimumCount: Int
+        switch CMFormatDescriptionGetMediaSubType(formatDescription) {
+        case kCMVideoCodecType_H264:
+            (codec, minimumCount) = (.h264, 2)
+        case kCMVideoCodecType_HEVC:
+            (codec, minimumCount) = (.hevc, 3)
+        case let subType:
+            throw VideoCodingError.status(OSStatus(bitPattern: subType))
+        }
+        func parameterSet(at index: Int, count: UnsafeMutablePointer<Int>?, headerLength: UnsafeMutablePointer<Int32>?) throws -> Data? {
             var pointer: UnsafePointer<UInt8>?
             var size = 0
-            let status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-                formatDescription, parameterSetIndex: index, parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
-                parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil
-            )
-            guard status == noErr, let pointer else { throw VideoCodingError.status(status) }
-            return Data(bytes: pointer, count: size)
+            let status = switch codec {
+            case .h264:
+                CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                    formatDescription, parameterSetIndex: index, parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
+                    parameterSetCountOut: count, nalUnitHeaderLengthOut: headerLength
+                )
+            case .hevc:
+                CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                    formatDescription, parameterSetIndex: index, parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
+                    parameterSetCountOut: count, nalUnitHeaderLengthOut: headerLength
+                )
+            }
+            guard status == noErr else { throw VideoCodingError.status(status) }
+            return pointer.map { Data(bytes: $0, count: size) }
         }
 
+        var count = 0
+        var headerLength: Int32 = 0
+        _ = try parameterSet(at: 0, count: &count, headerLength: &headerLength)
+        guard count >= minimumCount else { throw VideoCodingError.missingParameterSets }
+        guard headerLength == Self.nalUnitHeaderLength else { throw VideoCodingError.unsupportedNALUnitHeaderLength(headerLength) }
+        let parameterSets = try (0 ..< count).map { index in
+            guard let data = try parameterSet(at: index, count: nil, headerLength: nil) else { throw VideoCodingError.missingParameterSets }
+            return data
+        }
         let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-        try self.init(width: Int(dimensions.width), height: Int(dimensions.height), sps: parameterSet(at: 0), pps: parameterSet(at: 1))
+        self.init(codec: codec, width: Int(dimensions.width), height: Int(dimensions.height), parameterSets: parameterSets)
     }
 
     public func makeFormatDescription() throws -> CMVideoFormatDescription {
-        try sps.withUnsafeBytes { spsBuffer in
-            try pps.withUnsafeBytes { ppsBuffer in
-                guard let spsPointer = spsBuffer.bindMemory(to: UInt8.self).baseAddress,
-                      let ppsPointer = ppsBuffer.bindMemory(to: UInt8.self).baseAddress
-                else { throw VideoCodingError.missingParameterSets }
-                var description: CMVideoFormatDescription?
-                let status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                    allocator: kCFAllocatorDefault, parameterSetCount: 2, parameterSetPointers: [spsPointer, ppsPointer],
-                    parameterSetSizes: [sps.count, pps.count], nalUnitHeaderLength: Self.nalUnitHeaderLength,
-                    formatDescriptionOut: &description
-                )
-                guard status == noErr, let description else { throw VideoCodingError.status(status) }
-                return description
-            }
+        guard parameterSets.count >= (codec == .h264 ? 2 : 3), !parameterSets.contains(where: \.isEmpty) else {
+            throw VideoCodingError.missingParameterSets
         }
+        // CoreMedia は呼んでいる間だけポインタを読むので、写しを取って呼び終えたら放す
+        let buffers = parameterSets.map { data -> UnsafeMutableBufferPointer<UInt8> in
+            let buffer = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: data.count)
+            _ = buffer.initialize(from: data)
+            return buffer
+        }
+        defer { buffers.forEach { $0.deallocate() } }
+        let pointers = buffers.map { UnsafePointer($0.baseAddress!) }
+        let sizes = parameterSets.map(\.count)
+        var description: CMVideoFormatDescription?
+        let status = switch codec {
+        case .h264:
+            CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                allocator: kCFAllocatorDefault, parameterSetCount: pointers.count, parameterSetPointers: pointers,
+                parameterSetSizes: sizes, nalUnitHeaderLength: Self.nalUnitHeaderLength, formatDescriptionOut: &description
+            )
+        case .hevc:
+            CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                allocator: kCFAllocatorDefault, parameterSetCount: pointers.count, parameterSetPointers: pointers,
+                parameterSetSizes: sizes, nalUnitHeaderLength: Self.nalUnitHeaderLength, extensions: nil, formatDescriptionOut: &description
+            )
+        }
+        guard status == noErr, let description else { throw VideoCodingError.status(status) }
+        return description
     }
 }
 

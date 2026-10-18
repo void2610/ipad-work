@@ -34,18 +34,27 @@ struct WireMessageTests {
     }
 
     @Test func videoMessagesRoundTrip() throws {
-        let format = WireMessage.videoFormat(VideoFormat(width: 1920, height: 1200, sps: Data([0x67, 0x64, 0x00]), pps: Data([0x68, 0xEE])))
+        let format = WireMessage.videoFormat(VideoFormat(codec: .h264, width: 1920, height: 1200, parameterSets: [Data([0x67, 0x64, 0x00]), Data([0x68, 0xEE])]))
+        let hevc = WireMessage.videoFormat(VideoFormat(codec: .hevc, width: 1920, height: 1080, parameterSets: [Data([0x40, 0x01]), Data([0x42, 0x01, 0x01]), Data([0x44, 0x01])]))
         let frame = WireMessage.videoFrame(VideoFrame(isKeyFrame: true, presentationTimeMicros: 123_456_789, region: VideoRegion(x: 0.5, y: 0.25, width: 0.25, height: 0.25), data: Data(repeating: 0xAB, count: 4096)))
-        for message in [format, frame] {
+        for message in [format, hevc, frame] {
             let encoded = try message.encoded()
             #expect(try WireMessage(type: encoded.type, payload: encoded.payload) == message)
         }
     }
 
     @Test func truncatedVideoFormatIsRejected() throws {
-        let encoded = try WireMessage.videoFormat(VideoFormat(width: 10, height: 10, sps: Data([1, 2, 3]), pps: Data([4]))).encoded()
+        let encoded = try WireMessage.videoFormat(VideoFormat(codec: .h264, width: 10, height: 10, parameterSets: [Data([1, 2, 3]), Data([4])])).encoded()
         #expect(throws: WireError.truncated) {
             try WireMessage(type: encoded.type, payload: encoded.payload.dropLast())
+        }
+    }
+
+    @Test func unknownVideoCodecIsRejected() throws {
+        var encoded = try WireMessage.videoFormat(VideoFormat(codec: .hevc, width: 10, height: 10, parameterSets: [Data([1])])).encoded()
+        encoded.payload[encoded.payload.startIndex] = 9
+        #expect(throws: WireError.unknownVideoCodec(9)) {
+            try WireMessage(type: encoded.type, payload: encoded.payload)
         }
     }
 

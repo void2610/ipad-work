@@ -6,14 +6,17 @@ import Synchronization
 import Testing
 import VideoToolbox
 
+// 低遅延のエンコーダをいくつも同時に作ると、VTCompressionSessionCreate から戻らなくなった。Host も 1 つずつしか作らないので、順に試す
+@Suite(.serialized)
 struct VideoRoundTripTests {
     /// Mac 側の符号化 → 通信路の直列化 → iPad 側のサンプルバッファ化、を経て復号できることを確かめる。
     /// 実際に送る大きさ (外部ディスプレイの 1920x1080、内蔵の画面を縮めた 2360x1532、縦に置いたディスプレイの 1080x1920 と 1326x2360) で、Host と同じビットレートにする。
     /// 4Mbps に決め打ちすると、大きな画面では 10 フレーム中 1〜2 フレームを低遅延のレート制御が落とした。
-    @Test(arguments: [(640, 400), (1920, 1080), (2360, 1532), (1080, 1920), (1326, 2360)])
-    func encodedFramesDecodeAfterWireRoundTrip(width: Int, height: Int) async throws {
+    @Test(arguments: [VideoCodec.h264, .hevc], [(640, 400), (1920, 1080), (2360, 1532), (1080, 1920), (1326, 2360)])
+    func encodedFramesDecodeAfterWireRoundTrip(codec: VideoCodec, size: (width: Int, height: Int)) async throws {
+        let (width, height) = size
         let received = Mutex<[(VideoFormat?, VideoFrame)]>([])
-        let encoder = try H264Encoder(width: width, height: height, averageBitRate: CaptureSize.bitRate(width: width, height: height), frameRate: 60) { format, frame in
+        let encoder = try VideoEncoder(codec: codec, width: width, height: height, averageBitRate: CaptureSize.bitRate(width: width, height: height), frameRate: 60) { format, frame in
             received.withLock { $0.append((format, frame)) }
         }
         for index in 0 ..< 10 {
@@ -27,6 +30,8 @@ struct VideoRoundTripTests {
         let firstFormat = try #require(outputs.first?.0)
         #expect(outputs.first?.1.isKeyFrame == true)
         #expect(firstFormat.width == width && firstFormat.height == height)
+        #expect(firstFormat.codec == codec)
+        #expect(firstFormat.parameterSets.count == (codec == .hevc ? 3 : 2))
 
         let wireFormat = try roundTrip(.videoFormat(firstFormat))
         guard case let .videoFormat(format) = wireFormat else { Issue.record("映像フォーマットに戻らない"); return }

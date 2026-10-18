@@ -3,6 +3,7 @@ import Foundation
 public enum WireError: Error, Equatable {
     case truncated
     case unknownMessageType(UInt32)
+    case unknownVideoCodec(UInt8)
 }
 
 struct ByteWriter {
