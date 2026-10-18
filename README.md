@@ -143,6 +143,7 @@ Mac 側の記録は、`log show --predicate 'subsystem BEGINSWITH "dev.void2610.
 just test       # PadBridgeKit の単体テスト (通信、HEVC と H.264 の符号化から復号、遅い回線での映像の間引きとビットレート、タッチの読み替え、キーの並びとリピート、修飾キー、Typeless のショートカットの解釈と押すかどうかの判断、Mac の音の Opus への符号化と、ためて左右に分けて鳴らす処理、映す画面の並べ方と選び方)
 just test-ios   # 同じテストを iOS のシミュレータで (iPad で使う部品が iOS でも動くか。映像の符号化は Mac だけなので除く)
 just deploy-host  # 動いている Host を新しいビルドに入れ替える (Typeless が聞き取り中のときと、iPad がつながっているときは入れ替えない)
+just deploy-pad <ID>  # iPad アプリを新しいビルドに入れ替える (入れるとアプリが落ちるので、iPad が Host につながっている間は入れない)
 ```
 
 アプリのアイコンは `Scripts/AppIcon.swift` で描いています。絵を変えたら `just icon` で iPad と Mac のアセットカタログに書き出します。
