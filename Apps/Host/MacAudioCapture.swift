@@ -25,6 +25,8 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     // 20ms の塊にまとめてから送る
     private var pending = Data()
     private var sentChunks = 0
+    // 作るのに続けて失敗した回数。出力先を替えた直後などは一時的に作れないことがあるので、少し待って作り直す
+    private var failedBuilds = 0
 
     /// `send` は取り出した音の塊ごとに、このクラスのキューから呼ばれる。何も鳴っていない間は呼ばれない。
     init(send: @escaping @Sendable (Data) -> Void) {
@@ -61,7 +63,8 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     }
 
     private func processesChanged() {
-        guard isRunning, Self.helperProcesses() != excludedProcesses else { return }
+        // 作れていない間は、補助アプリのプロセスが前と同じでも作り直す
+        guard isRunning, deviceID == kAudioObjectUnknown || Self.helperProcesses() != excludedProcesses else { return }
         tearDown()
         build()
     }
@@ -84,6 +87,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         var tap = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(description, &tap) == noErr, tap != kAudioObjectUnknown else {
             Self.logger.error("Mac の音のタップを作れない")
+            scheduleRebuild()
             return
         }
         guard let format = Self.format(of: tap),
@@ -92,6 +96,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         else {
             Self.logger.error("Mac の音の形式を変換できない")
             AudioHardwareDestroyProcessTap(tap)
+            scheduleRebuild()
             return
         }
         // 出力デバイスを含めず、タップだけを入力に持たせる。出力先が変わっても作り直さずに済む
@@ -106,6 +111,7 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &device) == noErr, device != kAudioObjectUnknown else {
             Self.logger.error("Mac の音の集約デバイスを作れない")
             AudioHardwareDestroyProcessTap(tap)
+            scheduleRebuild()
             return
         }
         var procID: AudioDeviceIOProcID?
@@ -119,8 +125,10 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
             if let procID { AudioDeviceDestroyIOProcID(device, procID) }
             AudioHardwareDestroyAggregateDevice(device)
             AudioHardwareDestroyProcessTap(tap)
+            scheduleRebuild()
             return
         }
+        failedBuilds = 0
         tapID = tap
         deviceID = device
         self.procID = procID
@@ -133,6 +141,19 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
             self.formatListener = formatListener
         }
         Self.logger.notice("Mac の音を送り始めた: \(format, privacy: .public)、除いたプロセス \(excluded.count)")
+    }
+
+    /// 作れなかったときに、少し待って作り直す。作れないまま iPad に何も届かず、Mac のスピーカーも鳴らない状態を残さない。
+    private func scheduleRebuild() {
+        failedBuilds += 1
+        guard failedBuilds <= 5 else {
+            Self.logger.error("Mac の音を何度作り直しても読めない")
+            return
+        }
+        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, isRunning, deviceID == kAudioObjectUnknown else { return }
+            build()
+        }
     }
 
     private func tearDown() {
