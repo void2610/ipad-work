@@ -65,7 +65,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
 
     /// Typeless のマイクが動き出したり止まったりしたときに呼ぶ。
     func typelessRecordingChanged(_ isRecording: Bool) {
-        typeless.observe(isRecording: isRecording)
+        typeless.observe(isRecording: isRecording, at: ProcessInfo.processInfo.systemUptime)
     }
 
     /// 接続が切れたときに、押しっぱなしのボタンやキーが残らないよう全部離す。
@@ -99,6 +99,7 @@ nonisolated final class InputInjector: @unchecked Sendable {
     private func setVoiceInput(_ isActive: Bool) {
         // 起動を待つのは押すと決める前にする。押すと決めた時刻から待つと、待つ間に離したときの完了が「まだ始まっていない」とみなされて押されない
         if isActive {
+            Self.waitForTypelessRestart()
             Self.launchTypelessIfNeeded()
         }
         guard typeless.shouldPress(toBecome: isActive, isRecording: TypelessMonitor.isRecording(), at: ProcessInfo.processInfo.systemUptime) else { return }
@@ -107,6 +108,14 @@ nonisolated final class InputInjector: @unchecked Sendable {
         post(shortcut.events(isDown: true))
         Thread.sleep(forTimeInterval: 0.05)
         post(shortcut.events(isDown: false))
+    }
+
+    /// Typeless のマイクの設定のために終了させて起動し直している間は、終わるまで待つ。途中で押すと、終了しかけた Typeless に届かないか、別に起動してしまう。
+    private static func waitForTypelessRestart() {
+        let deadline = Date.now + 15
+        while TypelessMicrophoneSetup.isRestartingTypeless, Date.now < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
     }
 
     /// Typeless が動いていなければ起動する。動いていないとショートカットを押しても何も起きないため。

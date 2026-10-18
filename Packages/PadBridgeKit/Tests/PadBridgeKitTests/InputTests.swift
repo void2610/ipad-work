@@ -89,7 +89,7 @@ struct TypelessToggleTests {
         var toggle = TypelessToggle()
         let pressedToStart = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
         #expect(pressedToStart)
-        toggle.observe(isRecording: true)
+        toggle.observe(isRecording: true, at: 0.2)
         let pressedAgain = toggle.shouldPress(toBecome: true, isRecording: true, at: 2)
         #expect(!pressedAgain)
         let pressedToStop = toggle.shouldPress(toBecome: false, isRecording: true, at: 3)
@@ -100,8 +100,8 @@ struct TypelessToggleTests {
     @Test func doesNotPressWhenTypelessAlreadyStopped() {
         var toggle = TypelessToggle()
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
-        toggle.observe(isRecording: true)
-        toggle.observe(isRecording: false)
+        toggle.observe(isRecording: true, at: 0.2)
+        toggle.observe(isRecording: false, at: 3)
         let pressed = toggle.shouldPress(toBecome: false, isRecording: false, at: 10)
         #expect(!pressed)
     }
@@ -128,8 +128,22 @@ struct TypelessToggleTests {
         #expect(!toggle.isStartedByPad)
         _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 0)
         #expect(toggle.isStartedByPad)
-        toggle.observe(isRecording: true)
-        toggle.observe(isRecording: false)
+        toggle.observe(isRecording: true, at: 0.2)
+        toggle.observe(isRecording: false, at: 5)
+        #expect(!toggle.isStartedByPad)
+    }
+
+    /// 前の聞き取りが止まったのに見張りが気づく前に開始を押すと、そのあとで前の「止まった」が届く。
+    /// それで iPad が始めさせたことを忘れると、iPad が離れたときに Typeless を止めず、聞き取りが残る。
+    @Test func staleStopRightAfterStartKeepsStartedByPad() {
+        var toggle = TypelessToggle()
+        _ = toggle.shouldPress(toBecome: true, isRecording: false, at: 10)
+        toggle.observe(isRecording: false, at: 10.1)
+        #expect(toggle.isStartedByPad)
+        toggle.observe(isRecording: true, at: 10.2)
+        #expect(toggle.isStartedByPad)
+        // 押した結果の聞き取りが終われば、忘れる
+        toggle.observe(isRecording: false, at: 20)
         #expect(!toggle.isStartedByPad)
     }
 }

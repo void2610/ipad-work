@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import os
 import PadBridgeKit
+import Synchronization
 
 /// Typeless に「PadBridge iPad マイク」を使わせる設定を自動で行う。どの場合に選ぶかは `TypelessMicrophoneChoice` が決める。
 /// このデバイスは Mac の既定の入力になれない (タップだけの集約デバイスは CanBeDefaultDevice が 0) ので、Typeless の「自動検出」のままでは使われない。
@@ -19,6 +20,13 @@ nonisolated enum TypelessMicrophoneSetup {
     }
 
     /// Typeless が聞き取っていない間に呼ぶ。`deviceName` は Typeless のマイクの一覧に出る名前。
+    private static let restarting = Mutex(false)
+
+    /// Typeless を終了させて起動し直している最中か。
+    static var isRestartingTypeless: Bool {
+        restarting.withLock { $0 }
+    }
+
     static func selectPadMicrophone(deviceName: String) -> Result {
         guard let settings = readSettings() else { return .skipped("Typeless の設定を読めない") }
         switch TypelessMicrophoneChoice.decide(settings: settings, deviceName: deviceName) {
@@ -31,6 +39,11 @@ nonisolated enum TypelessMicrophoneSetup {
         case .select:
             break
         }
+        // 終了させてから起動し直すまでの間は、iPad から始めても Typeless のショートカットを押すのを待たせる
+        restarting.withLock { $0 = true }
+        defer { restarting.withLock { $0 = false } }
+        // 静かなのを確かめてからここまでの間に、聞き取りが始まっていれば終了させない
+        guard !TypelessMonitor.isRecording() else { return .skipped("Typeless が聞き取りを始めたので、終了させない") }
         // 利用者が自分で終了させていた Typeless を、設定のために勝手に起動しない
         let wasRunning = TypelessApp.isRunning
         guard terminateTypeless() else { return .skipped("Typeless を終了できない") }

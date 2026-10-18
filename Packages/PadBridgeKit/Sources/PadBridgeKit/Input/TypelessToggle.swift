@@ -21,11 +21,13 @@ public struct TypelessToggle: Sendable {
     }
 
     /// Typeless のマイクが動き出したり止まったりしたときに呼ぶ。
-    public mutating func observe(isRecording: Bool) {
+    public mutating func observe(isRecording: Bool, at time: TimeInterval) {
+        // 開始を押した直後に届いた「止まった」は、見張りが遅れて気づいた前の聞き取りの終わり。iPad が始めさせたことは忘れない (忘れると、iPad が離れたときに止めない)
+        let isStaleStop = !isRecording && expected.map { $0.isActive && time - $0.since < Self.settleTime } == true
         if expected?.isActive == isRecording {
             expected = nil
         }
-        if !isRecording {
+        if !isRecording, !isStaleStop {
             isStartedByPad = false
         }
     }
