@@ -263,6 +263,17 @@
   - 重い映像、1920x1080、5 Mbps: 前は毎秒 15 枚・遅れ 2.6〜4.0 秒。今は毎秒 12〜13 枚・65〜97 ms。
   - スクロールする軽い映像、iPad の大きさ、10 Mbps: 前は毎秒 60 枚・10 ms。今は毎秒 56 枚・5 ms (大きな 1 枚を送る間の数枚を捨てる)。
 
+## Mac の画面のロック (2026-10-18)
+
+- ロック中に iPad から操作できるかを、利用者の Mac をロックせずに一次情報で調べた。
+  - Apple の DTS (Quinn) は、ScreenCaptureKit はログインした GUI のセッションで使えるので動くはずだが、ロック解除の画面には特別なセキュリティの制限がいくつもあり、それに当たるかもしれない、と答えている ([Apple Developer Forums 756908](https://developer.apple.com/forums/thread/756908))。ログイン前 (pre-login) では ScreenCaptureKit は使えない。
+  - 開発者の報告では、ロックされると ScreenCaptureKit は取り込みを止め、解除しても自分では戻らない ([opendisplay #296](https://github.com/peetzweg/opendisplay/issues/296))。ロック中は macOS が取り込みを断る ([claude-human](https://github.com/drkostas/claude-human))。
+  - ロック画面にパスワードを打てている claude-human は、合成したキーの出来事ではなく、Karabiner の DriverKit の仮想キーボード (root で動く補助) を使っている。合成した出来事が届かないところでも、本物のキーボードとして扱われるから、としている。ドライバを入れる作りは採らない (Mac 全体の状態を変えるため)。
+- そこで、ロック中に解除はできないものとして、次の 2 つをする。
+  - Host は loginwindow のロックと解除の知らせ (`com.apple.screenIsLocked`・`com.apple.screenIsUnlocked`、分散通知を `deliverImmediately` で受ける) を受け、iPad に `macScreenLocked` で知らせる。iPad は「Mac の画面がロックされています」を出す。iPad がつないだ時点のロックは、セッションの情報 (`CGSessionCopyCurrentDictionary`) の `CGSSessionScreenIsLocked` で読む。ロックされていないこの Mac では、このキーはなかった。
+  - 解除されたら、映像の接続があれば取り込みを作り直す。
+- iPad の知らせは、代わりの Host が送ったロックと解除で出て消えることをシミュレータで確かめた。Host がロックの知らせを受けるところは、利用者の Mac をロックしないと動かせず、偽のロックの知らせを送るとほかのアプリにも届くので、ビルドまでにしている。
+
 ## 外部ディスプレイ
 
 - 2026-10-18 に「Mac が外部ディスプレイにつながっているときの対応」を求められた。このとき Mac は蓋を閉じて外部ディスプレイ 2 台につながっていた (メインの VG258 と、その左の 1920x1080)。メインディスプレイしか送らなかったので、左の画面にあるものは iPad から見ることも触ることもできなかった。
