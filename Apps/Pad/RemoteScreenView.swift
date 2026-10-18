@@ -37,7 +37,12 @@ final class RemoteScreenUIView: UIView {
         }
     }
     private var regionRequestTimer: Timer?
-    var videoSize = CGSize.zero
+    var videoSize = CGSize.zero {
+        // 画面を替えると、替えた知らせで一度置き直したあとに新しい画面の大きさが届く。そのときも置き直さないと、映像が前の画面の縦横比の枠に縮んで描かれ、触った位置とずれる
+        didSet {
+            if videoSize != oldValue { setNeedsLayout() }
+        }
+    }
     /// 映している Mac の画面。別の画面に替わったら、拡大を戻す。
     var displayID: UInt32? {
         didSet {
@@ -46,6 +51,8 @@ final class RemoteScreenUIView: UIView {
             stopMomentum()
             zoom = ScreenZoom()
             setNeedsLayout()
+            // 替える前に待っていた拡大の範囲の頼みが先に送られていても、全体に戻させる
+            onRegionRequest?(.full)
         }
     }
 
@@ -347,9 +354,14 @@ final class RemoteScreenUIView: UIView {
     // MARK: - ハードウェアキーボード
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if !forward(presses, isDown: true) {
+        // 操作の一覧などを上に出している間は、入力先のままでもキーを Mac へ送らない (離したキーは、押したまま出したときに残らないよう送る)
+        if isCovered || !forward(presses, isDown: true) {
             super.pressesBegan(presses, with: event)
         }
+    }
+
+    private var isCovered: Bool {
+        window?.rootViewController?.presentedViewController != nil
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
