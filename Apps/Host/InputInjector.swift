@@ -139,7 +139,9 @@ nonisolated final class InputInjector: @unchecked Sendable {
     }
 
     private var displayBounds: CGRect {
-        CGDisplayBounds(displayID ?? CGMainDisplayID())
+        let bounds = displayID.map(CGDisplayBounds) ?? .null
+        // 画面を外した直後で、Host がまだ映す画面を替えていない間は大きさ 0 が返る。メインディスプレイの上として扱う
+        return bounds.isEmpty ? CGDisplayBounds(CGMainDisplayID()) : bounds
     }
 
     private func screenPoint(_ point: NormalizedPoint) -> CGPoint {
