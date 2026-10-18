@@ -157,6 +157,20 @@ struct TouchInterpreterTests {
         #expect(interpreter.ended(touch: 2, at: CGPoint(x: 120, y: 140), time: 1.0).isEmpty)
     }
 
+    /// ドラッグ中に触れた別の指だけが取り消されても (手のひらや画面の端のシステムのジェスチャー)、ドラッグしている指を離せば左ボタンを離す。
+    @Test func cancellingOtherFingerKeepsDragReleasable() {
+        var interpreter = TouchInterpreter()
+        _ = interpreter.began(touch: 1, at: a, time: 0)
+        _ = interpreter.longPressTimerFired()
+        let b = CGPoint(x: 150, y: 100)
+        _ = interpreter.moved(touch: 1, to: b, time: 0.6)
+        _ = interpreter.began(touch: 2, at: CGPoint(x: 400, y: 400), time: 0.7)
+        #expect(interpreter.cancelled(touch: 2) == [])
+        let c = CGPoint(x: 170, y: 110)
+        #expect(interpreter.moved(touch: 1, to: c, time: 0.8) == [.move(c)])
+        #expect(interpreter.ended(touch: 1, at: c, time: 0.9) == [.press(.left, isDown: false, at: c)])
+    }
+
     @Test func secondFingerDuringDragIsIgnored() {
         var interpreter = TouchInterpreter()
         _ = interpreter.began(touch: 1, at: a, time: 0)

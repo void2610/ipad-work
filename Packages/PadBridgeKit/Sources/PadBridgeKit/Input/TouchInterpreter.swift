@@ -192,6 +192,9 @@ public struct TouchInterpreter {
         switch state {
         case let .dragging(touch) where touch == id:
             actions = [.press(.left, isDown: false, at: point)]
+        case .dragging:
+            // ドラッグしている指はまだ触れている。ここで判定をやめると、その指を離しても左ボタンを離さず、Mac で押されたまま残る
+            return finishIfAllLifted()
         case .scrolling:
             actions = [.scrollEnded(velocityX: 0, velocityY: 0)]
         default:
