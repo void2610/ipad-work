@@ -516,7 +516,7 @@ nonisolated final class HostServer: @unchecked Sendable {
             // 塊は取り込みのキューから順に届くので、符号化もその上で順に行う
             let encoder = macAudioCodec == .opus ? MacAudioEncoder() : nil
             Self.logger.notice("Mac の音の形式: \(encoder == nil ? "無圧縮" : "Opus", privacy: .public)")
-            let capture = MacAudioCapture { [weak channel] samples in
+            let capture = MacAudioCapture(send: { [weak channel] samples in
                 // 届かずにたまっている間は捨て、つながり直したときにまとめて鳴って遅れないようにする
                 guard let channel, channel.pendingSendCount < 25 else { return }
                 if let encoder {
@@ -524,7 +524,10 @@ nonisolated final class HostServer: @unchecked Sendable {
                 } else {
                     channel.send(.macAudio(samples))
                 }
-            }
+            }, onGiveUp: { [weak self] in
+                guard let self else { return }
+                queue.async { self.stopMacAudio() }
+            })
             capture.start()
             macAudio = capture
             onMacAudioChange(true)

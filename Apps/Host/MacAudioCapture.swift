@@ -28,9 +28,13 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
     // 作るのに続けて失敗した回数。出力先を替えた直後などは一時的に作れないことがあるので、少し待って作り直す
     private var failedBuilds = 0
 
+    private let onGiveUp: @Sendable () -> Void
+
     /// `send` は取り出した音の塊ごとに、このクラスのキューから呼ばれる。何も鳴っていない間は呼ばれない。
-    init(send: @escaping @Sendable (Data) -> Void) {
+    /// `onGiveUp` は、何度作り直しても読めずにあきらめたときに呼ばれる。
+    init(send: @escaping @Sendable (Data) -> Void, onGiveUp: @escaping @Sendable () -> Void = {}) {
         self.send = send
+        self.onGiveUp = onGiveUp
     }
 
     func start() {
@@ -148,6 +152,8 @@ nonisolated final class MacAudioCapture: @unchecked Sendable {
         failedBuilds += 1
         guard failedBuilds <= 5 else {
             Self.logger.error("Mac の音を何度作り直しても読めない")
+            // 取り出していないので Mac のスピーカーは鳴っている。「鳴らしている」と出したままにしないよう知らせる
+            onGiveUp()
             return
         }
         queue.asyncAfter(deadline: .now() + 2) { [weak self] in
