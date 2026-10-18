@@ -19,6 +19,12 @@ public struct NormalizedPoint: Codable, Sendable, Equatable {
         self.x = min(max(x, 0), 1)
         self.y = min(max(y, 0), 1)
     }
+
+    /// 受け取った値も丸める。範囲の外の値が届くと、Mac は隣の画面の見えない位置を押してしまう
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(x: container.decode(Double.self, forKey: .x), y: container.decode(Double.self, forKey: .y))
+    }
 }
 
 public struct KeyModifiers: OptionSet, Codable, Sendable, Hashable {

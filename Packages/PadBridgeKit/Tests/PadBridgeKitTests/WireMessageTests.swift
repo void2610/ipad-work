@@ -78,6 +78,12 @@ struct WireMessageTests {
         }
     }
 
+    /// 範囲の外の値で送られてきても、読み取るときに丸める。
+    @Test func decodedNormalizedPointIsClamped() throws {
+        let json = Data(#"{"mouseMove":{"_0":{"x":-0.2,"y":1.7}}}"#.utf8)
+        #expect(try JSONDecoder().decode(ControlMessage.self, from: json) == .mouseMove(NormalizedPoint(x: 0, y: 1)))
+    }
+
     @Test func normalizedPointIsClamped() {
         #expect(NormalizedPoint(x: -0.5, y: 1.5) == NormalizedPoint(x: 0, y: 1))
     }
