@@ -37,6 +37,7 @@ final class RemoteScreenUIView: UIView {
         }
     }
     private var regionRequestTimer: Timer?
+    private var lastScreenArea = CGRect.null
     var videoSize = CGSize.zero {
         // 画面を替えると、替えた知らせで一度置き直したあとに新しい画面の大きさが届く。そのときも置き直さないと、映像が前の画面の縦横比の枠に縮んで描かれ、触った位置とずれる
         didSet {
@@ -121,6 +122,11 @@ final class RemoteScreenUIView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // 拡大している間にキーボードの出し入れや回転で映す範囲が変わったら、見えている範囲を頼み直す。前の範囲のままだと縁が黒くなる
+        if screenArea != lastScreenArea {
+            lastScreenArea = screenArea
+            if zoom.isZoomed { scheduleRegionRequest() }
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         // 届いている映像は shownRegion の範囲だけなので、画面全体の中でその範囲が占める位置に置く
