@@ -13,6 +13,31 @@ final class MicrophoneStreamer {
     private let engine = AVAudioEngine()
     private let meter = LevelMeter()
     private(set) var isRunning = false
+    // 話している途中でエンジンが止まったときに、同じ送り先で始め直すために覚える
+    private var send: (@Sendable (Data) -> Void)?
+    private var observers: [any NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        // AirPods をつなぐ・外すなどで経路が変わるとエンジンは止まり、マイクの形式も変わる。止まったままだと、話しても Mac に無音しか届かない
+        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restartIfRunning() }
+        })
+        // 電話や Siri で止められたあとも、終わったら始め直す
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended
+            else { return }
+            MainActor.assumeIsolated { self?.restartIfRunning() }
+        })
+    }
+
+    private func restartIfRunning() {
+        guard isRunning, let send else { return }
+        Self.logger.notice("マイクのエンジンが止まったので始め直す")
+        stop()
+        start(send: send)
+    }
 
     /// 今の声の大きさ (0...1)。マイクを止めている間は 0。
     var level: Float {
@@ -48,6 +73,7 @@ final class MicrophoneStreamer {
         do {
             try engine.start()
             isRunning = true
+            self.send = send
         } catch {
             input.removeTap(onBus: 0)
             Self.logger.error("マイクを始められない: \(error, privacy: .public)")
@@ -67,6 +93,7 @@ final class MicrophoneStreamer {
     func stop() {
         guard isRunning else { return }
         isRunning = false
+        send = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         meter.reset()
