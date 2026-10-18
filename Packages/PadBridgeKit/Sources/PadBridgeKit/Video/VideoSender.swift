@@ -207,8 +207,10 @@ public final class VideoSender: @unchecked Sendable {
             pixelBuffer = output
         }
         let forceKeyFrame = keyFrameRequested.exchange(false, ordering: .relaxed)
-        encoder.encode(pixelBuffer, presentationTime: presentationTime, forceKeyFrame: forceKeyFrame, region: region)
-        lock.withLock { lastPresentationTime = presentationTime }
+        // 送り直しはホストの今の時刻で送るので、そのあとに届いた取り込みの時刻 (画面に出た時刻) はそれより前のことがある。受け取りの返事は時刻の順に突き合わせるので戻さない
+        let time = Self.later(presentationTime, than: lock.withLock { lastPresentationTime })
+        encoder.encode(pixelBuffer, presentationTime: time, forceKeyFrame: forceKeyFrame, region: region)
+        lock.withLock { lastPresentationTime = time }
         return true
     }
 
@@ -227,10 +229,15 @@ public final class VideoSender: @unchecked Sendable {
     /// 送り直すフレームの時刻。取り込んだフレームと同じホストの時計で、前に符号化したフレームより後にする (受け取りの返事は時刻で突き合わせる)。
     /// 実際に経った時間を空けると、低遅延のレート制御が送り直しに予算を回す。1/60 秒ずつ詰めると、下げたビットレートでは絵が良くならなかった。
     private func refreshPresentationTime() -> CMTime {
-        let now = VideoFrame.presentationTimeMicros(of: CMClockGetTime(CMClockGetHostTimeClock()))
-        let last = lock.withLock { lastPresentationTime }
-        let micros = last.isNumeric ? max(now, VideoFrame.presentationTimeMicros(of: last) + 1000) : now
-        return CMTime(value: micros, timescale: 1_000_000)
+        let now = CMTime(value: VideoFrame.presentationTimeMicros(of: CMClockGetTime(CMClockGetHostTimeClock())), timescale: 1_000_000)
+        return Self.later(now, than: lock.withLock { lastPresentationTime })
+    }
+
+    /// `time` が `last` より 1ms 以上後でなければ、`last` の 1ms 後にする。
+    private static func later(_ time: CMTime, than last: CMTime) -> CMTime {
+        guard last.isNumeric else { return time }
+        let earliest = CMTimeAdd(last, CMTime(value: 1, timescale: 1000))
+        return CMTimeCompare(time, earliest) < 0 ? earliest : time
     }
 
     private func deadline(for time: TimeInterval?) -> DispatchTime {

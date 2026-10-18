@@ -154,6 +154,23 @@ struct VideoSenderTests {
         #expect(recorder.frames.count == count)
     }
 
+    /// 送り直しのあとに、それより古い時刻の取り込みが届いても、送るフレームの時刻は戻らない (受け取りの返事は時刻の順に突き合わせる)。
+    @Test func keepsPresentationTimeIncreasing() async throws {
+        let recorder = Recorder()
+        let sender = try makeSender(width: 640, height: 400, recorder: recorder)
+        defer { sender.stop() }
+        let images = try makeTexts(width: 640, height: 400, offsets: [0, 300])
+        queue.sync { sender.send(images[0], presentationTime: Self.now()) }
+        try await waitUntil { recorder.frames.count >= 2 }
+        let refreshed = try #require(recorder.frames.last)
+        // 画面に出た時刻は、送り直しを符号化したあとに届いても、送り直しより少し前のことがある
+        let older = CMTime(value: refreshed.presentationTimeMicros - 5000, timescale: 1_000_000)
+        queue.sync { sender.send(images[1], presentationTime: older) }
+        try await waitUntil { recorder.frames.contains { $0.presentationTimeMicros > refreshed.presentationTimeMicros } }
+        let times = recorder.frames.map(\.presentationTimeMicros)
+        #expect(zip(times, times.dropFirst()).allSatisfy { $0 < $1 }, "\(times)")
+    }
+
     /// 止めたあとも、返事の有無・ビットレート・往復の遅れを読める (Host は止めてから読み、作り直す取り込みに引き継ぐ)。
     @Test func keepsStateForHandOverAfterStop() async throws {
         let recorder = Recorder()
