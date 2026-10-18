@@ -39,3 +39,8 @@ build-pad-simulator: generate
 # 接続中の実機に iPad アプリを入れる (devicectl list devices で ID を確認する)
 install-pad device: build-pad
     xcrun devicectl device install app --device {{device}} "{{derived_data}}/Build/Products/Debug-iphoneos/PadBridge.app"
+
+# 使っている iPad アプリを新しいビルドに入れ替える。入れるとアプリが落ちるので、iPad が Host につながっている間は入れない
+deploy-pad device: build-pad
+    if Scripts/pad-connected.sh; then echo "iPad がつながっているので入れない" >&2; exit 1; fi
+    xcrun devicectl device install app --device {{device}} "{{derived_data}}/Build/Products/Debug-iphoneos/PadBridge.app"
