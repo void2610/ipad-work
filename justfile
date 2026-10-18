@@ -12,6 +12,10 @@ icon:
 test:
     swift test --package-path Packages/PadBridgeKit
 
+# 共通ライブラリのテストを Thread Sanitizer 付きで走らせる (送受信や音の再生など、複数のスレッドから触る部品のデータ競合を見つける)
+test-tsan:
+    swift test --package-path Packages/PadBridgeKit --scratch-path build/KitTestsTSan --sanitize=thread
+
 # 共通ライブラリのテストを iOS のシミュレータで走らせる (Opus の復号など、iPad で使う部品が iOS でも動くかを確かめる)
 test-ios simulator="iPad Air 11-inch (M4)":
     cd Packages/PadBridgeKit && xcodebuild test -scheme PadBridgeKit -destination "platform=iOS Simulator,name={{simulator}}" -derivedDataPath ../../build/KitTestsIOS
