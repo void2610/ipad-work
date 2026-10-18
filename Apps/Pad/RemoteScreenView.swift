@@ -50,6 +50,7 @@ final class RemoteScreenUIView: UIView {
     }
 
     private let displayLayer: AVSampleBufferDisplayLayer
+    private let emptyInputView = UIView(frame: .zero)
     // ビューの座標での、画面の下端に付いたキーボードの上端。キーボードがなければ無限大
     private var keyboardTop = CGFloat.infinity
     private var interpreter = TouchInterpreter()
@@ -87,6 +88,11 @@ final class RemoteScreenUIView: UIView {
 
     override var canBecomeFirstResponder: Bool {
         true
+    }
+
+    // 文字入力を持たないビューでも、入力先のまま「…」のメニューを開くと iPadOS がソフトウェアキーボードを出してメニューを隠すので、空の入力ビューに置き換える
+    override var inputView: UIView? {
+        emptyInputView
     }
 
     override func didMoveToWindow() {
