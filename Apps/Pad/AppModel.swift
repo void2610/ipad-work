@@ -72,9 +72,15 @@ final class AppModel {
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: PadBridgeService.type, domain: nil), using: parameters)
-        browser.stateUpdateHandler = { [weak self] state in
+        browser.stateUpdateHandler = { [weak self, weak browser] state in
             let isDenied = LocalNetworkAccess.isDenied(state)
-            MainActor.assumeIsolated { self?.isLocalNetworkDenied = isDenied }
+            MainActor.assumeIsolated {
+                self?.isLocalNetworkDenied = isDenied
+                // mDNSResponder が起動し直したときなどに失敗する。そのままだと、アプリを起動し直すまで Mac が見つからない
+                if case .failed = state, !isDenied, let self, let browser, browser === self.browser {
+                    self.restartBrowsing()
+                }
+            }
         }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             let hosts = results.compactMap { result -> DiscoveredHost? in
@@ -84,9 +90,28 @@ final class AppModel {
             MainActor.assumeIsolated {
                 self?.hosts = hosts.sorted { $0.name < $1.name }
                 self?.autoConnectIfPossible()
+                self?.followRenamedHost()
             }
         }
         browser.start(queue: .main)
         self.browser = browser
+    }
+
+    private func restartBrowsing() {
+        browser?.cancel()
+        browser = nil
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, browser == nil else { return }
+            startBrowsing()
+        }
+    }
+
+    /// つないでいる Mac の名前が消え、同じ名前の「 (2)」付きの別名が現れたら、そちらへつなぎ直す (前の Host の登録が残っている間に起動し直すと名前が変わる)。
+    private func followRenamedHost() {
+        guard let session, session.phase != .connected, !hosts.contains(where: { $0.name == session.host.name }) else { return }
+        let base = PadBridgeService.baseName(session.host.name)
+        guard let renamed = hosts.first(where: { PadBridgeService.baseName($0.name) == base }) else { return }
+        connect(to: renamed)
     }
 }
