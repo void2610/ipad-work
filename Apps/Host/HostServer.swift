@@ -29,12 +29,10 @@ nonisolated final class HostServer: @unchecked Sendable {
     private var videoMaxSize = (width: 0, height: 0)
     // 取り込みを始めたときの画面。解像度や置き場所が変わったら、取り込みを作り直す
     private var streamedDisplay: DisplayLayout?
-    // 映せる画面。名前はメインスレッドでしか読めないので、そこで読んだものを持っておく
-    private var displays: [RemoteDisplay] = []
+    // 映せる画面と、iPad に映している画面。画面の名前はメインスレッドでしか読めないので、そこで読んだ一覧を持っておく
+    private var selection = DisplaySelection()
     // 画面ごとの、メニューバーと Dock を除いた範囲。手前のウィンドウを移す先を決めるのに使う
     private var usableAreas: [UInt32: CGRect] = [:]
-    // iPad に映している画面。iPad で選ばれた画面がつながっていればそれ、なければメインディスプレイ
-    private var shownDisplayID: CGDirectDisplayID?
     private static let preferredDisplayKey = "preferredDisplayUUID"
     private var screenObserver: (any NSObjectProtocol)?
     private var activationObserver: (any NSObjectProtocol)?
@@ -474,7 +472,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func startStreamer(on channel: MessageChannel) {
         streamer?.stop()
-        let displayID = shownDisplayID ?? CGMainDisplayID()
+        let displayID = selection.shownID ?? CGMainDisplayID()
         let streamer = ScreenStreamer(channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion)
         self.streamer = streamer
         streamedDisplay = DisplayLayout(of: displayID)
@@ -487,8 +485,8 @@ nonisolated final class HostServer: @unchecked Sendable {
                 self.queue.async {
                     guard self.streamer === streamer else { return }
                     // ScreenCaptureKit の一覧にない画面 (CoreGraphics には見えていても取り込めないもの) で黒いまま繰り返さないよう、メインディスプレイを映す
-                    if isDisplayMissing, displayID != CGMainDisplayID(), let video = self.video {
-                        self.show(CGMainDisplayID())
+                    if isDisplayMissing, let video = self.video, self.selection.fallBackToMain() {
+                        self.applyShownDisplay()
                         self.sendDisplays()
                         self.startStreamer(on: video)
                     } else {
@@ -528,19 +526,16 @@ nonisolated final class HostServer: @unchecked Sendable {
     /// 選ばれた画面が外れたらメインディスプレイを映し、つなぎ直されたらまた選ばれた画面を映す。
     /// 取り込みは始めたときの画面の大きさのまま続き、触った位置とずれるので、映す画面やその解像度・置き場所が変わったら作り直す。
     private func displaysChanged(_ snapshot: DisplayCatalog.Snapshot) {
-        let newDisplays = snapshot.displays
-        let previous = (displays, shownDisplayID)
-        displays = newDisplays
         usableAreas = snapshot.usableAreas
-        let shown = RemoteDisplay.shown(preferred: preferredDisplayID(), in: newDisplays)
-        if shown != shownDisplayID {
-            show(shown)
+        let update = selection.update(snapshot.displays, preferred: preferredDisplayID())
+        if update.isShownChanged {
+            applyShownDisplay()
         }
-        if (displays, shownDisplayID) != previous {
-            Self.logger.notice("映せる画面: \(newDisplays.map(\.label).joined(separator: "、"), privacy: .public)")
+        if update.needsAnnouncement {
+            Self.logger.notice("映せる画面: \(snapshot.displays.map(\.label).joined(separator: "、"), privacy: .public)")
             sendDisplays()
         }
-        guard let video, streamer != nil, let shownDisplayID, streamedDisplay != DisplayLayout(of: shownDisplayID) else { return }
+        guard let video, streamer != nil, let shownID = selection.shownID, streamedDisplay != DisplayLayout(of: shownID) else { return }
         Self.logger.notice("Mac の画面の構成が変わったので、取り込みを作り直す")
         startStreamer(on: video)
     }
@@ -551,7 +546,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// 手前のウィンドウを選ばれた画面へ移し、その画面を映す。画面をまたいでドラッグできない代わり。
     private func moveFrontWindow(to id: CGDirectDisplayID) {
-        guard displays.contains(where: { $0.id == id }) else {
+        guard selection.contains(id) else {
             sendDisplays()
             return
         }
@@ -570,7 +565,7 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     /// Dock を出してキーボードで選べるようにする。映していない画面に出ると iPad では見えないまま Dock に入力が移るので、先に Dock のある画面を映す。
     private func showDock() {
-        if displays.count > 1, let id = DisplayCatalog.dockDisplay(), id != shownDisplayID {
+        if selection.hasMultipleDisplays, let id = DisplayCatalog.dockDisplay(), id != selection.shownID {
             switchDisplay(to: id, reason: "Dock のある画面を映す", movesPointer: false)
         }
         inputQueue.async { [injector] in
@@ -582,7 +577,7 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func applicationActivated(_ pid: pid_t) {
         activationCount += 1
         let count = activationCount
-        guard video != nil, displays.count > 1, pid != ProcessInfo.processInfo.processIdentifier else { return }
+        guard video != nil, selection.hasMultipleDisplays, pid != ProcessInfo.processInfo.processIdentifier else { return }
         // 前に出てからウィンドウが手前に来るまで少しかかる。アクセシビリティの問い合わせは相手の応答を待つので、サーバーのキューの外で行う
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let frame = DisplayCatalog.focusedWindowFrame(of: pid), let self else { return }
@@ -594,16 +589,16 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func followWindow(at frame: CGRect) {
-        let bounds = Dictionary(uniqueKeysWithValues: displays.map { ($0.id, CGDisplayBounds($0.id)) })
-        guard let id = RemoteDisplay.showing(window: frame, displays: bounds), id != shownDisplayID else { return }
+        let bounds = Dictionary(uniqueKeysWithValues: selection.displays.map { ($0.id, CGDisplayBounds($0.id)) })
+        guard let id = RemoteDisplay.showing(window: frame, displays: bounds), id != selection.shownID else { return }
         // Mac を直接使っている人のマウスを奪わないよう、ポインタは動かさない
         switchDisplay(to: id, reason: "前に出たウィンドウのある画面を映す", movesPointer: false)
     }
 
     /// 画面を覚えて映す。外したあとでつなぎ直しても、その画面を映す。
     private func switchDisplay(to id: CGDirectDisplayID, reason: String, movesPointer: Bool) {
-        guard let display = displays.first(where: { $0.id == id }) else {
-            // メニューを開いている間に外れた画面が選ばれた。iPad は選んだ画面を先に映したことにしているので、今の画面を知らせ直す
+        let result = selection.switchTo(id)
+        guard result != .missing, let display = selection.displays.first(where: { $0.id == id }) else {
             sendDisplays()
             return
         }
@@ -611,8 +606,8 @@ nonisolated final class HostServer: @unchecked Sendable {
         if let uuid = DisplayCatalog.uuid(of: id) {
             UserDefaults.standard.set(uuid, forKey: Self.preferredDisplayKey)
         }
-        guard id != shownDisplayID else { return }
-        show(id)
+        guard result == .switched else { return }
+        applyShownDisplay()
         if movesPointer {
             inputQueue.async { [injector] in injector.moveToDisplayCenter() }
         }
@@ -622,16 +617,17 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
-    private func show(_ displayID: CGDirectDisplayID?) {
-        shownDisplayID = displayID
+    /// 映す画面が替わったときに、拡大の範囲とタッチを届ける画面を合わせる。
+    private func applyShownDisplay() {
         // 前の画面で拡大していた範囲は、別の画面では意味がない。iPad も画面が替わると拡大を戻す
         videoRegion = .full
+        let displayID = selection.shownID
         inputQueue.async { [injector] in injector.setDisplay(displayID) }
     }
 
     private func sendDisplays() {
-        guard let shownDisplayID else { return }
-        control?.send(.control(.displays(displays, shownID: shownDisplayID)))
+        guard let announcement = selection.announcement else { return }
+        control?.send(.control(announcement))
     }
 
     private func preferredDisplayID() -> CGDirectDisplayID? {
