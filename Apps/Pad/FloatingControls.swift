@@ -48,6 +48,16 @@ struct FloatingControls: View {
         }
     }
 
+    private static let reservedShortcuts: [(title: String, usage: Int)] = [
+        ("⌘Space (Spotlight)", 0x2C),
+        ("⌘N (新規)", 0x11),
+        ("⌘O (開く)", 0x12),
+        ("⌘R (再読み込み)", 0x15),
+        ("⌘M (しまう)", 0x10),
+        ("⌘H (隠す)", 0x0B),
+        ("⌘Q (終了)", 0x14),
+    ]
+
     private var corner: Corner {
         Corner(rawValue: cornerName) ?? .bottomTrailing
     }
@@ -100,6 +110,12 @@ struct FloatingControls: View {
                     }
                 }
                 Toggle("Mac の音を iPad で鳴らす", systemImage: "speaker.wave.2", isOn: Binding(get: { session.playsMacAudio }, set: { session.setPlaysMacAudio($0) }))
+                // ハードウェアキーボードで押しても iPadOS が受け取ってしまい、Mac に届かないもの
+                Menu("Mac のショートカット", systemImage: "command") {
+                    ForEach(Self.reservedShortcuts, id: \.title) { shortcut in
+                        Button(shortcut.title) { session.sendShortcut(usage: shortcut.usage, modifiers: .command) }
+                    }
+                }
                 Button("操作の一覧", systemImage: "hand.tap") { isShowingGuide = true }
                 Button("切断", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
             } label: {

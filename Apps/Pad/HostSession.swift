@@ -173,6 +173,11 @@ final class HostSession {
         send(.desktopSwipe(direction))
     }
 
+    /// iPadOS が先に受け取って Mac に届かないショートカットを、「…」から送る。
+    func sendShortcut(usage: Int, modifiers: KeyModifiers) {
+        RemoteKeys.withModifiers(modifiers, RemoteKeys.tap(usage: usage)).forEach(send)
+    }
+
     func showDock() {
         send(.showDock)
     }

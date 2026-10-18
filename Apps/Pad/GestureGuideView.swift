@@ -29,6 +29,7 @@ struct GestureGuideView: View {
         ]),
         ("キーボード", [
             Item(gesture: "ハードウェアキーボード", action: "そのままキー入力 (押し続けると繰り返す。⌘ を押しながらタップで ⌘クリック)"),
+            Item(gesture: "⌘Space・⌘N・⌘O・⌘R・⌘M・⌘H・⌘Q", action: "iPadOS が受け取ってしまうので、「…」の「Mac のショートカット」から送る"),
             Item(gesture: "特殊キーの列の ⌃ ⌥ ⌘ ⇧", action: "次の 1 回だけ効く。続けて 2 回押すと固定"),
             Item(gesture: "特殊キーの列の英数・かな", action: "Mac の日本語入力を切り替える。効いている方が青くなる"),
             Item(gesture: "特殊キーの列のペースト", action: "iPad でコピーした文字を Mac の入力欄に入れる"),
