@@ -22,6 +22,20 @@ struct VideoStatsTests {
         #expect(meter.take(at: 14) == (0, 0))
     }
 
+    /// 映像を止めて 1 分後に戻っても、止めていた間で割らず、戻ってからの最初のフレームから数える。
+    @Test func meterStartsAfterResetFromFirstFrame() {
+        let meter = ReceiveRateMeter()
+        meter.record(bytes: 25_000, at: 0)
+        _ = meter.take(at: 2)
+        meter.reset()
+        for index in 0 ..< 60 {
+            meter.record(bytes: 25_000, at: 62 + Double(index) / 30)
+        }
+        let rate = meter.take(at: 64)
+        #expect(rate.framesPerSecond == 30)
+        #expect(rate.megabitsPerSecond == 6)
+    }
+
     /// 「接続の状態」は操作用の接続で送るので、JSON で往復できる。
     @Test func statsRoundTripOnTheWire() throws {
         let stats = VideoStats(codec: .hevc, width: 2360, height: 1532, bitRate: 8_000_000, maximumBitRate: 14_462_080, roundTripMillis: 42)

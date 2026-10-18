@@ -50,6 +50,11 @@ public final class ReceiveRateMeter: Sendable {
         }
     }
 
+    /// 映像を止めたときに呼ぶ。次の映像の最初のフレームから数え始め、止めていた時間で割らないようにする。
+    public func reset() {
+        counts.withLock { $0 = Counts() }
+    }
+
     /// 前に読んでからの毎秒の枚数と Mbps を返し、数え直す。1 枚も届いていなければ 0。
     public func take(at time: TimeInterval) -> (framesPerSecond: Double, megabitsPerSecond: Double) {
         counts.withLock { counts in

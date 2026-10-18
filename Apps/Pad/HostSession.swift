@@ -217,7 +217,9 @@ final class HostSession {
 
     /// 低電力モードのときや本体が熱いときは、映像の枚数を半分にしてもらい、復号と描画の電池と熱を抑える。
     private func requestFrameRateIfChanged() {
-        let rate = PreferredFrameRate.choose(isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled, thermalState: ProcessInfo.processInfo.thermalState)
+        let rate = PreferredFrameRate.choose(
+            isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled, thermalState: ProcessInfo.processInfo.thermalState, current: requestedFrameRate
+        )
         guard rate != requestedFrameRate, phase == .connected else { return }
         requestedFrameRate = rate
         send(.videoFrameRate(rate))
@@ -227,7 +229,7 @@ final class HostSession {
     private func clearVideoStats() {
         videoStats = nil
         receivedRate = nil
-        _ = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
+        receiveMeter.reset()
     }
 
     private func clearNotices() {
@@ -478,6 +480,8 @@ final class HostSession {
         case let .macInputMode(mode):
             macInputMode = mode
         case let .videoStats(stats):
+            // 映像を止めた直後に届いた分で、止めた前の状態を出し直さない
+            guard video != nil else { break }
             videoStats = stats
             receivedRate = receiveMeter.take(at: ProcessInfo.processInfo.systemUptime)
         case let .videoQuality(isReduced):
