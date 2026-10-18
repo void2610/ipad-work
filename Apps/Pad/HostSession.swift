@@ -121,13 +121,15 @@ final class HostSession {
     }
 
     func selectDisplay(_ id: UInt32) {
-        guard id != shownDisplayID else { return }
+        // つなぎ直している間は Mac に届かないので、表示だけ先に替えない
+        guard phase == .connected, id != shownDisplayID else { return }
         showDisplay(id)
         send(.selectDisplay(id: id))
     }
 
     /// 手前のウィンドウをこの画面へ移す。移せたら Mac がその画面を映す。
     func moveFrontWindow(to id: UInt32) {
+        guard phase == .connected else { return }
         send(.moveFrontWindow(toDisplay: id))
     }
 
@@ -316,6 +318,8 @@ final class HostSession {
         // 接続が切れた時点で Mac 側は iPad が始めさせた聞き取りを止める。つなぎ直したら Mac から実際の状態が届く
         isVoiceInputActive = false
         isVoiceInputStartedHere = false
+        // つなぎ直すまで Mac の文字入力の状態は分からない。つなぎ直すと Mac から届く
+        macInputMode = nil
         stopMicrophone()
         replaceControl(with: nil)
         stopVideo()
