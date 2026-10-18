@@ -29,7 +29,7 @@ nonisolated struct DisplayLayout: Equatable {
 
 /// 画面を 1 台取り込み、HEVC (作れなければ H.264) にして映像用の接続へ流す。
 nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    private let channel: MessageChannel
+    let channel: MessageChannel
     private let displayID: CGDirectDisplayID
     private let maxWidth: Int
     private let maxHeight: Int
@@ -41,8 +41,9 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var isStopped = false
     private let keyFrameRequested = Atomic(true)
     private let sentFrames = Atomic(0)
-    private let flow = Mutex(VideoFlowControl())
+    private let flow: Mutex<VideoFlowControl>
     private let bitRateController = Mutex<BitRateController?>(nil)
+    private let initialBitRate: Int?
     // iPad が見ている範囲。拡大している間は画面を元の解像度で取り込み、この範囲だけを切り出して送る
     private var region = VideoRegion.full
     private var configuration: SCStreamConfiguration?
@@ -52,8 +53,11 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private var outputPool: CVPixelBufferPool?
     private static let logger = Logger(subsystem: "dev.void2610.padbridge.host", category: "video")
 
-    init(channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion) {
+    /// `isAcknowledged` と `initialBitRate` は、同じ映像の接続で作り直す前の取り込みから引き継ぐ。
+    init(channel: MessageChannel, displayID: CGDirectDisplayID, maxWidth: Int, maxHeight: Int, region: VideoRegion, isAcknowledged: Bool = false, initialBitRate: Int? = nil) {
         self.channel = channel
+        flow = Mutex(VideoFlowControl(isAcknowledged: isAcknowledged))
+        self.initialBitRate = initialBitRate
         self.displayID = displayID
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
@@ -120,7 +124,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         ]
         CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, poolAttributes as CFDictionary, &pool)
 
-        bitRateController.withLock { $0 = BitRateController(maximum: bitRate) }
+        bitRateController.withLock { [initialBitRate] in $0 = BitRateController(maximum: bitRate, initial: initialBitRate) }
         let shouldStart = lock.withLock {
             guard !isStopped else { return false }
             self.stream = stream
@@ -154,6 +158,16 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
 
     func requestKeyFrame() {
         keyFrameRequested.store(true, ordering: .relaxed)
+    }
+
+    /// iPad が受け取りの返事を返すと分かったか。
+    var isAcknowledged: Bool {
+        flow.withLock { $0.isAcknowledged }
+    }
+
+    /// 回線に合わせて決めた今のビットレート。取り込みを始める前は nil。
+    var currentBitRate: Int? {
+        bitRateController.withLock { $0?.current }
     }
 
     /// iPad がこのフレームを受け取った。

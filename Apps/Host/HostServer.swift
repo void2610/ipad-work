@@ -547,9 +547,14 @@ nonisolated final class HostServer: @unchecked Sendable {
     }
 
     private func startStreamer(on channel: MessageChannel) {
+        // 画面を替えて作り直しても回線は同じなので、返事を返す iPad かと、下げたビットレートを引き継ぐ。測り直す間に遅い回線で遅れがたまらないように
+        let previous = streamer.flatMap { $0.channel === channel ? $0 : nil }
         streamer?.stop()
         let displayID = selection.shownID ?? CGMainDisplayID()
-        let streamer = ScreenStreamer(channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion)
+        let streamer = ScreenStreamer(
+            channel: channel, displayID: displayID, maxWidth: videoMaxSize.width, maxHeight: videoMaxSize.height, region: videoRegion,
+            isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate
+        )
         self.streamer = streamer
         streamedDisplay = DisplayLayout(of: displayID)
         Task {
