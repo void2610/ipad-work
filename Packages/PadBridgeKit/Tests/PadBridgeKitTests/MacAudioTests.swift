@@ -123,4 +123,23 @@ struct MacAudioTests {
         [Float.nan, 0.25].withUnsafeBufferPointer { buffer.write($0) }
         #expect(buffer.count == 2)
     }
+
+    /// 詰まって一度に届いてあふれたら、鳴らし始めのたまり具合まで減らし、遅れを残さない。左右はずれない。
+    @Test func overflowTrimsBackToThreshold() {
+        var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 2, channelCount: 2, trimsOnOverflow: true)
+        let left = (1 ... 11).map { Float($0) / 100 }
+        buffer.write(encode(left: left, right: left.map { -$0 }))
+        #expect(buffer.count == 6)
+        let played = read(&buffer, frames: 3)
+        #expect(played.left == [9, 10, 11])
+        #expect(played.right == [-9, -10, -11])
+    }
+
+    /// iPad の声のように捨てたくない音は、今までどおり古い方から 1 つずつ捨てる。
+    @Test func overflowWithoutTrimDropsOneAtATime() {
+        var buffer = PCMJitterBuffer(capacity: 10, startThreshold: 2, channelCount: 2)
+        let left = (1 ... 11).map { Float($0) / 100 }
+        buffer.write(encode(left: left, right: left.map { -$0 }))
+        #expect(buffer.count == 20)
+    }
 }

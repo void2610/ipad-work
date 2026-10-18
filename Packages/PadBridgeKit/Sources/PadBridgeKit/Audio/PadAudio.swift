@@ -36,6 +36,8 @@ public enum PadAudio {
 public struct PCMJitterBuffer: Sendable {
     public let startThreshold: Int
     public let channelCount: Int
+    // あふれたときに、鳴らし始めのたまり具合まで一気に減らすか。1 つずつ捨てると、詰まって一度に届いた遅れがそのまま残る
+    private let trimsOnOverflow: Bool
     private var storage: [Int16]
     private var readIndex = 0
     public private(set) var count = 0
@@ -48,10 +50,12 @@ public struct PCMJitterBuffer: Sendable {
     private var isPlaying = false
 
     /// `capacity` と `startThreshold` はフレームの数で渡す。
-    public init(capacity: Int, startThreshold: Int, channelCount: Int = 1) {
+    /// `trimsOnOverflow` は、遅れを詰めることが途切れより大事な音 (Mac の音) で使う。iPad の声は Typeless に全部聞かせたいので使わない。
+    public init(capacity: Int, startThreshold: Int, channelCount: Int = 1, trimsOnOverflow: Bool = false) {
         storage = [Int16](repeating: 0, count: capacity * channelCount)
         self.startThreshold = min(startThreshold, capacity) * channelCount
         self.channelCount = channelCount
+        self.trimsOnOverflow = trimsOnOverflow
     }
 
     public mutating func write(_ data: Data) {
@@ -74,9 +78,11 @@ public struct PCMJitterBuffer: Sendable {
 
     private mutating func append(_ sample: Int16) {
         if count == storage.count {
-            readIndex = (readIndex + 1) % storage.count
-            count -= 1
-            consumed += 1
+            // 書き込みはフレーム単位なので、ここでの数とたまり具合はどちらもチャンネル数の倍数で、捨てても左右はずれない
+            let dropped = trimsOnOverflow ? max(count - startThreshold, 1) : 1
+            readIndex = (readIndex + dropped) % storage.count
+            count -= dropped
+            consumed += dropped
         }
         storage[(readIndex + count) % storage.count] = sample
         count += 1

@@ -48,8 +48,8 @@ public final class MacAudioPlayer: @unchecked Sendable {
 
     private final class State: @unchecked Sendable {
         let lock = NSLock()
-        // Wi-Fi の直接通信 (awdl) は数十 ms 届かないことがあるので 100ms たまってから鳴らし、0.5 秒より遅れたら古い音を捨てる
-        var buffer = PCMJitterBuffer(capacity: MacAudio.sampleRate / 2, startThreshold: MacAudio.sampleRate / 10, channelCount: MacAudio.channelCount)
+        // Wi-Fi の直接通信 (awdl) は数十 ms 届かないことがあるので 100ms たまってから鳴らし、0.5 秒より遅れたら 100ms まで古い音を捨てる
+        var buffer = PCMJitterBuffer(capacity: MacAudio.sampleRate / 2, startThreshold: MacAudio.sampleRate / 10, channelCount: MacAudio.channelCount, trimsOnOverflow: true)
         var isSuppressed = false
     }
 }
