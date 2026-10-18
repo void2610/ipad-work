@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
 
-// Typeless のプロセスがマイクを使っている (聞き取っている) かを読む。聞き取り中なら 1 で終わる
+// Typeless のプロセスがマイクを使っている (音声入力中) かを調べる。音声入力中なら終了コード 1 で終わる
 func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
 }
@@ -24,5 +24,5 @@ let isListening = processes.contains { process in
     AudioObjectGetPropertyData(process, &runningAddress, 0, nil, &runningSize, &running)
     return running != 0
 }
-print(isListening ? "Typeless が聞き取り中" : "Typeless は聞き取っていない")
+print(isListening ? "Typeless は音声入力中です" : "Typeless は音声入力中ではありません")
 exit(isListening ? 1 : 0)
