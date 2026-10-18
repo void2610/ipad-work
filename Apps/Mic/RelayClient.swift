@@ -12,7 +12,7 @@ nonisolated final class RelayClient: @unchecked Sendable {
     private let token: String?
     private var channel: MessageChannel?
     private var microphone: PadMicrophone?
-    private var terminationSource: DispatchSourceSignal?
+    private var terminationSources: [DispatchSourceSignal] = []
 
     init(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -25,11 +25,13 @@ nonisolated final class RelayClient: @unchecked Sendable {
 
     func start() {
         // 終了の合図で終わらされたときも、作ったデバイスを Mac に残さない
-        signal(SIGTERM, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
-        source.setEventHandler { [weak self] in self?.finish() }
-        source.resume()
-        terminationSource = source
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: queue)
+            source.setEventHandler { [weak self] in self?.finish() }
+            source.resume()
+            terminationSources.append(source)
+        }
         queue.async { [self] in
             guard let port, let token else {
                 Self.logger.error("Host の接続先が渡されていない")
@@ -48,7 +50,8 @@ nonisolated final class RelayClient: @unchecked Sendable {
                     case .ready:
                         channel.send(.control(.microphoneRelayHello(token: token)))
                         microphone.start()
-                    case .failed, .cancelled:
+                    // つなげない (Host が終わって待ち受けていない) ときは .waiting のまま待ち続けるので、それも終わる合図にする
+                    case .failed, .cancelled, .waiting:
                         guard let self else { return }
                         queue.async { self.finish() }
                     default:
@@ -80,6 +83,14 @@ nonisolated final class RelayClient: @unchecked Sendable {
             }
         default:
             break
+        }
+    }
+
+    /// アクティビティモニタの「終了」やログアウトなど、Apple Event で終わらされるときに呼ぶ。作ったデバイスを Mac に残さない。
+    func stopBeforeQuitting() {
+        queue.sync {
+            microphone?.stop()
+            microphone = nil
         }
     }
 
