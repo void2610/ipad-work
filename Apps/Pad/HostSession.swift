@@ -60,6 +60,8 @@ final class HostSession {
     private var retryDelay: Duration = .milliseconds(500)
     private var retryTask: Task<Void, Never>?
     private var videoRetryTask: Task<Void, Never>?
+    // 映像の接続を張り直す間隔。Mac が取り込みを始められないときに、0.5 秒おきに張り直し続けないよう延ばしていく
+    private var videoRetryDelay: Duration = .milliseconds(500)
     private(set) var modifierLatch = ModifierLatch()
     private var pointerModifiers = PointerModifierHold()
     private var appSwitcher = AppSwitcher()
@@ -74,7 +76,11 @@ final class HostSession {
             Task { @MainActor in self?.send(.requestKeyFrame) }
         }
         renderer.onVideoSizeChange = { [weak self] size in
-            Task { @MainActor in self?.videoSize = size }
+            Task { @MainActor in
+                self?.videoSize = size
+                // 映像が届いたので、張り直す間隔を戻す
+                self?.videoRetryDelay = .milliseconds(500)
+            }
         }
         renderer.onRegionChange = { [weak self] region in
             Task { @MainActor in self?.videoRegion = region }
@@ -306,7 +312,6 @@ final class HostSession {
     private func controlStateChanged(_ state: NWConnection.State) {
         switch state {
         case .ready:
-            retryDelay = .milliseconds(500)
             send(.hello(role: .control, deviceName: UIDevice.current.name, maxVideoWidth: 0, maxVideoHeight: 0))
         case let .waiting(error), let .failed(error):
             Self.logger.info("接続できない: \(error, privacy: .public)")
@@ -350,6 +355,8 @@ final class HostSession {
         guard case let .control(message) = message else { return }
         switch message {
         case let .welcome(_, status):
+            // つながっただけでは戻さない。つながってすぐ Mac に切られることが続くときに、0.5 秒おきにつなぎ直し続けないように
+            retryDelay = .milliseconds(500)
             hostStatus = status
             phase = .connected
             // Mac はつながるたびに画面全体から始めるので、拡大していれば頼み直す
@@ -416,8 +423,10 @@ final class HostSession {
 
     private func videoLost() {
         video = nil
+        let delay = videoRetryDelay
+        videoRetryDelay = min(videoRetryDelay * 2, .seconds(5))
         videoRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.startVideoIfNeeded()
         }
