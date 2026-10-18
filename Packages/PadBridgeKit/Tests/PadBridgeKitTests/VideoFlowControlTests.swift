@@ -14,21 +14,76 @@ struct VideoFlowControlTests {
         #expect(allowed == Array(repeating: true, count: 10))
     }
 
-    /// 返事を待つフレームが上限に達したら送らず、返事が来たら送る。
-    @Test func waitsForAcknowledgementWhenFull() {
+    /// 返事がいつもの往復より遅れ続けている (回線に詰まっている) ときは、返事を待つフレームが 3 枚で止め、返事が来たら送る。
+    @Test func waitsForAcknowledgementWhileQueueing() {
         var flow = VideoFlowControl()
+        // いつもの往復は 20ms。そのあと返事が 200ms かかるようになる
         flow.sent(presentationTimeMicros: 1, at: 0)
-        flow.received(presentationTimeMicros: 1)
-        var allowed: [Bool] = []
-        for pts in Int64(2) ... 4 {
-            allowed.append(flow.canSend(at: 0.1))
-            flow.sent(presentationTimeMicros: pts, at: 0.1)
+        flow.received(presentationTimeMicros: 1, at: 0.02)
+        for pts in Int64(2) ... 20 {
+            flow.sent(presentationTimeMicros: pts, at: Double(pts) / 10)
+            flow.received(presentationTimeMicros: pts, at: Double(pts) / 10 + 0.2)
         }
-        allowed.append(flow.canSend(at: 0.2))
-        flow.received(presentationTimeMicros: 2)
-        allowed.append(flow.canSend(at: 0.2))
+        var allowed: [Bool] = []
+        for pts in Int64(21) ... 23 {
+            allowed.append(flow.canSend(at: 3))
+            flow.sent(presentationTimeMicros: pts, at: 3)
+        }
+        allowed.append(flow.canSend(at: 3.1))
+        flow.received(presentationTimeMicros: 21, at: 3.1)
+        allowed.append(flow.canSend(at: 3.1))
         #expect(allowed == [true, true, true, false, true])
         #expect(flow.inFlightCount == 2)
+    }
+
+    /// 往復が長いだけの回線 (ここでは 100ms) では、返事を待つフレームが 3 枚を超えても送る。枚数で止めると毎秒 30 枚しか送れない。
+    @Test func keepsSendingOnLongRoundTrip() {
+        var flow = VideoFlowControl()
+        var allowed: [Bool] = []
+        var maxInFlight = 0
+        for index in 0 ..< 600 {
+            let time = Double(index) / 60
+            // 6 枚前のフレームの返事が、いま届く (往復 100ms)
+            if index >= 6 {
+                flow.received(presentationTimeMicros: Int64(index - 6), at: time)
+            }
+            allowed.append(flow.canSend(at: time))
+            flow.sent(presentationTimeMicros: Int64(index), at: time)
+            maxInFlight = max(maxInFlight, flow.inFlightCount)
+        }
+        #expect(allowed.allSatisfy { $0 })
+        #expect(maxInFlight == 6)
+        #expect(abs((flow.baseRoundTrip ?? 0) - 0.1) < 1e-9)
+    }
+
+    /// Wi-Fi の揺れで 1 枚の返事だけが大きく遅れても、ならした往復はいつもの往復に近いので捨てない。
+    @Test func toleratesJitterSpike() {
+        var flow = VideoFlowControl()
+        for pts in Int64(0) ..< 30 {
+            flow.sent(presentationTimeMicros: pts, at: Double(pts) / 60)
+            flow.received(presentationTimeMicros: pts, at: Double(pts) / 60 + 0.03)
+        }
+        // 次の返事が 250ms 来ない
+        var allowed: [Bool] = []
+        for pts in Int64(30) ..< 45 {
+            let time = 0.5 + Double(pts - 30) / 60
+            allowed.append(flow.canSend(at: time))
+            flow.sent(presentationTimeMicros: pts, at: time)
+        }
+        #expect(allowed.allSatisfy { $0 })
+    }
+
+    /// 往復が長い回線でも、返事を待つフレームは 30 枚で止める。
+    @Test func capsFramesInFlight() {
+        var flow = VideoFlowControl()
+        flow.sent(presentationTimeMicros: 0, at: 0)
+        flow.received(presentationTimeMicros: 0, at: 0.01)
+        var sent = 0
+        for pts in Int64(1) ... 40 where flow.canSend(at: 1) {
+            flow.sent(presentationTimeMicros: pts, at: 1)
+            sent += 1
+        }
+        #expect(sent == VideoFlowControl.maxInFlightOnSlowRoundTrip)
     }
 
     /// 返事は届いた順に来るので、あとのフレームの返事で、それより前のフレームも届いたとみなす。
@@ -104,9 +159,7 @@ struct VideoFlowControlTests {
 
     /// 返事が来ないまま 2 秒たったら、待つのをやめて送る。
     @Test func stopsWaitingAfterStall() {
-        var flow = VideoFlowControl()
-        flow.sent(presentationTimeMicros: 1, at: 0)
-        flow.received(presentationTimeMicros: 1)
+        var flow = VideoFlowControl(isAcknowledged: true)
         for pts in Int64(2) ... 4 {
             flow.sent(presentationTimeMicros: pts, at: 1)
         }
@@ -115,6 +168,82 @@ struct VideoFlowControlTests {
         #expect(!beforeTimeout)
         #expect(afterTimeout)
         #expect(flow.inFlightCount == 0)
+    }
+}
+
+/// 間引きとビットレートの見直しを、決めた帯域・往復・揺れの回線で 60 秒動かす (帯域は送った順に使い、返事は届いた順に来る)。
+struct VideoLinkSimulationTests {
+    struct Link: CustomStringConvertible, Sendable {
+        var bandwidth: Double
+        var roundTrip: TimeInterval
+        var jitter: TimeInterval = 0
+        var description: String { "帯域 \(Int(bandwidth / 1e6)) Mbps、往復 \(Int(roundTrip * 1000))ms、揺れ \(Int(jitter * 1000))ms" }
+    }
+
+    struct Result {
+        var droppedShare: Double
+        var finalBitRate: Int
+        var meanDelay: TimeInterval
+        var maxDelay: TimeInterval
+    }
+
+    private func run(_ link: Link, maximum: Int = 14_500_000) -> Result {
+        var seed: UInt64 = 42
+        func uniform() -> Double {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Double(seed >> 11) / Double(1 << 53)
+        }
+        var flow = VideoFlowControl(isAcknowledged: true)
+        var controller = BitRateController(maximum: maximum)
+        var acks: [(time: TimeInterval, pts: Int64, sentAt: TimeInterval)] = []
+        var linkFreeAt = 0.0
+        var lastAckAt = 0.0
+        var dropped = 0
+        var delays: [TimeInterval] = []
+        for index in 0 ..< 3600 {
+            let time = Double(index) / 60
+            while let first = acks.first, first.time <= time {
+                acks.removeFirst()
+                controller.delivered(flow.received(presentationTimeMicros: first.pts, at: first.time))
+                // 落ち着いたあとの 20 秒目から測る
+                if first.time > 20 { delays.append(first.time - first.sentAt) }
+            }
+            let canSend = flow.canSend(at: time)
+            _ = controller.record(isDropped: !canSend, at: time)
+            guard canSend else {
+                dropped += 1
+                continue
+            }
+            let bytes = controller.current / 8 / 60
+            linkFreeAt = max(time, linkFreeAt) + Double(bytes * 8) / link.bandwidth
+            let extra = link.jitter > 0 ? -log(max(uniform(), 1e-9)) * link.jitter : 0
+            lastAckAt = max(linkFreeAt + link.roundTrip + extra, lastAckAt)
+            flow.sent(presentationTimeMicros: Int64(index), bytes: bytes, at: time)
+            acks.append((lastAckAt, Int64(index), time))
+        }
+        return Result(
+            droppedShare: Double(dropped) / 3600, finalBitRate: controller.current,
+            meanDelay: delays.reduce(0, +) / Double(max(delays.count, 1)), maxDelay: delays.max() ?? 0
+        )
+    }
+
+    /// 帯域に余裕があれば、往復が長くても揺れがあっても、捨てずに上限のビットレートのまま送る。
+    /// 返事を待つのを 3 枚までにしていたときは、往復 80ms で 4 割、40ms と揺れ 20ms で 4 割弱を捨て、どれも下限の 1.5 Mbps まで下げていた。
+    @Test(arguments: [Link(bandwidth: 50e6, roundTrip: 0.08), Link(bandwidth: 50e6, roundTrip: 0.12), Link(bandwidth: 50e6, roundTrip: 0.04, jitter: 0.02)])
+    func keepsQualityWhenOnlyRoundTripIsLong(link: Link) {
+        let result = run(link)
+        #expect(result.droppedShare < 0.01, "\(link): 捨てた割合 \(result.droppedShare)")
+        #expect(result.finalBitRate == 14_500_000, "\(link): \(result.finalBitRate)")
+    }
+
+    /// 帯域が足りない回線では、これまでどおり捨ててビットレートを帯域まで下げ、遅れを積み上げない。
+    @Test(arguments: [Link(bandwidth: 10e6, roundTrip: 0.01), Link(bandwidth: 5e6, roundTrip: 0.01), Link(bandwidth: 10e6, roundTrip: 0.08)])
+    func boundsDelayWhenBandwidthIsShort(link: Link) {
+        let result = run(link)
+        #expect(Double(result.finalBitRate) <= link.bandwidth * 1.1, "\(link): \(result.finalBitRate)")
+        // 送ってから返事が届くまでは、往復のほかに 1 枚を送る時間と、いつもの往復を超えて許す 50ms ほどに収まる
+        #expect(result.maxDelay < link.roundTrip + 0.13, "\(link): 最大 \(result.maxDelay)")
+        #expect(result.meanDelay < link.roundTrip + 0.07, "\(link): 平均 \(result.meanDelay)")
     }
 }
 

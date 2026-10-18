@@ -5,8 +5,14 @@ import Synchronization
 /// 送り終えた知らせ (`pendingSendCount`) は OS の送信バッファに入った時点で来る。バッファは何秒分も吸い込むので、
 /// それで数えると、回線が遅いときに遅れが秒単位で積み上がる (ループバックで 10 Mbps に絞って 3 秒を超えた)。
 public struct VideoFlowControl: Sendable {
-    /// 返事を待つフレームの数の上限。回線が詰まったときの遅れは、およそこの枚数を送る時間に収まる。
+    /// 返事を待つフレームがこの数に達したら、返事が遅れていないかを見る。往復の見積もりがないうちは、この数で止める。
     public static let maxInFlight = 3
+    /// いつもの往復の時間を超えて、返事の遅れをここまで許す (60fps で 3 枚分)。回線が詰まったときの遅れは、およそこの時間に収まる。
+    public static let queueingAllowance: TimeInterval = 0.05
+    /// 往復が長い回線でも、返事を待つフレームはこれより増やさない。
+    public static let maxInFlightOnSlowRoundTrip = 30
+    // いつもの往復の時間は、最近の往復の最小値。経路が変わって長くなったときに追えるよう、この秒数ごとに測り直す (短いと、詰まっている間の値が混ざって膨らむ)
+    static let roundTripWindow: TimeInterval = 30
     /// 返事が来ないまま待ち続けないよう、この秒数を過ぎたら待つのをやめる。
     public static let stallTimeout: TimeInterval = 2
 
@@ -31,6 +37,10 @@ public struct VideoFlowControl: Sendable {
 
     private var inFlight: [(presentationTimeMicros: Int64, isKeyFrame: Bool, bytes: Int, sentAt: TimeInterval)] = []
     private var lastAcknowledgedAt: TimeInterval?
+    private var roundTripMinimum: (since: TimeInterval, value: TimeInterval)?
+    private var previousRoundTripMinimum: TimeInterval?
+    // ならした往復の時間。Wi-Fi の揺れで 1 枚だけ遅れたのか、回線に詰まって遅れ続けているのかを見分ける
+    private var smoothedRoundTrip: TimeInterval?
     /// iPad が返事を返すと分かったか。返事を返さない古い iPad アプリには、送り待ちの数で間引く。
     public private(set) var isAcknowledged = false
 
@@ -49,10 +59,23 @@ public struct VideoFlowControl: Sendable {
         isAcknowledged && inFlight.contains { $0.isKeyFrame }
     }
 
+    /// いつもの往復の時間 (最近の返事の往復の最小値)。返事がまだなければ nil。
+    public var baseRoundTrip: TimeInterval? {
+        [roundTripMinimum?.value, previousRoundTripMinimum].compactMap(\.self).min()
+    }
+
     /// 次のフレームを符号化して送ってよいか。
     public mutating func canSend(at time: TimeInterval) -> Bool {
-        guard isAcknowledged, inFlight.count >= Self.maxInFlight else { return true }
-        guard let oldest = inFlight.first, time - oldest.sentAt >= Self.stallTimeout else { return false }
+        guard isAcknowledged, inFlight.count >= Self.maxInFlight, let oldest = inFlight.first else { return true }
+        // 往復が長いだけの回線では、返事を待つ枚数が増えても遅れは積み上がらない。枚数で止めると、帯域に余裕があっても 3 枚 ÷ 往復しか送れず
+        // (往復 80ms で毎秒 37 枚)、捨てた分でビットレートを下限まで下げていた。ならした往復がいつもの往復に近い間は、揺れで 1 枚遅れても捨てない
+        if let base = baseRoundTrip, let smoothed = smoothedRoundTrip, inFlight.count < Self.maxInFlightOnSlowRoundTrip {
+            let isQueueing = smoothed - base >= Self.queueingAllowance
+            if !isQueueing || time - oldest.sentAt < base + Self.queueingAllowance {
+                return true
+            }
+        }
+        guard time - oldest.sentAt >= Self.stallTimeout else { return false }
         inFlight.removeAll()
         return true
     }
@@ -76,10 +99,22 @@ public struct VideoFlowControl: Sendable {
         guard let first = delivered.first, let last = delivered.last else { return Delivery(bytes: 0, busyDuration: nil) }
         let bytes = delivered.reduce(0) { $0 + $1.bytes }
         let roundTrip = time - last.sentAt
+        recordRoundTrip(roundTrip, at: time)
         guard let previousAcknowledgedAt, first.sentAt <= previousAcknowledgedAt, time > previousAcknowledgedAt else {
             return Delivery(bytes: bytes, busyDuration: nil, roundTrip: roundTrip)
         }
         return Delivery(bytes: bytes, busyDuration: time - previousAcknowledgedAt, roundTrip: roundTrip)
+    }
+
+    private mutating func recordRoundTrip(_ roundTrip: TimeInterval, at time: TimeInterval) {
+        guard roundTrip >= 0 else { return }
+        smoothedRoundTrip = smoothedRoundTrip.map { $0 + (roundTrip - $0) / 8 } ?? roundTrip
+        if let current = roundTripMinimum, time - current.since < Self.roundTripWindow {
+            roundTripMinimum = (current.since, min(current.value, roundTrip))
+        } else {
+            previousRoundTripMinimum = roundTripMinimum?.value
+            roundTripMinimum = (time, roundTrip)
+        }
     }
 }
 
