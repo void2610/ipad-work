@@ -66,6 +66,17 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.moved(window: CGRect(x: 100, y: 25, width: 2000, height: 700), from: large, to: small) == CGRect(x: 2560, y: 33, width: 1512, height: 700))
     }
 
+    /// 外した画面に残ってどの画面にも重ならないウィンドウは、移す先を元の範囲として計算すると、移す先の画面の中に寄る (Host が回収するときの計算)。
+    @Test func offscreenWindowIsPulledIntoDestination() {
+        let left = CGRect(x: -1920, y: 33, width: 1920, height: 1047)
+        let usable: [UInt32: CGRect] = [16: main.bounds, 15: left]
+        let offscreen = CGRect(x: -4000, y: 200, width: 800, height: 600)
+        #expect(RemoteDisplay.showing(window: offscreen, displays: usable) == nil)
+        let moved = RemoteDisplay.moved(window: offscreen, from: left, to: left)
+        #expect(left.contains(moved))
+        #expect(moved.size == offscreen.size)
+    }
+
     /// 選んだ画面が外れたらメインを映し、つなぎ直されたらまた選んだ画面を映す。
     @Test func showsPreferredDisplayWhileConnectedElseMain() {
         let both = [RemoteDisplay(id: 15, name: "A", placement: .left), RemoteDisplay(id: 16, name: "B", placement: .main)]

@@ -50,9 +50,11 @@ enum DisplayCatalog {
     /// アプリの手前のウィンドウの位置と大きさ (画面の座標)。アクセシビリティの許可が要り、相手のアプリの応答を待つ。
     nonisolated static func focusedWindowFrame(of pid: pid_t) -> CGRect? {
         let app = AXUIElementCreateApplication(pid)
-        // 応答しないアプリで待ち続けない
+        // 応答しないアプリで待ち続けない。待ち時間は要素ごとなので、ウィンドウの要素にも付ける
         AXUIElementSetMessagingTimeout(app, 0.5)
-        return axElement(app, kAXFocusedWindowAttribute).flatMap(frame(of:))
+        guard let window = axElement(app, kAXFocusedWindowAttribute) else { return nil }
+        AXUIElementSetMessagingTimeout(window, 0.5)
+        return frame(of: window)
     }
 
     /// 手前のアプリの手前のウィンドウを、`destination` の画面へ移す。移せたら true。すでにその画面にあれば動かさずに true。
@@ -62,14 +64,16 @@ enum DisplayCatalog {
         guard let app = axElement(systemWide, kAXFocusedApplicationAttribute) else { return false }
         AXUIElementSetMessagingTimeout(app, 0.5)
         guard let window = axElement(app, kAXFocusedWindowAttribute) else { return false }
+        AXUIElementSetMessagingTimeout(window, 0.5)
         return move(window, to: destination, usableAreas: usableAreas)
     }
 
     nonisolated static func move(_ window: AXUIElement, to destination: UInt32, usableAreas: [UInt32: CGRect]) -> Bool {
         guard let frame = frame(of: window), let target = usableAreas[destination] else { return false }
-        guard let source = RemoteDisplay.showing(window: frame, displays: usableAreas), source != destination, let sourceArea = usableAreas[source] else {
-            return RemoteDisplay.showing(window: frame, displays: usableAreas) == destination
-        }
+        let source = RemoteDisplay.showing(window: frame, displays: usableAreas)
+        guard source != destination else { return true }
+        // どの画面にも重ならない (外した画面に残った) ウィンドウは、移す先の画面の中へ寄せて回収する
+        let sourceArea = source.flatMap { usableAreas[$0] } ?? target
         let moved = RemoteDisplay.moved(window: frame, from: sourceArea, to: target)
         // 先に縮めてから動かす。大きいまま動かすと、移す先に収まらない分を macOS が押し戻す
         var size = frame.size
