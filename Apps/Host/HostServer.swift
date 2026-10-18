@@ -151,17 +151,17 @@ nonisolated final class HostServer: @unchecked Sendable {
     private func startScreenLockMonitor() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let monitor = MainActor.assumeIsolated {
+            let (monitor, isLocked) = MainActor.assumeIsolated {
                 let monitor = ScreenLockMonitor { [weak self] isLocked in
                     guard let self else { return }
                     queue.async { self.screenLockChanged(isLocked) }
                 }
                 monitor.start()
-                return monitor
+                return (monitor, ScreenLockMonitor.isLocked)
             }
             queue.async {
                 self.screenLockMonitor = monitor
-                self.isScreenLocked = ScreenLockMonitor.isLocked
+                self.isScreenLocked = isLocked
             }
         }
     }
@@ -630,7 +630,8 @@ nonisolated final class HostServer: @unchecked Sendable {
             isAcknowledged: previous?.isAcknowledged ?? false, initialBitRate: previous?.currentBitRate, initialRoundTrip: previous?.currentRoundTrip,
             frameRate: videoFrameRate,
             onQualityChange: { [weak self] isReduced in
-                self?.queue.async { self?.videoQualityChanged(isReduced) }
+                guard let self else { return }
+                queue.async { self.videoQualityChanged(isReduced) }
             }
         )
         self.streamer = streamer
