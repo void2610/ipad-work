@@ -89,6 +89,23 @@ public struct RemoteDisplay: Codable, Sendable, Equatable, Identifiable {
         return overlaps.max { ($0.area, $1.id) < ($1.area, $0.id) }?.id
     }
 
+    /// ウィンドウを別の画面へ移すときの、新しい位置と大きさ。`source` と `destination` は、それぞれの画面のメニューバーと Dock を除いた範囲。
+    /// 元の画面の中での置き場所の割合 (左寄り・中央など) を保ち、移す先に収まらなければ縮める。
+    public static func moved(window: CGRect, from source: CGRect, to destination: CGRect) -> CGRect {
+        let size = CGSize(width: min(window.width, destination.width), height: min(window.height, destination.height))
+        func place(_ origin: CGFloat, _ length: CGFloat, in from: (min: CGFloat, length: CGFloat), to: (min: CGFloat, length: CGFloat), newLength: CGFloat) -> CGFloat {
+            let room = from.length - length
+            let ratio = room > 0 ? min(max((origin - from.min) / room, 0), 1) : 0.5
+            return to.min + ratio * (to.length - newLength)
+        }
+        return CGRect(
+            x: place(window.minX, window.width, in: (source.minX, source.width), to: (destination.minX, destination.width), newLength: size.width),
+            y: place(window.minY, window.height, in: (source.minY, source.height), to: (destination.minY, destination.height), newLength: size.height),
+            width: size.width,
+            height: size.height
+        )
+    }
+
     /// 中心どうしのずれが大きい向きで、上下か左右かを決める。
     static func placement(of bounds: CGRect, from main: CGRect) -> Placement {
         let dx = bounds.midX - main.midX

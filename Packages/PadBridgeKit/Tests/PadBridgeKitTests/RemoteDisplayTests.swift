@@ -42,6 +42,23 @@ struct RemoteDisplayTests {
         #expect(RemoteDisplay.showing(window: CGRect(x: -100, y: 0, width: 200, height: 100), displays: displays) == 15)
     }
 
+    /// 移した先でも、元の画面での寄せ方 (左上・中央・右下) を保つ。
+    @Test func movedWindowKeepsItsPlaceOnTheOtherDisplay() {
+        let main = CGRect(x: 0, y: 33, width: 1920, height: 1047)
+        let left = CGRect(x: -1920, y: 33, width: 1920, height: 1047)
+        #expect(RemoteDisplay.moved(window: CGRect(x: 0, y: 33, width: 800, height: 600), from: main, to: left) == CGRect(x: -1920, y: 33, width: 800, height: 600))
+        #expect(RemoteDisplay.moved(window: CGRect(x: 560, y: 256.5, width: 800, height: 600), from: main, to: left) == CGRect(x: -1360, y: 256.5, width: 800, height: 600))
+        #expect(RemoteDisplay.moved(window: CGRect(x: 1120, y: 480, width: 800, height: 600), from: main, to: left) == CGRect(x: -800, y: 480, width: 800, height: 600))
+    }
+
+    /// 大きな画面いっぱいのウィンドウは、移す先の小さな画面に収まるよう縮める。
+    @Test func movedWindowShrinksToFitSmallerDisplay() {
+        let large = CGRect(x: 0, y: 25, width: 2560, height: 1415)
+        let small = CGRect(x: 2560, y: 33, width: 1512, height: 949)
+        #expect(RemoteDisplay.moved(window: large, from: large, to: small) == small)
+        #expect(RemoteDisplay.moved(window: CGRect(x: 100, y: 25, width: 2000, height: 700), from: large, to: small) == CGRect(x: 2560, y: 33, width: 1512, height: 700))
+    }
+
     /// 選んだ画面が外れたらメインを映し、つなぎ直されたらまた選んだ画面を映す。
     @Test func showsPreferredDisplayWhileConnectedElseMain() {
         let both = [RemoteDisplay(id: 15, name: "A", placement: .left), RemoteDisplay(id: 16, name: "B", placement: .main)]
