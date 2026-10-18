@@ -153,6 +153,17 @@ nonisolated final class HostServer: @unchecked Sendable {
         }
     }
 
+    /// 待ち受けが失敗したまま残ると、蓋を閉じた Mac では Host を起動し直すまで iPad からつなげない。少し待って作り直す。
+    private func restartListener() {
+        listener?.cancel()
+        listener = nil
+        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, listener == nil else { return }
+            Self.logger.notice("待ち受けを作り直す")
+            startListener()
+        }
+    }
+
     private func startListener() {
         do {
             let listener = try NWListener(using: .padBridge())
@@ -161,7 +172,9 @@ nonisolated final class HostServer: @unchecked Sendable {
                 Self.logger.info("listener: \(String(describing: state), privacy: .public)")
                 switch state {
                 case .ready: self?.onListenerChange("待機中")
-                case let .failed(error): self?.onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+                case let .failed(error):
+                    self?.onListenerChange("待ち受けに失敗: \(error.localizedDescription)")
+                    self?.restartListener()
                 case let .waiting(error): self?.onListenerChange("待機準備中: \(error.localizedDescription)")
                 default: break
                 }
@@ -306,6 +319,12 @@ nonisolated final class HostServer: @unchecked Sendable {
         let channel = MessageChannel(connection: connection, queue: queue)
         let id = ObjectIdentifier(channel)
         pending[id] = channel
+        // つないだまま名乗らない相手を、いつまでも残さない
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak channel] in
+            guard let self, let channel, pending[id] === channel else { return }
+            pending[id] = nil
+            channel.cancel()
+        }
         channel.start(
             onStateChange: { [weak self, weak channel] state in
                 switch state {
@@ -490,6 +509,7 @@ nonisolated final class HostServer: @unchecked Sendable {
         control?.send(.control(.hostStatus(status)))
         guard status.canCaptureScreen else { return }
         startStreamer(on: channel)
+        // 眠っている画面は取り込めないことがあるので、始める前に起こす。始められずに張り直しが続くときは、iPad が張り直す間隔を延ばしていく
         keepDisplayAwake(true)
     }
 
@@ -659,7 +679,6 @@ nonisolated final class HostServer: @unchecked Sendable {
 
     private func stopVideo() {
         keepDisplayAwake(false)
-        displayChange?.cancel()
         streamer?.stop()
         streamer = nil
         streamedDisplay = nil
