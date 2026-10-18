@@ -9,7 +9,9 @@ struct PadBridgeApp: App {
         WindowGroup {
             Group {
                 if let session = model.session {
+                    // 名前の変わった Mac を追うと、セッションが nil を挟まずに替わる。作り直さないと、映像のレイヤーと入力が前のセッションに結びついたまま残る
                     SessionView(model: model, session: session)
+                        .id(ObjectIdentifier(session))
                 } else {
                     HostListView(model: model)
                 }
