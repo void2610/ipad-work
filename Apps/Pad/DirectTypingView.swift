@@ -76,6 +76,16 @@ final class DirectTypingUIView: UIView, UITextInput {
         true
     }
 
+    private lazy var shortcutCommands = HardwareKeys.priorityCommands(action: #selector(forwardShortcut(_:)))
+
+    override var keyCommands: [UIKeyCommand]? {
+        shortcutCommands
+    }
+
+    @objc private func forwardShortcut(_ command: UIKeyCommand) {
+        HardwareKeys.forwardShortcut(command, send: send)
+    }
+
     // UITextInput の入力先は iPadOS の 3 本指の編集ジェスチャー (取り消しなど) を受けるが、3 本指は Mac のデスクトップ切り替えに使う
     override var editingInteractionConfiguration: UIEditingInteractionConfiguration {
         .none

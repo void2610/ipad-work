@@ -97,6 +97,16 @@ final class RemoteScreenUIView: UIView {
         true
     }
 
+    private lazy var shortcutCommands = HardwareKeys.priorityCommands(action: #selector(forwardShortcut(_:)))
+
+    override var keyCommands: [UIKeyCommand]? {
+        shortcutCommands
+    }
+
+    @objc private func forwardShortcut(_ command: UIKeyCommand) {
+        HardwareKeys.forwardShortcut(command, send: send)
+    }
+
     // 文字入力を持たないビューでも、入力先のまま「…」のメニューを開くと iPadOS がソフトウェアキーボードを出してメニューを隠すので、空の入力ビューに置き換える
     override var inputView: UIView? {
         emptyInputView
@@ -383,6 +393,28 @@ final class RemoteScreenUIView: UIView {
 
 /// iPad のハードウェアキーボードのキーを、そのまま Mac のキーとして送る。
 enum HardwareKeys {
+    private static let shortcutInputs = "abcdefghijklmnopqrstuvwxyz0123456789,./;'[]-=`\\".map(String.init)
+    private static let shortcutModifiers: [UIKeyModifierFlags] = [.command, [.command, .shift], [.command, .alternate], [.command, .control]]
+
+    /// ⌘ との組み合わせを、iPadOS より先に受け取ると宣言するショートカット。
+    /// 宣言しないと ⌘F・⌘B・⌘I・⌘E などは iPadOS のメニューや入力の仕組みに取られ、押したキーが届かない。宣言すると押したキーがそのまま presses に届くので、
+    /// `action` はそうならなかったときの受け口になる。
+    static func priorityCommands(action: Selector) -> [UIKeyCommand] {
+        shortcutModifiers.flatMap { modifiers in
+            shortcutInputs.map { input in
+                let command = UIKeyCommand(input: input, modifierFlags: modifiers, action: action)
+                command.wantsPriorityOverSystemBehavior = true
+                return command
+            }
+        }
+    }
+
+    /// 宣言したショートカットの動作として呼ばれたときに、そのキーを Mac へ送る。修飾キーは押したときに presses で送っている。
+    static func forwardShortcut(_ command: UIKeyCommand, send: ((ControlMessage) -> Void)?) {
+        guard let input = command.input else { return }
+        RemoteKeys.shortcut(input, modifiers: modifiers(from: command.modifierFlags)).forEach { send?($0) }
+    }
+
     static func forward(_ presses: Set<UIPress>, isDown: Bool, send: ((ControlMessage) -> Void)?) -> Bool {
         let keys = presses.compactMap(\.key)
         for key in keys {
