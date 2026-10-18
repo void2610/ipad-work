@@ -74,6 +74,8 @@ final class RemoteScreenUIView: UIView {
     private var longPressTimer: DispatchWorkItem?
     // トラックパッドやマウスのクリックは、指と違って押した瞬間に押下として送る。押したボタンを指ごとに覚えておく
     private var pointerButtons: [ObjectIdentifier: MouseButton] = [:]
+    // ペンやマウスのボタンを押している間に触れた指や手のひら。押したままのボタンに、指の位置への移動やクリックが割り込まないよう、離すまで無視する
+    private var ignoredTouches: Set<ObjectIdentifier> = []
     private var lastScrollTranslation = CGPoint.zero
     private var momentum: ScrollMomentum?
     private var momentumLink: CADisplayLink?
@@ -209,6 +211,8 @@ final class RemoteScreenUIView: UIView {
                 let button: MouseButton = event?.buttonMask.contains(.secondary) == true ? .right : .left
                 pointerButtons[ObjectIdentifier(touch)] = button
                 sendPointer?([.mouseMove(normalized(location)), .mouseButton(button, isDown: true, at: normalized(location))])
+            } else if !pointerButtons.isEmpty {
+                ignoredTouches.insert(ObjectIdentifier(touch))
             } else {
                 perform(interpreter.began(touch: Self.id(of: touch), at: location, time: touch.timestamp))
             }
@@ -221,7 +225,7 @@ final class RemoteScreenUIView: UIView {
             let location = touch.location(in: self)
             if pointerButtons[ObjectIdentifier(touch)] != nil {
                 sendPointer?([.mouseMove(normalized(location))])
-            } else {
+            } else if !ignoredTouches.contains(ObjectIdentifier(touch)) {
                 perform(interpreter.moved(touch: Self.id(of: touch), to: location, time: touch.timestamp))
             }
         }
@@ -233,7 +237,7 @@ final class RemoteScreenUIView: UIView {
             let location = touch.location(in: self)
             if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
                 sendPointer?([.mouseButton(button, isDown: false, at: normalized(location))])
-            } else {
+            } else if ignoredTouches.remove(ObjectIdentifier(touch)) == nil {
                 perform(interpreter.ended(touch: Self.id(of: touch), at: location, time: touch.timestamp))
             }
         }
@@ -244,7 +248,7 @@ final class RemoteScreenUIView: UIView {
         for touch in touches {
             if let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) {
                 sendPointer?([.mouseButton(button, isDown: false, at: normalized(touch.location(in: self)))])
-            } else {
+            } else if ignoredTouches.remove(ObjectIdentifier(touch)) == nil {
                 perform(interpreter.cancelled(touch: Self.id(of: touch)))
             }
         }
