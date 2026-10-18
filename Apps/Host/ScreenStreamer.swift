@@ -34,10 +34,10 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
     private let maxWidth: Int
     private let maxHeight: Int
     private let sampleQueue = DispatchQueue(label: "dev.void2610.padbridge.host.capture")
-    // SCStream と H264Encoder は Sendable でないため、Mutex ではなく NSLock で守る
+    // SCStream と VideoEncoder は Sendable でないため、Mutex ではなく NSLock で守る
     private let lock = NSLock()
     private var stream: SCStream?
-    private var encoder: H264Encoder?
+    private var encoder: VideoEncoder?
     private var isStopped = false
     private let keyFrameRequested = Atomic(true)
     private let sentFrames = Atomic(0)
@@ -81,7 +81,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         configuration.queueDepth = 4
 
         let bitRate = CaptureSize.bitRate(width: size.width, height: size.height)
-        let encoder = try H264Encoder(width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60) { [channel, weak self] format, frame in
+        let output: VideoEncoder.OutputHandler = { [channel, weak self] format, frame in
             if let format {
                 channel.send(.videoFormat(format))
             }
@@ -90,6 +90,14 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
             if count == 1 || count.isMultiple(of: 600) {
                 Self.logger.info("映像を送信: \(count) フレーム目 (\(frame.data.count) バイト)")
             }
+        }
+        // HEVC は同じビットレートで文字がにじみにくい (流れる文字の輝度の PSNR で H.264 の 27dB に対し 40dB)。作れない Mac では H.264 にする
+        let encoder: VideoEncoder
+        do {
+            encoder = try VideoEncoder(codec: .hevc, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60, output: output)
+        } catch {
+            Self.logger.notice("HEVC のエンコーダを作れないので H.264 にする: \(error, privacy: .public)")
+            encoder = try VideoEncoder(codec: .h264, width: size.width, height: size.height, averageBitRate: bitRate, frameRate: 60, output: output)
         }
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -122,7 +130,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         }
         guard shouldStart else { return }
         try await stream.startCapture()
-        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(bitRate / 1_000_000) Mbps")
+        Self.logger.info("画面の取り込みを開始: 画面 \(self.displayID)、\(size.width)x\(size.height)、\(encoder.codec == .hevc ? "HEVC" : "H.264", privacy: .public)、\(bitRate / 1_000_000) Mbps")
     }
 
     func stop() {
@@ -165,7 +173,7 @@ nonisolated final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelega
         guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer), let pixelBuffer = sampleBuffer.imageBuffer else { return }
         // 送信が詰まっている間は符号化する前に捨て、遅延が積み上がらないようにする
         guard channel.pendingSendCount < 4,
-              let (encoder, region, outputSize, transferSession, pool) = lock.withLock({ () -> (H264Encoder, VideoRegion, (width: Int, height: Int), VTPixelTransferSession?, CVPixelBufferPool?)? in
+              let (encoder, region, outputSize, transferSession, pool) = lock.withLock({ () -> (VideoEncoder, VideoRegion, (width: Int, height: Int), VTPixelTransferSession?, CVPixelBufferPool?)? in
                   guard let encoder else { return nil }
                   return (encoder, self.region, self.outputSize, self.transferSession, self.outputPool)
               })
