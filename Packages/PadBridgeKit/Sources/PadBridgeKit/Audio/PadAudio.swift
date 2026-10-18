@@ -10,13 +10,19 @@ public enum PadAudio {
         return min(max((decibels + 50) / 40, 0), 1)
     }
 
+    /// -1...1 の浮動小数の音を 16 ビットにする。範囲外は切り詰め、NaN は無音にする。
+    /// min・max は NaN をそのまま通し、Int16 にすると実行時に止まる。Host は Mac のすべてのアプリの音を読むので、どこかのアプリが NaN を出しても落ちないようにする
+    public static func int16(_ sample: Float) -> Int16 {
+        guard sample.isFinite else { return sample.isNaN ? 0 : (sample > 0 ? Int16.max : -Int16.max) }
+        return Int16(min(max(sample, -1), 1) * Float(Int16.max))
+    }
+
     /// -1...1 の浮動小数の音を、送るときの形 (16 ビットのリトルエンディアン) にする。範囲外は切り詰める。
     public static func encode(_ samples: UnsafeBufferPointer<Float>) -> Data {
         var data = Data(count: samples.count * 2)
         data.withUnsafeMutableBytes { raw in
             for (index, sample) in samples.enumerated() {
-                let clamped = min(max(sample, -1), 1)
-                let value = Int16(clamped * Float(Int16.max))
+                let value = int16(sample)
                 raw.storeBytes(of: value.littleEndian, toByteOffset: index * 2, as: Int16.self)
             }
         }
@@ -62,7 +68,7 @@ public struct PCMJitterBuffer: Sendable {
     /// -1...1 の浮動小数の音を書き込む。メモリを確保しないので、オーディオのスレッドから呼べる。
     public mutating func write(_ samples: UnsafeBufferPointer<Float>) {
         for sample in samples {
-            append(Int16(min(max(sample, -1), 1) * Float(Int16.max)))
+            append(PadAudio.int16(sample))
         }
     }
 

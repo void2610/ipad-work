@@ -26,6 +26,6 @@ public enum MacAudio {
     }
 
     private static func sample(_ value: Float) -> Int16 {
-        Int16(min(max(value, -1), 1) * Float(Int16.max))
+        PadAudio.int16(value)
     }
 }

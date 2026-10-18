@@ -110,4 +110,17 @@ struct MacAudioTests {
         #expect(played.left == [10, 20])
         #expect(played.right == [-10, -20])
     }
+
+    /// どこかのアプリが NaN や無限大を鳴らしても、落ちずに無音か最大の音にする。
+    @Test func nonFiniteSamplesDoNotTrap() {
+        #expect(PadAudio.int16(.nan) == 0)
+        #expect(PadAudio.int16(.infinity) == Int16.max)
+        #expect(PadAudio.int16(-.infinity) == -Int16.max)
+        let data = encode(left: [.nan, 0.5], right: [.infinity, -.nan])
+        let values = data.withUnsafeBytes { raw in (0 ..< 4).map { Int16(littleEndian: raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self)) } }
+        #expect(values == [0, Int16.max, 16383, 0])
+        var buffer = PCMJitterBuffer(capacity: 4, startThreshold: 1)
+        [Float.nan, 0.25].withUnsafeBufferPointer { buffer.write($0) }
+        #expect(buffer.count == 2)
+    }
 }
