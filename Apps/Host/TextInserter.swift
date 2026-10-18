@@ -27,10 +27,21 @@ nonisolated enum TextInserter {
             return false
         }
         let before = value(of: element)
+        let rangeBefore = selectedRange(of: element)
         guard AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success else { return false }
-        // 成功を返しても実際には反映しないアプリ (Electron 製など) があるため、値が変わったかで確かめる
+        // 成功を返しても実際には反映しないアプリ (Electron 製など) があるため、値か選択の位置が変わったかで確かめる。選んだ文字を同じ文字で置き換えると値は変わらない
         guard let before, let after = value(of: element) else { return true }
-        return before != after
+        return before != after || rangeBefore != selectedRange(of: element)
+    }
+
+    /// 選択の位置と長さ。読めなければ nil。
+    private static func selectedRange(of element: AXUIElement) -> [Int]? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(unsafeDowncast(value, to: AXValue.self), .cfRange, &range) ? [range.location, range.length] : nil
     }
 
     private static func value(of element: AXUIElement) -> String? {
