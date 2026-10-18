@@ -322,6 +322,10 @@ final class HostSession {
                     microphone.start { samples in channel.send(.audio(samples)) }
                     // iPad のスピーカーで鳴らした Mac の音を、マイクから Typeless に入れない
                     BackgroundAudio.shared.macAudio.setSuppressed(microphone.isRunning)
+                    if !microphone.isRunning {
+                        // 電話のあとや、ほかのアプリがマイクを使っているときは始められない。黙って Mac の無音を聞き取らせない
+                        microphoneNotice = "iPad のマイクを始められなかったので、Mac のマイクで聞き取ります。"
+                    }
                 }
             case .denied:
                 microphoneNotice = "iPad のマイクが許可されていないので、Mac のマイクで聞き取ります。設定の「PadBridge」でマイクを許可してください。"
