@@ -273,7 +273,7 @@
   - Host は loginwindow のロックと解除の知らせ (`com.apple.screenIsLocked`・`com.apple.screenIsUnlocked`、分散通知を `deliverImmediately` で受ける) を受け、iPad に `macScreenLocked` で知らせる。iPad は「Mac の画面がロックされています」を出す。iPad がつないだ時点のロックは、セッションの情報 (`CGSessionCopyCurrentDictionary`) の `CGSSessionScreenIsLocked` で読む。ロックされていないこの Mac では、このキーはなかった。
   - 解除されたら、映像の接続があれば取り込みを作り直す。
 - iPad の知らせは、代わりの Host が送ったロックと解除で出て消えることをシミュレータで確かめた。
-- Host の見張り (`ScreenLockMonitor.swift`) は、ファイルをそのまま写して知らせの名前だけ試験用の固有の名前に替え、分散通知を止めた状態 (前面にない常駐アプリと同じ) で、別のプロセスから送ったロックと解除がその順に届くことを確かめた。本物の名前で送らないのは、画面のロックに合わせて自分もロックするアプリ (パスワード管理など) にも届くため。loginwindow がこの名前で送ることと、解除で取り込みを作り直すところは、利用者の Mac をロックしないと動かせないので、ビルドまでにしている。
+- Host の見張り (`ScreenLockMonitor.swift`) は、ファイルをそのまま写して知らせの名前だけ試験用の固有の名前に替え、分散通知を止めた状態 (前面にない常駐アプリと同じ) で、別のプロセスから送ったロックと解除がその順に届くことを確かめた。本物の名前で送らないのは、画面のロックに合わせて自分もロックするアプリ (パスワード管理など) にも届くため。名前は、この Mac (macOS 26.2、25C56) の loginwindow の実行ファイルに `com.apple.screenIsLocked` と `com.apple.screenIsUnlocked` の両方が入っていることで確かめた。解除での作り直しは、画面の切り替えや映像の枚数の変更と同じ `startStreamer(on:)` を呼ぶ。実際にロックして解除する流れは、利用者の Mac をロックすることになるので動かしていない。
 
 ## 外部ディスプレイ
 
