@@ -12,6 +12,10 @@ icon:
 test:
     swift test --package-path Packages/PadBridgeKit
 
+# 共通ライブラリのテストを iOS のシミュレータで走らせる (Opus の復号など、iPad で使う部品が iOS でも動くかを確かめる)
+test-ios simulator="iPad Air 11-inch (M4)":
+    cd Packages/PadBridgeKit && xcodebuild test -scheme PadBridgeKit -destination "platform=iOS Simulator,name={{simulator}}" -derivedDataPath ../../build/KitTestsIOS
+
 # Mac 側の常駐アプリをビルドする
 build-host: generate
     xcodebuild -project PadBridge.xcodeproj -scheme PadBridgeHost -configuration Debug -derivedDataPath {{derived_data}} -allowProvisioningUpdates build
