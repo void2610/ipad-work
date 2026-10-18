@@ -83,6 +83,7 @@ final class DirectTypingUIView: UIView, UITextInput {
     }
 
     @objc private func forwardShortcut(_ command: UIKeyCommand) {
+        guard window?.rootViewController?.presentedViewController == nil else { return }
         HardwareKeys.forwardShortcut(command, send: send)
     }
 

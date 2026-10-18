@@ -105,6 +105,8 @@ final class RemoteScreenUIView: UIView {
     }
 
     @objc private func forwardShortcut(_ command: UIKeyCommand) {
+        // 一覧を出している間にキーを渡すと、ここに届く (押したキーと同じく、Mac へは送らない)
+        guard !isCovered else { return }
         HardwareKeys.forwardShortcut(command, send: send)
     }
 
