@@ -171,6 +171,47 @@ struct VideoSenderTests {
         #expect(zip(times, times.dropFirst()).allSatisfy { $0 < $1 }, "\(times)")
     }
 
+    /// エンコーダがフレームを出力している最中に停止しても、停止の処理が終わる。
+    /// VideoToolbox は内部のロックを持ったまま出力を渡すので、送信側のロックを持ったままエンコーダを破棄すると互いのロックを待ち、Host が iPad の接続を受け付けなくなった。修正前はこのテストの最初の停止で止まった。
+    @Test func stopsWhileEncoderIsOutputting() throws {
+        // Host が内蔵ディスプレイを縮小して送るサイズ
+        let (width, height) = (2360, 1532)
+        // 作成後は読むだけなので、キャプチャのように別のスレッドから渡してよい
+        final class Image: @unchecked Sendable {
+            let buffer: CVPixelBuffer
+            init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
+        }
+        let images = try (0 ..< 4).map { try Image(makeBlocks(width: width, height: height, seed: $0)) }
+        for attempt in 0 ..< 10 {
+            let recorder = Recorder()
+            let sender = try VideoSender(
+                width: width, height: height, maximumBitRate: CaptureSize.bitRate(width: width, height: height), frameRate: 60,
+                isAcknowledged: true, queue: queue, transmit: { recorder.append($0) }
+            )
+            let feeding = Atomic(true)
+            DispatchQueue.global().async {
+                var index = 0
+                while feeding.load(ordering: .relaxed) {
+                    let image = images[index % 4]
+                    queue.async { sender.send(image.buffer, presentationTime: Self.now()) }
+                    // Host と同じように受信確認を返し、回線に合わせたビットレートの調整を続けさせる
+                    if let frame = recorder.frames.last { sender.frameReceived(presentationTimeMicros: frame.presentationTimeMicros) }
+                    index += 1
+                    Thread.sleep(forTimeInterval: 0.008)
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.1 + 0.01 * Double(attempt))
+            let stopped = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                sender.stop()
+                stopped.signal()
+            }
+            let result = stopped.wait(timeout: .now() + 3)
+            feeding.store(false, ordering: .relaxed)
+            try #require(result == .success, "\(attempt + 1) 回目の停止が終わらない")
+        }
+    }
+
     /// 停止したあとも、ACK の有無・ビットレート・往復遅延を読める (Host は停止してから読み、再作成するキャプチャに引き継ぐ)。
     @Test func keepsStateForHandOverAfterStop() async throws {
         let recorder = Recorder()

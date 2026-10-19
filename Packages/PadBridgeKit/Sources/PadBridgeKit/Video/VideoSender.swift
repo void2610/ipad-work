@@ -125,12 +125,15 @@ public final class VideoSender: @unchecked Sendable {
     }
 
     public func stop() {
-        lock.withLock {
+        let encoder = lock.withLock {
             isStopped = true
-            encoder = nil
             lastSource = nil
+            defer { self.encoder = nil }
+            return self.encoder
         }
         refreshTimer.cancel()
+        // VideoToolbox は内部のロックを持ったまま出力を渡し、エンコーダの破棄はその出力の完了を待つ。このロックを持ったまま破棄すると、出力がこのロックを待って互いに止まる
+        _ = consume encoder
     }
 
     /// 次のフレームをキーフレームにする。画面が止まっていても、最後にキャプチャした画像で送る。
